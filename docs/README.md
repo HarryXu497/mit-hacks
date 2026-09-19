@@ -1,6 +1,6 @@
 # Jungle Soccer visual direction
 
-This folder captures the visual direction for turning the current Cube Soccer RL environment into a polished jungle sports game without changing the simulation yet.
+This folder captures the visual direction for turning the current Cube Soccer RL environment into a polished jungle sports game. The simulation dynamics and training interface remain stable; the playable arena geometry is intentionally being made more spacious.
 
 Working title: **Canopy Clash**.
 
@@ -13,10 +13,11 @@ Read the documents in this order:
 1. [Visual vision](jungle-soccer-vision.md) — the creative north star and non-negotiable principles.
 2. [Art direction](jungle-soccer-art-direction.md) — the concrete visual system for characters, pitch, jungle, lighting, and UI.
 3. [Implementation plan](jungle-soccer-implementation-plan.md) — how to apply the art direction to the existing Bevy project while preserving RL behavior.
+4. [Google Research Football camera and stadium study](google-football-camera-study.md) — source-backed framing and scale notes, with proposed adaptations and RL boundaries.
 
 ## Scope
 
-This is an art and presentation pass. It does not redesign the rules, action space, observations, physics, scoring, or agent training environment.
+This is an art and presentation pass with an explicitly enlarged level layout. It does not redesign the rules, action space, physics parameters, scoring, or agent training interface. The field, goal, and arena boundary dimensions are shared with the collision layout, so the teammate training against this build should use the same geometry constants.
 
 The current simulation is treated as the stable foundation. Visual entities may be added, replaced, or re-parented, but decorative entities should not become gameplay colliders unless explicitly approved later.
 

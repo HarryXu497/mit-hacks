@@ -59,6 +59,7 @@ impl Plugin for CubeSoccerPlugin {
             ))
             .add_systems(PostStartup, crate::jungle::build_jungle)
             .add_systems(Update, crate::jungle::animate_jungle)
+            .add_systems(PostUpdate, crate::systems::camera::update_camera.before(bevy::transform::TransformSystem::TransformPropagate))
 
             // Update systems during playing
             .add_systems(Update, (

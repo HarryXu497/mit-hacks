@@ -93,7 +93,7 @@ The field is the quietest major surface.
 - use small flowers or leaf marks only near the perimeter;
 - avoid placing decorative rocks, roots, or tall grass inside the active play area.
 
-The pitch should be larger in presentation than the current test box, even if its underlying coordinate system remains unchanged. Camera framing, field material, and surrounding set dressing can create that perception without changing physics.
+The pitch is intentionally larger than the original test box: the current layout uses a 36 x 24 field and larger goals while preserving player/ball dynamics. Camera framing, field material, and surrounding set dressing reinforce that scale without changing physics parameters.
 
 ## Goals
 

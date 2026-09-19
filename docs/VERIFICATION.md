@@ -8,11 +8,11 @@ The original Rust/Bevy repository is imported with its MIT license. The visual c
 - `cargo check --all-targets` succeeds. The upstream example programs produce float-literal compatibility warnings on Rust 1.98.
 - `cargo test --lib` covers the existing team/environment configuration tests and a jungle regression test. The latter checks retained player position, retained collider, no added decorative colliders, preserved scoreboard mesh, and attached monkey visuals.
 - Capture mode launches the actual native renderer, writes `jungle-preview.png`, and exits successfully. The image has been inspected for pitch, player, ball, goal, scoreboard, and environment visibility.
-- File hashes of movement, physics, scoring, resets, physics configuration, player/ball/goal definitions, and RL observations/environment match the imported upstream source.
+- Movement, physics parameters, scoring, resets, player/ball behavior, and RL observations/environment were not modified. The level geometry constants were intentionally updated to enlarge the field, goals, and arena; those dimensions must be kept in sync with the teammate's training configuration.
 
-The screenshot below is an engine render, separate from `geometric-concept.png`, which is the generated design reference.
+The screenshot below is an engine render of the enlarged stadium, separate from `geometric-concept.png`, which is the generated design reference. The optional broadcast capture is `jungle-broadcast-large-preview.png`.
 
-![Native Bevy scene](jungle-preview.png)
+![Native Bevy scene](jungle-overview-large-preview.png)
 
 ## Limits
 

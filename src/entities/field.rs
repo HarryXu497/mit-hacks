@@ -1,6 +1,6 @@
+use crate::game::config::*;
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
-use crate::game::config::*;
 
 #[derive(Component)]
 pub struct Field;
@@ -37,7 +37,11 @@ pub fn spawn_field(
         PbrBundle {
             mesh: meshes.add(Cuboid::new(FIELD_WIDTH, FIELD_HEIGHT, SIDE_EXTENSION)),
             material: field_material.clone(),
-            transform: Transform::from_xyz(0.0, FIELD_HEIGHT / 2.0, FIELD_DEPTH / 2.0 + SIDE_EXTENSION / 2.0),
+            transform: Transform::from_xyz(
+                0.0,
+                FIELD_HEIGHT / 2.0,
+                FIELD_DEPTH / 2.0 + SIDE_EXTENSION / 2.0,
+            ),
             ..default()
         },
         Field,
@@ -50,7 +54,11 @@ pub fn spawn_field(
         PbrBundle {
             mesh: meshes.add(Cuboid::new(FIELD_WIDTH, FIELD_HEIGHT, SIDE_EXTENSION)),
             material: field_material,
-            transform: Transform::from_xyz(0.0, FIELD_HEIGHT / 2.0, -FIELD_DEPTH / 2.0 - SIDE_EXTENSION / 2.0),
+            transform: Transform::from_xyz(
+                0.0,
+                FIELD_HEIGHT / 2.0,
+                -FIELD_DEPTH / 2.0 - SIDE_EXTENSION / 2.0,
+            ),
             ..default()
         },
         Field,
@@ -66,7 +74,7 @@ pub fn spawn_field(
 
     // Vertical lines (along Z axis)
     let num_v_lines = (FIELD_WIDTH / FIELD_GRID_SPACING) as i32;
-    for i in -num_v_lines/2..=num_v_lines/2 {
+    for i in -num_v_lines / 2..=num_v_lines / 2 {
         let x = i as f32 * FIELD_GRID_SPACING;
         commands.spawn((
             PbrBundle {
@@ -81,7 +89,7 @@ pub fn spawn_field(
 
     // Horizontal lines (along X axis)
     let num_h_lines = (FIELD_DEPTH / FIELD_GRID_SPACING) as i32;
-    for i in -num_h_lines/2..=num_h_lines/2 {
+    for i in -num_h_lines / 2..=num_h_lines / 2 {
         let z = i as f32 * FIELD_GRID_SPACING;
         commands.spawn((
             PbrBundle {
@@ -100,7 +108,7 @@ pub fn spawn_field(
     // Fluorescent material for borders
     let fluorescent_material = materials.add(StandardMaterial {
         base_color: FLUORESCENT_COLOR,
-        emissive: FLUORESCENT_COLOR * 2.0,  // Glowing effect
+        emissive: FLUORESCENT_COLOR * 2.0, // Glowing effect
         ..default()
     });
 
@@ -136,12 +144,16 @@ pub fn spawn_field(
     // Side walls for extended zones (X = ±FIELD_WIDTH/2)
     let side_z = FIELD_DEPTH / 2.0 + SIDE_EXTENSION / 2.0;
 
-    // Left side wall (X = -12), positive Z zone
+    // Left side wall, positive Z zone
     commands.spawn((
         PbrBundle {
             mesh: meshes.add(Cuboid::new(0.1, border_height, SIDE_EXTENSION)),
             material: fluorescent_material.clone(),
-            transform: Transform::from_xyz(-FIELD_WIDTH / 2.0, FIELD_HEIGHT + border_height / 2.0, side_z),
+            transform: Transform::from_xyz(
+                -FIELD_WIDTH / 2.0,
+                FIELD_HEIGHT + border_height / 2.0,
+                side_z,
+            ),
             ..default()
         },
         Collider::cuboid(0.05, border_height / 2.0, SIDE_EXTENSION / 2.0),
@@ -149,12 +161,16 @@ pub fn spawn_field(
         FieldBorder,
     ));
 
-    // Right side wall (X = +12), positive Z zone
+    // Right side wall, positive Z zone
     commands.spawn((
         PbrBundle {
             mesh: meshes.add(Cuboid::new(0.1, border_height, SIDE_EXTENSION)),
             material: fluorescent_material.clone(),
-            transform: Transform::from_xyz(FIELD_WIDTH / 2.0, FIELD_HEIGHT + border_height / 2.0, side_z),
+            transform: Transform::from_xyz(
+                FIELD_WIDTH / 2.0,
+                FIELD_HEIGHT + border_height / 2.0,
+                side_z,
+            ),
             ..default()
         },
         Collider::cuboid(0.05, border_height / 2.0, SIDE_EXTENSION / 2.0),
@@ -162,12 +178,16 @@ pub fn spawn_field(
         FieldBorder,
     ));
 
-    // Left side wall (X = -12), negative Z zone
+    // Left side wall, negative Z zone
     commands.spawn((
         PbrBundle {
             mesh: meshes.add(Cuboid::new(0.1, border_height, SIDE_EXTENSION)),
             material: fluorescent_material.clone(),
-            transform: Transform::from_xyz(-FIELD_WIDTH / 2.0, FIELD_HEIGHT + border_height / 2.0, -side_z),
+            transform: Transform::from_xyz(
+                -FIELD_WIDTH / 2.0,
+                FIELD_HEIGHT + border_height / 2.0,
+                -side_z,
+            ),
             ..default()
         },
         Collider::cuboid(0.05, border_height / 2.0, SIDE_EXTENSION / 2.0),
@@ -175,12 +195,16 @@ pub fn spawn_field(
         FieldBorder,
     ));
 
-    // Right side wall (X = +12), negative Z zone
+    // Right side wall, negative Z zone
     commands.spawn((
         PbrBundle {
             mesh: meshes.add(Cuboid::new(0.1, border_height, SIDE_EXTENSION)),
             material: fluorescent_material.clone(),
-            transform: Transform::from_xyz(FIELD_WIDTH / 2.0, FIELD_HEIGHT + border_height / 2.0, -side_z),
+            transform: Transform::from_xyz(
+                FIELD_WIDTH / 2.0,
+                FIELD_HEIGHT + border_height / 2.0,
+                -side_z,
+            ),
             ..default()
         },
         Collider::cuboid(0.05, border_height / 2.0, SIDE_EXTENSION / 2.0),
@@ -189,15 +213,19 @@ pub fn spawn_field(
     ));
 
     // Walls to close gaps beside goals (between goal posts and Z = ±FIELD_DEPTH/2)
-    let side_gap = (FIELD_DEPTH - GOAL_DEPTH) / 2.0;  // = 5.0
-    let gap_center_z = (FIELD_DEPTH / 2.0 + GOAL_DEPTH / 2.0) / 2.0;  // = 5.5
+    let side_gap = (FIELD_DEPTH - GOAL_DEPTH) / 2.0;
+    let gap_center_z = (FIELD_DEPTH / 2.0 + GOAL_DEPTH / 2.0) / 2.0;
 
-    // Left goal (X = -12), positive Z side
+    // Left goal, positive Z side
     commands.spawn((
         PbrBundle {
             mesh: meshes.add(Cuboid::new(0.1, border_height, side_gap)),
             material: fluorescent_material.clone(),
-            transform: Transform::from_xyz(-FIELD_WIDTH / 2.0, FIELD_HEIGHT + border_height / 2.0, gap_center_z),
+            transform: Transform::from_xyz(
+                -FIELD_WIDTH / 2.0,
+                FIELD_HEIGHT + border_height / 2.0,
+                gap_center_z,
+            ),
             ..default()
         },
         Collider::cuboid(0.05, border_height / 2.0, side_gap / 2.0),
@@ -205,12 +233,16 @@ pub fn spawn_field(
         FieldBorder,
     ));
 
-    // Left goal (X = -12), negative Z side
+    // Left goal, negative Z side
     commands.spawn((
         PbrBundle {
             mesh: meshes.add(Cuboid::new(0.1, border_height, side_gap)),
             material: fluorescent_material.clone(),
-            transform: Transform::from_xyz(-FIELD_WIDTH / 2.0, FIELD_HEIGHT + border_height / 2.0, -gap_center_z),
+            transform: Transform::from_xyz(
+                -FIELD_WIDTH / 2.0,
+                FIELD_HEIGHT + border_height / 2.0,
+                -gap_center_z,
+            ),
             ..default()
         },
         Collider::cuboid(0.05, border_height / 2.0, side_gap / 2.0),
@@ -218,12 +250,16 @@ pub fn spawn_field(
         FieldBorder,
     ));
 
-    // Right goal (X = +12), positive Z side
+    // Right goal, positive Z side
     commands.spawn((
         PbrBundle {
             mesh: meshes.add(Cuboid::new(0.1, border_height, side_gap)),
             material: fluorescent_material.clone(),
-            transform: Transform::from_xyz(FIELD_WIDTH / 2.0, FIELD_HEIGHT + border_height / 2.0, gap_center_z),
+            transform: Transform::from_xyz(
+                FIELD_WIDTH / 2.0,
+                FIELD_HEIGHT + border_height / 2.0,
+                gap_center_z,
+            ),
             ..default()
         },
         Collider::cuboid(0.05, border_height / 2.0, side_gap / 2.0),
@@ -231,12 +267,16 @@ pub fn spawn_field(
         FieldBorder,
     ));
 
-    // Right goal (X = +12), negative Z side
+    // Right goal, negative Z side
     commands.spawn((
         PbrBundle {
             mesh: meshes.add(Cuboid::new(0.1, border_height, side_gap)),
             material: fluorescent_material.clone(),
-            transform: Transform::from_xyz(FIELD_WIDTH / 2.0, FIELD_HEIGHT + border_height / 2.0, -gap_center_z),
+            transform: Transform::from_xyz(
+                FIELD_WIDTH / 2.0,
+                FIELD_HEIGHT + border_height / 2.0,
+                -gap_center_z,
+            ),
             ..default()
         },
         Collider::cuboid(0.05, border_height / 2.0, side_gap / 2.0),

@@ -180,9 +180,12 @@ pub fn build_jungle(
     for mut mesh in &mut old {
         *mesh = Handle::default();
     }
+    let scoreboard_z = -FIELD_DEPTH / 2. - 3.0;
+    // Keep the functional digits on the camera-facing side of the decorative panel.
+    let scoreboard_target = Vec3::new(0., 4.1, scoreboard_z + 0.35);
+    let scoreboard_source = Vec3::new(0., 5.25, -ARENA_DEPTH / 2. + WALL_THICKNESS + 0.25);
     for mut t in &mut digits {
-        t.translation =
-            Vec3::new(0., 4.1, -10.7) + (t.translation - Vec3::new(0., 5.25, -14.45)) * 0.72;
+        t.translation = scoreboard_target + (t.translation - scoreboard_source) * 0.72;
         t.scale *= 0.72;
     }
     let mut rock_mesh = Sphere::new(1.).mesh().ico(1).unwrap();
@@ -217,43 +220,46 @@ pub fn build_jungle(
         &k,
         k.rock.clone(),
         Vec3::new(0., -1., 0.),
-        Vec3::new(32., 3., 32.),
+        Vec3::new(ARENA_WIDTH + 4., 3., ARENA_DEPTH + 4.),
     );
     block(
         &mut c,
         &k,
         k.greens[0].clone(),
         Vec3::new(0., 0.9, 0.),
-        Vec3::new(30., 0.25, 30.),
+        Vec3::new(ARENA_WIDTH, 0.25, ARENA_DEPTH),
     );
-    for i in 0..12 {
+    for i in 0..(FIELD_WIDTH as usize / 2) {
         block(
             &mut c,
             &k,
             k.grass[i % 2].clone(),
-            Vec3::new(-11. + i as f32 * 2., 1.12, 0.),
-            Vec3::new(2., 0.04, 16.),
+            Vec3::new(-FIELD_WIDTH / 2. + 1. + i as f32 * 2., 1.12, 0.),
+            Vec3::new(2., 0.04, FIELD_DEPTH),
         );
     }
+    let field_edge_x = FIELD_WIDTH / 2. - 0.3;
+    let field_edge_z = FIELD_DEPTH / 2. - 0.3;
     let y = 1.16;
-    for x in [-11.7, 0., 11.7] {
+    for x in [-field_edge_x, 0., field_edge_x] {
         block(
             &mut c,
             &k,
             k.white.clone(),
             Vec3::new(x, y, 0.),
-            Vec3::new(0.09, 0.025, 15.4),
+            Vec3::new(0.09, 0.025, FIELD_DEPTH - 0.6),
         );
     }
-    for z in [-7.7, 7.7] {
+    for z in [-field_edge_z, field_edge_z] {
         block(
             &mut c,
             &k,
             k.white.clone(),
             Vec3::new(0., y, z),
-            Vec3::new(23.5, 0.025, 0.09),
+            Vec3::new(FIELD_WIDTH - 0.6, 0.025, 0.09),
         );
     }
+    let center_circle_radius = FIELD_DEPTH * 0.19;
     for i in 0..64 {
         let a = i as f32 * std::f32::consts::TAU / 64.;
         let b = (i + 1) as f32 * std::f32::consts::TAU / 64.;
@@ -261,42 +267,55 @@ pub fn build_jungle(
             &mut c,
             &k,
             k.white.clone(),
-            Vec3::new(a.cos() * 3., y, a.sin() * 3.),
-            Vec3::new(b.cos() * 3., y, b.sin() * 3.),
+            Vec3::new(
+                a.cos() * center_circle_radius,
+                y,
+                a.sin() * center_circle_radius,
+            ),
+            Vec3::new(
+                b.cos() * center_circle_radius,
+                y,
+                b.sin() * center_circle_radius,
+            ),
             0.075,
         );
     }
+    let penalty_half_depth = GOAL_DEPTH / 2. + 2.5;
+    let penalty_box_depth = 4.2;
+    let penalty_inner_x = field_edge_x - penalty_box_depth;
     for side in [-1., 1.] {
-        for z in [-5.5, 5.5] {
+        for z in [-penalty_half_depth, penalty_half_depth] {
             block(
                 &mut c,
                 &k,
                 k.white.clone(),
-                Vec3::new(side * 9.8, y, z),
-                Vec3::new(3.8, 0.025, 0.09),
+                Vec3::new(side * (field_edge_x - penalty_box_depth / 2.), y, z),
+                Vec3::new(penalty_box_depth, 0.025, 0.09),
             );
         }
         block(
             &mut c,
             &k,
             k.white.clone(),
-            Vec3::new(side * 7.9, y, 0.),
-            Vec3::new(0.09, 0.025, 11.),
+            Vec3::new(side * penalty_inner_x, y, 0.),
+            Vec3::new(0.09, 0.025, penalty_half_depth * 2.),
         );
-        for z in [-3., 3.] {
+        let goal_x = side * FIELD_WIDTH / 2.;
+        let goal_top = FIELD_HEIGHT + GOAL_HEIGHT;
+        for z in [-GOAL_DEPTH / 2., GOAL_DEPTH / 2.] {
             block(
                 &mut c,
                 &k,
                 k.gold.clone(),
-                Vec3::new(side * 12., 3., z),
-                Vec3::new(0.30, 4., 0.30),
+                Vec3::new(goal_x, FIELD_HEIGHT + GOAL_HEIGHT / 2., z),
+                Vec3::new(0.30, GOAL_HEIGHT, 0.30),
             );
             beam(
                 &mut c,
                 &k,
                 k.wood.clone(),
-                Vec3::new(side * 12., 5., z),
-                Vec3::new(side * 14.5, 1.1, z),
+                Vec3::new(goal_x, goal_top, z),
+                Vec3::new(goal_x + side * GOAL_NET_DEPTH, FIELD_HEIGHT + 0.1, z),
                 0.15,
             );
         }
@@ -304,36 +323,36 @@ pub fn build_jungle(
             &mut c,
             &k,
             k.gold.clone(),
-            Vec3::new(side * 12., 5., 0.),
-            Vec3::new(0.3, 0.3, 6.2),
+            Vec3::new(goal_x, goal_top, 0.),
+            Vec3::new(0.3, 0.3, GOAL_DEPTH + 0.2),
         );
-        for j in 0..13 {
-            let z = -3. + j as f32 * 0.5;
+        for j in 0..((GOAL_DEPTH * 2.) as i32 + 1) {
+            let z = -GOAL_DEPTH / 2. + j as f32 * 0.5;
             beam(
                 &mut c,
                 &k,
                 k.white.clone(),
-                Vec3::new(side * 14.45, 1.1, z),
-                Vec3::new(side * 14.45, 5., z),
+                Vec3::new(goal_x + side * GOAL_NET_DEPTH, FIELD_HEIGHT + 0.1, z),
+                Vec3::new(goal_x + side * GOAL_NET_DEPTH, goal_top, z),
                 0.035,
             );
             beam(
                 &mut c,
                 &k,
                 k.white.clone(),
-                Vec3::new(side * 12., 5., z),
-                Vec3::new(side * 14.45, 5., z),
+                Vec3::new(goal_x, goal_top, z),
+                Vec3::new(goal_x + side * GOAL_NET_DEPTH, goal_top, z),
                 0.035,
             );
         }
-        for j in 0..9 {
-            let h = 1.1 + j as f32 * 0.48;
+        for j in 0..11 {
+            let h = FIELD_HEIGHT + 0.1 + j as f32 * (GOAL_HEIGHT / 10.);
             beam(
                 &mut c,
                 &k,
                 k.white.clone(),
-                Vec3::new(side * 14.45, h, -3.),
-                Vec3::new(side * 14.45, h, 3.),
+                Vec3::new(goal_x + side * GOAL_NET_DEPTH, h, -GOAL_DEPTH / 2.),
+                Vec3::new(goal_x + side * GOAL_NET_DEPTH, h, GOAL_DEPTH / 2.),
                 0.035,
             );
         }
@@ -346,14 +365,14 @@ pub fn build_jungle(
             &mut c,
             &k,
             k.wood.clone(),
-            Vec3::new(side * 14., 4., -7.),
+            Vec3::new(side * (FIELD_WIDTH / 2. + 2.), 4., -FIELD_DEPTH / 2. - 1.5),
             Vec3::new(0.22, 6., 0.22),
         );
         block(
             &mut c,
             &k,
             team,
-            Vec3::new(side * 13.2, 5., -7.),
+            Vec3::new(side * (FIELD_WIDTH / 2. + 1.2), 5., -FIELD_DEPTH / 2. - 1.5),
             Vec3::new(1.5, 2.5, 0.1),
         );
     }
@@ -362,7 +381,7 @@ pub fn build_jungle(
         &mut c,
         &k,
         k.dark.clone(),
-        Vec3::new(0., 4.1, -10.7),
+        Vec3::new(0., 4.1, scoreboard_z),
         Vec3::new(8.28, 3.46, 0.22),
     );
     for x in [-4.4, 4.4] {
@@ -370,7 +389,7 @@ pub fn build_jungle(
             &mut c,
             &k,
             k.wood.clone(),
-            Vec3::new(x, 3.1, -10.8),
+            Vec3::new(x, 3.1, scoreboard_z - 0.1),
             Vec3::new(0.5, 5.8, 0.65),
         );
     }
@@ -379,7 +398,7 @@ pub fn build_jungle(
             &mut c,
             &k,
             k.gold.clone(),
-            Vec3::new(0., h, -10.8),
+            Vec3::new(0., h, scoreboard_z - 0.1),
             Vec3::new(9.4, 0.35, 0.7),
         );
     }
@@ -388,7 +407,7 @@ pub fn build_jungle(
             &mut c,
             &k,
             k.rock.clone(),
-            Vec3::new(0., 6.3 + i as f32 * 0.5, -12.),
+            Vec3::new(0., 6.3 + i as f32 * 0.5, scoreboard_z - 1.3),
             Vec3::new(8. - i as f32 * 1.5, 0.5, 1.5),
         );
     }
@@ -402,20 +421,21 @@ pub fn build_jungle(
             &mut c,
             &k,
             k.rock.clone(),
-            Vec3::new(x, 2.1, -13.2),
+            Vec3::new(x, 2.1, scoreboard_z - 2.5),
             Vec3::new(0.8, 2.2, 0.8),
         );
         block(
             &mut c,
             &k,
             k.gold.clone(),
-            Vec3::new(x, 3.25, -13.2),
+            Vec3::new(x, 3.25, scoreboard_z - 2.5),
             Vec3::new(1., 0.3, 1.),
         );
         c.spawn(PbrBundle {
             mesh: k.leaf.clone(),
             material: flame.clone(),
-            transform: Transform::from_xyz(x, 3.8, -13.2).with_scale(Vec3::new(0.35, 0.7, 0.35)),
+            transform: Transform::from_xyz(x, 3.8, scoreboard_z - 2.5)
+                .with_scale(Vec3::new(0.35, 0.7, 0.35)),
             ..default()
         });
     }
@@ -460,15 +480,17 @@ pub fn build_jungle(
         }
     }
     // Low boundary walls make the retained field colliders visible.
-    for z in [-13., 13.] {
+    let extended_z = FIELD_DEPTH / 2. + SIDE_EXTENSION;
+    for z in [-extended_z, extended_z] {
         block(
             &mut c,
             &k,
             k.rock.clone(),
             Vec3::new(0., 1.5, z),
-            Vec3::new(24., 1., 0.12),
+            Vec3::new(FIELD_WIDTH, 1., 0.12),
         );
-        for x in [-11., -7., -3., 3., 7., 11.] {
+        for i in 0..6 {
+            let x = -FIELD_WIDTH / 2. + 3. + i as f32 * 6.;
             block(
                 &mut c,
                 &k,
@@ -479,27 +501,30 @@ pub fn build_jungle(
         }
     }
     for side in [-1., 1.] {
-        for z in [-8., 8.] {
+        let side_gap = (FIELD_DEPTH - GOAL_DEPTH) / 2.;
+        let gap_center_z = (FIELD_DEPTH / 2. + GOAL_DEPTH / 2.) / 2.;
+        for z in [-gap_center_z, gap_center_z] {
             block(
                 &mut c,
                 &k,
                 k.rock.clone(),
-                Vec3::new(side * 12., 1.5, z),
-                Vec3::new(0.12, 1., 10.),
+                Vec3::new(side * FIELD_WIDTH / 2., 1.5, z),
+                Vec3::new(0.12, 1., side_gap),
             );
         }
         for j in 0..4 {
-            let x = side * (8. + j as f32 * 1.3);
+            let x = side * (FIELD_WIDTH / 2. - 10. + j as f32 * 1.3);
             block(
                 &mut c,
                 &k,
                 k.wood.clone(),
-                Vec3::new(x, 1.7, -11.5),
+                Vec3::new(x, 1.7, -FIELD_DEPTH / 2. - 1.),
                 Vec3::new(1.2, 0.25, 1.),
             );
             let e = c
                 .spawn(SpatialBundle {
-                    transform: Transform::from_xyz(x, 2.4, -11.5).with_scale(Vec3::splat(0.55)),
+                    transform: Transform::from_xyz(x, 2.4, -FIELD_DEPTH / 2. - 1.)
+                        .with_scale(Vec3::splat(0.55)),
                     ..default()
                 })
                 .id();
@@ -511,6 +536,58 @@ pub fn build_jungle(
             );
         }
     }
+    // Broad, stepped spectator terraces outside the retained physical boundary.
+    // Leave a central opening for the scoreboard and keep the near touchline clear.
+    for side in [-1., 1.] {
+        for row in 0..3 {
+            let z = -FIELD_DEPTH / 2. - 2.2 - row as f32 * 1.25;
+            let y = 1.3 + row as f32 * 0.65;
+            block(
+                &mut c,
+                &k,
+                k.wood.clone(),
+                Vec3::new(side * 11., y, z),
+                Vec3::new(12., 0.35, 1.15),
+            );
+            for seat in 0..8 {
+                let x = side * (6. + seat as f32 * 1.35);
+                let spectator = c
+                    .spawn(SpatialBundle {
+                        transform: Transform::from_xyz(x, y + 0.6, z).with_scale(Vec3::splat(0.45)),
+                        ..default()
+                    })
+                    .id();
+                monkey(
+                    &mut c,
+                    &k,
+                    spectator,
+                    if side < 0. { Team::Orange } else { Team::Blue },
+                );
+            }
+        }
+        for x in [6., 11., 16.] {
+            let x = side * x;
+            beam(
+                &mut c,
+                &k,
+                k.gold.clone(),
+                Vec3::new(x, 0., FIELD_DEPTH / -2. - 5.),
+                Vec3::new(x, 4.8, FIELD_DEPTH / -2. - 5.),
+                0.18,
+            );
+            block(
+                &mut c,
+                &k,
+                if side < 0. {
+                    k.orange.clone()
+                } else {
+                    k.blue.clone()
+                },
+                Vec3::new(x, 4., FIELD_DEPTH / -2. - 4.9),
+                Vec3::new(1.3, 1.4, 0.08),
+            );
+        }
+    }
     // Deterministic perimeter placement keeps the open field clear.
     for i in 0..76 {
         let t = i as f32 * 2.39996;
@@ -519,9 +596,9 @@ pub fn build_jungle(
         } else {
             (
                 if i % 2 == 0 {
-                    -17. - (i % 5) as f32
+                    -(FIELD_WIDTH / 2. + 4. + (i % 5) as f32 * 0.8)
                 } else {
-                    17. + (i % 5) as f32
+                    FIELD_WIDTH / 2. + 4. + (i % 5) as f32 * 0.8
                 },
                 -13. + (i - 40) as f32 * 0.8,
             )
