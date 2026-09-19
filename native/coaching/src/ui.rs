@@ -1,5 +1,6 @@
 use crate::board::{append_undo, BoardInteraction, BoardViewport};
 use crate::interpretation::{InterpretationState, RequestInterpretation, TacticalResult};
+use crate::EnterGame;
 use crate::model::{create_id, RawSessionEvent, SessionStatus, Tool, TranscriptSource};
 use crate::persistence::{export_tactical_json, PersistenceStatus};
 use crate::replay::{find_undo_target, replay_session};
@@ -8,7 +9,6 @@ use crate::speech::{SpeechRuntime, SpeechStatus};
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 
-const APP: egui::Color32 = egui::Color32::from_rgb(16, 24, 34);
 const PANEL: egui::Color32 = egui::Color32::from_rgb(18, 27, 38);
 const BORDER: egui::Color32 = egui::Color32::from_rgb(43, 57, 73);
 const TEXT: egui::Color32 = egui::Color32::from_rgb(237, 243, 251);
@@ -49,6 +49,7 @@ pub fn coaching_ui(
     persistence: Res<PersistenceStatus>,
     mut ui_state: ResMut<CoachingUiState>,
     mut interpretation_requests: EventWriter<RequestInterpretation>,
+    mut enter_game: EventWriter<EnterGame>,
 ) {
     let context = contexts.ctx_mut();
 
@@ -62,6 +63,7 @@ pub fn coaching_ui(
         &persistence,
         &mut ui_state,
         &mut interpretation_requests,
+        &mut enter_game,
     );
     board_panel(context, &mut session, &mut interaction, &mut viewport);
 
@@ -134,9 +136,11 @@ fn board_panel(
     viewport: &mut BoardViewport,
 ) {
     egui::CentralPanel::default()
+        // The board is drawn by the Bevy camera underneath egui, so this panel
+        // must stay transparent for the pitch to show through.
         .frame(
             egui::Frame::none()
-                .fill(APP)
+                .fill(egui::Color32::TRANSPARENT)
                 .inner_margin(egui::Margin::same(16.0)),
         )
         .show(context, |ui| {
@@ -164,8 +168,17 @@ fn board_panel(
                     .rounding(7.0)
                     .inner_margin(egui::Margin::symmetric(7.0, 6.0))
                     .show(ui, |ui| {
-                        ui.visuals_mut().override_text_color =
-                            Some(egui::Color32::from_rgb(39, 49, 61));
+                        let visuals = ui.visuals_mut();
+                        visuals.override_text_color = Some(egui::Color32::from_rgb(39, 49, 61));
+                        let idle = egui::Color32::from_rgb(232, 236, 238);
+                        let hovered = egui::Color32::from_rgb(216, 223, 227);
+                        visuals.widgets.inactive.weak_bg_fill = idle;
+                        visuals.widgets.inactive.bg_fill = idle;
+                        visuals.widgets.hovered.weak_bg_fill = hovered;
+                        visuals.widgets.hovered.bg_fill = hovered;
+                        visuals.widgets.active.weak_bg_fill = hovered;
+                        visuals.widgets.active.bg_fill = hovered;
+                        visuals.selection.bg_fill = BLUE.linear_multiply(0.55);
                         ui.horizontal_centered(|ui| {
                             tool_button(ui, interaction, Tool::Select, "Select");
                             tool_button(ui, interaction, Tool::Arrow, "Arrow");
@@ -202,6 +215,7 @@ fn transcript_panel(
     persistence: &PersistenceStatus,
     ui_state: &mut CoachingUiState,
     requests: &mut EventWriter<RequestInterpretation>,
+    enter_game: &mut EventWriter<EnterGame>,
 ) {
     egui::SidePanel::right("transcript-panel")
         .resizable(true)
@@ -229,7 +243,7 @@ fn transcript_panel(
             ui.separator();
 
             if result.output.is_some() {
-                result_view(ui, session, result);
+                result_view(ui, session, result, enter_game);
             } else {
                 transcript_view(ui, session, speech, persistence, ui_state, requests, result);
             }
@@ -327,9 +341,12 @@ fn transcript_view(
             .color(MUTED),
     );
     ui.horizontal(|ui| {
+        let add_button_width = 58.0;
+        let field_width =
+            (ui.available_width() - add_button_width - ui.spacing().item_spacing.x).max(80.0);
         let response = ui.add(
             egui::TextEdit::singleline(&mut ui_state.manual_transcript)
-                .desired_width(f32::INFINITY)
+                .desired_width(field_width)
                 .hint_text("Add coaching note"),
         );
         let submit = ui.button("Add").clicked()
@@ -352,20 +369,27 @@ fn transcript_view(
     } else {
         "Generate JSON"
     };
+    let generate_size = egui::vec2(ui.available_width(), 42.0);
     if ui
-        .add_enabled(
-            can_generate,
-            egui::Button::new(egui::RichText::new(label).strong())
-                .fill(BLUE)
-                .min_size(egui::vec2(ui.available_width(), 42.0)),
-        )
+        .add_enabled_ui(can_generate, |ui| {
+            ui.add_sized(
+                generate_size,
+                egui::Button::new(egui::RichText::new(label).strong()).fill(BLUE),
+            )
+        })
+        .inner
         .clicked()
     {
         requests.send(RequestInterpretation);
     }
 }
 
-fn result_view(ui: &mut egui::Ui, session: &mut CoachingSession, result: &mut TacticalResult) {
+fn result_view(
+    ui: &mut egui::Ui,
+    session: &mut CoachingSession,
+    result: &mut TacticalResult,
+    enter_game: &mut EventWriter<EnterGame>,
+) {
     let Some(output) = result.output.clone() else {
         return;
     };
@@ -402,6 +426,17 @@ fn result_view(ui: &mut egui::Ui, session: &mut CoachingSession, result: &mut Ta
                 .small()
                 .color(MUTED),
         );
+    }
+    ui.add_space(8.0);
+    if ui
+        .add_sized(
+            egui::vec2(ui.available_width(), 42.0),
+            egui::Button::new(egui::RichText::new("Next").strong())
+                .fill(egui::Color32::from_rgb(8, 123, 73)),
+        )
+        .clicked()
+    {
+        enter_game.send(EnterGame);
     }
 }
 

@@ -38,6 +38,9 @@ impl Default for CoachingLifecycle {
 #[derive(Event, Debug, Clone, Copy)]
 pub struct SetCoachingActive(pub bool);
 
+#[derive(Event, Debug, Clone, Copy)]
+pub struct EnterGame;
+
 impl Plugin for CoachingPlugin {
     fn build(&self, app: &mut App) {
         let restored = load_recovery()
@@ -55,6 +58,7 @@ impl Plugin for CoachingPlugin {
             .init_resource::<PersistenceStatus>()
             .add_event::<RequestInterpretation>()
             .add_event::<SetCoachingActive>()
+            .add_event::<EnterGame>()
             .add_systems(Startup, (configure_egui, spawn_board).chain())
             .add_systems(
                 Update,
