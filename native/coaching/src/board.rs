@@ -1,6 +1,6 @@
 use crate::model::{
-    create_id, Annotation, AnnotationKind, EntityRef, Point, RawSessionEvent, SessionStatus, TeamId,
-    Tool,
+    create_id, Annotation, AnnotationKind, EntityRef, Point, RawSessionEvent, SessionStatus,
+    TeamId, Tool,
 };
 use crate::replay::{find_undo_target, replay_session};
 use crate::session::CoachingSession;
@@ -19,7 +19,7 @@ pub struct CoachingOwned;
 pub struct CoachingCamera;
 
 #[derive(Component, Debug, Clone, Copy)]
-enum BoardToken {
+pub enum BoardToken {
     Player(u8),
     Ball,
 }
@@ -27,7 +27,6 @@ enum BoardToken {
 #[derive(Resource, Debug, Clone)]
 pub struct BoardViewport {
     pub rect: egui::Rect,
-    pub scale_factor: f32,
     pub visible: bool,
 }
 
@@ -35,7 +34,6 @@ impl Default for BoardViewport {
     fn default() -> Self {
         Self {
             rect: egui::Rect::NOTHING,
-            scale_factor: 1.0,
             visible: false,
         }
     }
@@ -153,8 +151,7 @@ pub fn spawn_board_entities(
                         },
                     )
                     .with_justify(JustifyText::Center),
-                    transform: Transform::from_xyz(0.0, -0.009, 0.1)
-                        .with_scale(Vec3::splat(0.004)),
+                    transform: Transform::from_xyz(0.0, -0.009, 0.1).with_scale(Vec3::splat(0.004)),
                     ..default()
                 });
             });
@@ -186,18 +183,26 @@ pub fn update_board_camera(
     let Ok(window) = windows.get_single() else {
         return;
     };
-    let scale = window.scale_factor() as f32;
+    let window_size = UVec2::new(window.physical_width(), window.physical_height());
+    if window_size.x == 0 || window_size.y == 0 {
+        return;
+    }
+    let scale = window.scale_factor();
     let position = UVec2::new(
         (viewport.rect.min.x * scale).max(0.0) as u32,
         (viewport.rect.min.y * scale).max(0.0) as u32,
-    );
+    )
+    .min(window_size - UVec2::ONE);
     let size = UVec2::new(
-        (viewport.rect.width() * scale).max(1.0) as u32,
-        (viewport.rect.height() * scale).max(1.0) as u32,
-    );
+        (viewport.rect.width() * scale).max(0.0) as u32,
+        (viewport.rect.height() * scale).max(0.0) as u32,
+    )
+    .min(window_size - position);
+
+    let usable = viewport.visible && size.x > 1 && size.y > 1;
     for mut camera in &mut cameras {
-        camera.is_active = viewport.visible;
-        camera.viewport = viewport.visible.then_some(Viewport {
+        camera.is_active = usable;
+        camera.viewport = usable.then_some(Viewport {
             physical_position: position,
             physical_size: size,
             depth: 0.0..1.0,
@@ -246,19 +251,9 @@ pub fn draw_pitch_and_annotations(
 fn draw_penalty_area(gizmos: &mut Gizmos, goal_y: f32, bottom: bool, color: Color) {
     let direction = if bottom { -1.0 } else { 1.0 };
     let center_y = goal_y + direction * 0.085;
-    gizmos.rect_2d(
-        Vec2::new(0.5, center_y),
-        0.0,
-        Vec2::new(0.56, 0.17),
-        color,
-    );
+    gizmos.rect_2d(Vec2::new(0.5, center_y), 0.0, Vec2::new(0.56, 0.17), color);
     let small_y = goal_y + direction * 0.043;
-    gizmos.rect_2d(
-        Vec2::new(0.5, small_y),
-        0.0,
-        Vec2::new(0.30, 0.086),
-        color,
-    );
+    gizmos.rect_2d(Vec2::new(0.5, small_y), 0.0, Vec2::new(0.30, 0.086), color);
 }
 
 fn draw_annotation(gizmos: &mut Gizmos, annotation: &Annotation, color: Color) {
@@ -383,9 +378,7 @@ pub fn handle_board_input(
     } else if buttons.pressed(MouseButton::Left) {
         if let Some(drag) = &mut interaction.drag {
             let points = match drag {
-                Drag::Entity {
-                    current, path, ..
-                } => {
+                Drag::Entity { current, path, .. } => {
                     *current = point;
                     path
                 }
@@ -406,7 +399,8 @@ pub fn handle_board_input(
 }
 
 pub fn append_undo(session: &mut CoachingSession) {
-    let Some(target_id) = find_undo_target(&session.session.events).map(|event| event.id().to_owned())
+    let Some(target_id) =
+        find_undo_target(&session.session.events).map(|event| event.id().to_owned())
     else {
         return;
     };

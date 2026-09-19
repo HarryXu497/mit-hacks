@@ -150,9 +150,7 @@ impl CoachingSession {
             self.playhead_ms = 0;
         }
         self.playing = !self.playing;
-        self.playback_origin = self
-            .playing
-            .then(|| (Instant::now(), self.playhead_ms));
+        self.playback_origin = self.playing.then(|| (Instant::now(), self.playhead_ms));
     }
 
     pub fn seek(&mut self, milliseconds: u64) {

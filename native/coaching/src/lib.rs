@@ -10,14 +10,14 @@ pub mod ui;
 use bevy::prelude::*;
 use bevy::sprite::ColorMaterial;
 use board::{
-    draw_pitch_and_annotations, handle_board_input, spawn_board, spawn_board_entities,
-    sync_tokens, update_board_camera, BoardInteraction, BoardViewport,
+    draw_pitch_and_annotations, handle_board_input, spawn_board, spawn_board_entities, sync_tokens,
+    update_board_camera, BoardInteraction, BoardViewport,
 };
 use interpretation::{
-    invalidate_stale_result, receive_interpretation, request_interpretation,
-    InterpretationRuntime, RequestInterpretation, TacticalResult,
+    invalidate_stale_result, receive_interpretation, request_interpretation, InterpretationRuntime,
+    RequestInterpretation, TacticalResult,
 };
-use persistence::{load_recovery, autosave_session, AutosaveTracker, PersistenceStatus};
+use persistence::{autosave_session, load_recovery, AutosaveTracker, PersistenceStatus};
 use session::{tick_session, CoachingSession};
 use speech::{receive_speech, SpeechRuntime};
 use ui::{coaching_ui, configure_egui, CoachingUiState};

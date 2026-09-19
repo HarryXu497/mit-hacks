@@ -1,6 +1,4 @@
-use crate::model::{
-    AnnotationKind, EntityRef, RawSessionEvent, Session, SessionStatus, TeamId,
-};
+use crate::model::{AnnotationKind, EntityRef, RawSessionEvent, Session, SessionStatus, TeamId};
 use crate::persistence::save_artifacts;
 use crate::replay::{effective_events, replay_session};
 use crate::session::CoachingSession;
@@ -149,10 +147,7 @@ pub fn receive_interpretation(
     }
 }
 
-pub fn invalidate_stale_result(
-    session: Res<CoachingSession>,
-    mut result: ResMut<TacticalResult>,
-) {
+pub fn invalidate_stale_result(session: Res<CoachingSession>, mut result: ResMut<TacticalResult>) {
     if (session.session.status != SessionStatus::Interpreted
         && result.state == InterpretationState::Ready)
         || (result.state == InterpretationState::Generating
@@ -171,8 +166,7 @@ pub fn deterministic_interpretation(session: &Session, mode: &str) -> Value {
         .filter(|event| {
             matches!(
                 event,
-                RawSessionEvent::EntityMoved { .. }
-                    | RawSessionEvent::AnnotationAdded { .. }
+                RawSessionEvent::EntityMoved { .. } | RawSessionEvent::AnnotationAdded { .. }
             )
         })
         .collect::<Vec<_>>();

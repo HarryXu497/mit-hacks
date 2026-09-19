@@ -1,6 +1,4 @@
-use crate::model::{
-    create_id, RawSessionEvent, TranscriptSegment, TranscriptSource,
-};
+use crate::model::{create_id, RawSessionEvent, TranscriptSegment, TranscriptSource};
 use crate::session::CoachingSession;
 use base64::Engine;
 use bevy::prelude::*;
@@ -143,10 +141,7 @@ impl Drop for SpeechRuntime {
     }
 }
 
-pub fn receive_speech(
-    mut runtime: ResMut<SpeechRuntime>,
-    mut session: ResMut<CoachingSession>,
-) {
+pub fn receive_speech(mut runtime: ResMut<SpeechRuntime>, mut session: ResMut<CoachingSession>) {
     while let Ok(reply) = runtime.replies.try_recv() {
         let generation = match &reply {
             SpeechReply::Status { generation, .. }
@@ -166,9 +161,7 @@ pub fn receive_speech(
                     runtime.partial_text.clear();
                 }
             }
-            SpeechReply::Partial {
-                item_id, text, ..
-            } => {
+            SpeechReply::Partial { item_id, text, .. } => {
                 if !runtime.seen_items.contains(&item_id) {
                     runtime.partial_text = text;
                 }
@@ -330,9 +323,9 @@ async fn network_session(
                         .await?;
                     stopping_at = Some(Instant::now());
                 }
-                SpeechCommand::Reset { generation: reset_generation }
-                    if reset_generation >= generation =>
-                {
+                SpeechCommand::Reset {
+                    generation: reset_generation,
+                } if reset_generation >= generation => {
                     let _ = write.close().await;
                     let _ = replies.send(SpeechReply::Status {
                         generation,
@@ -516,6 +509,7 @@ mod tests {
         let mut resampler = LinearResampler::new(48_000, 24_000);
         let output = resampler.process(&[0.5; 480]);
         assert!((output.len() as i32 - 240).abs() <= 1);
-        assert!(output.iter().all(|sample| *sample > 0));
+        // The first sample interpolates from the resampler's initial silence.
+        assert!(output.iter().skip(1).all(|sample| *sample > 0));
     }
 }

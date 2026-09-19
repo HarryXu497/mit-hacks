@@ -86,11 +86,8 @@ pub fn save_artifacts(session: &Session, output: &Value) -> Result<(PathBuf, Pat
         .validate_contract()
         .map_err(anyhow::Error::msg)
         .context("validating session contract")?;
-    let directory = PathBuf::from("output")
-        .join("sessions")
-        .join(&session.id);
-    fs::create_dir_all(&directory)
-        .with_context(|| format!("creating {}", directory.display()))?;
+    let directory = PathBuf::from("output").join("sessions").join(&session.id);
+    fs::create_dir_all(&directory).with_context(|| format!("creating {}", directory.display()))?;
     let session_path = directory.join("session.json");
     let tactics_path = directory.join("tactical-output.json");
     atomic_json_write(&session_path, session)?;
@@ -103,11 +100,8 @@ pub fn export_tactical_json(session: &Session, output: &Value) -> Result<PathBuf
         .validate_contract()
         .map_err(anyhow::Error::msg)
         .context("validating session contract")?;
-    let directory = PathBuf::from("output")
-        .join("sessions")
-        .join(&session.id);
-    fs::create_dir_all(&directory)
-        .with_context(|| format!("creating {}", directory.display()))?;
+    let directory = PathBuf::from("output").join("sessions").join(&session.id);
+    fs::create_dir_all(&directory).with_context(|| format!("creating {}", directory.display()))?;
     let path = directory.join("tactical-output.json");
     atomic_json_write(&path, output)?;
     Ok(path)
@@ -118,7 +112,9 @@ fn atomic_json_write(path: &Path, value: &impl serde::Serialize) -> Result<()> {
     fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
     let temp = parent.join(format!(
         ".{}.{}.tmp",
-        path.file_name().and_then(|name| name.to_str()).unwrap_or("data"),
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("data"),
         std::process::id()
     ));
     let bytes = serde_json::to_vec_pretty(value).context("serializing JSON")?;

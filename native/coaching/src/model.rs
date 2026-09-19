@@ -284,11 +284,7 @@ impl Session {
                     }
                 }
                 RawSessionEvent::AnnotationAdded { annotation, .. } => {
-                    if annotation
-                        .points
-                        .iter()
-                        .any(|point| !point.is_normalized())
-                    {
+                    if annotation.points.iter().any(|point| !point.is_normalized()) {
                         return Err("annotation coordinates must be normalized".into());
                     }
                 }
@@ -349,7 +345,7 @@ mod tests {
                 to: Point { x: 2.0, y: 0.0 },
                 path: Vec::new(),
             }],
-            ..default()
+            ..Session::default()
         };
         assert!(session.validate_contract().is_err());
     }

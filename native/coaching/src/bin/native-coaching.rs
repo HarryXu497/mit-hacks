@@ -12,8 +12,6 @@ fn main() {
                     primary_window: Some(Window {
                         title: "Tactic Lab".to_owned(),
                         resolution: WindowResolution::new(1440.0, 900.0),
-                        min_width: 960.0,
-                        min_height: 680.0,
                         resizable: true,
                         present_mode: PresentMode::AutoVsync,
                         ..default()

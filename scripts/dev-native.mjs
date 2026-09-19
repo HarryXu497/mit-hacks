@@ -4,6 +4,10 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const cargoHome = path.join(process.env.HOME ?? "", ".cargo", "bin");
+if (cargoHome && !process.env.PATH?.split(":").includes(cargoHome)) {
+  process.env.PATH = `${cargoHome}${path.delimiter}${process.env.PATH ?? ""}`;
+}
 const cargoCheck = spawnSync("cargo", ["--version"], {
   cwd: root,
   encoding: "utf8",
@@ -12,7 +16,10 @@ const cargoCheck = spawnSync("cargo", ["--version"], {
 
 if (cargoCheck.error?.code === "ENOENT") {
   console.error(
-    "Rust/Cargo is required for native coaching but was not found on PATH. Install Rust 1.75+ from https://rustup.rs and retry.",
+    "Rust/Cargo is required for native coaching but was not found on PATH.\n" +
+      "Install Rust 1.75+ from https://rustup.rs, then run:\n" +
+      '  source "$HOME/.cargo/env"\n' +
+      "Or add that line to ~/.zshrc so new terminals pick up Cargo automatically.",
   );
   process.exit(1);
 }

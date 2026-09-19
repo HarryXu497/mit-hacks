@@ -1,6 +1,4 @@
-use crate::model::{
-    BoardState, EntityRef, RawSessionEvent, TranscriptSegment,
-};
+use crate::model::{BoardState, EntityRef, RawSessionEvent, TranscriptSegment};
 use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -23,7 +21,9 @@ pub fn effective_events(events: &[RawSessionEvent]) -> Vec<&RawSessionEvent> {
 
     events
         .iter()
-        .filter(|event| matches!(event, RawSessionEvent::Undo { .. }) || !undone.contains(event.id()))
+        .filter(|event| {
+            matches!(event, RawSessionEvent::Undo { .. }) || !undone.contains(event.id())
+        })
         .collect()
 }
 
@@ -122,7 +122,13 @@ mod tests {
             },
         ];
 
-        assert_eq!(replay_session(&events, None).board.players[2].position, Point { x: 0.7, y: 0.23 });
-        assert_eq!(replay_session(&events, None).effective_event_ids, vec!["undo-1"]);
+        assert_eq!(
+            replay_session(&events, None).board.players[2].position,
+            Point { x: 0.7, y: 0.23 }
+        );
+        assert_eq!(
+            replay_session(&events, None).effective_event_ids,
+            vec!["undo-1"]
+        );
     }
 }

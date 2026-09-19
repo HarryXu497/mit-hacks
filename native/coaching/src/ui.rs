@@ -1,10 +1,6 @@
 use crate::board::{append_undo, BoardInteraction, BoardViewport};
-use crate::interpretation::{
-    InterpretationState, RequestInterpretation, TacticalResult,
-};
-use crate::model::{
-    create_id, RawSessionEvent, SessionStatus, Tool, TranscriptSource,
-};
+use crate::interpretation::{InterpretationState, RequestInterpretation, TacticalResult};
+use crate::model::{create_id, RawSessionEvent, SessionStatus, Tool, TranscriptSource};
 use crate::persistence::{export_tactical_json, PersistenceStatus};
 use crate::replay::{find_undo_target, replay_session};
 use crate::session::CoachingSession;
@@ -33,11 +29,11 @@ pub fn configure_egui(mut contexts: EguiContexts) {
     style.visuals.panel_fill = PANEL;
     style.visuals.window_fill = PANEL;
     style.visuals.override_text_color = Some(TEXT);
-    style.visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, BORDER);
+    style.visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0_f32, BORDER);
     style.visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(21, 31, 43);
     style.visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(27, 39, 53);
     style.visuals.selection.bg_fill = BLUE.linear_multiply(0.35);
-    style.visuals.selection.stroke = egui::Stroke::new(1.0, BLUE);
+    style.visuals.selection.stroke = egui::Stroke::new(1.0_f32, BLUE);
     style.spacing.item_spacing = egui::vec2(9.0, 8.0);
     context.set_style(style);
 }
@@ -149,17 +145,17 @@ fn board_panel(
             let board_height = (available.height() - toolbar_height - 8.0).max(120.0);
             let board_width = (board_height * 0.875).min(available.width().max(120.0));
             let board_height = (board_width / 0.875).min(board_height);
-            let center = egui::pos2(
-                available.center().x,
-                available.min.y + board_height * 0.5,
-            );
-            let field = egui::Rect::from_center_size(center, egui::vec2(board_width, board_height));
+            let center = egui::pos2(available.center().x, available.min.y + board_height * 0.5);
+            let field = egui::Rect::from_center_size(center, egui::vec2(board_width, board_height))
+                .intersect(ui.max_rect());
             viewport.rect = field;
-            viewport.scale_factor = context.pixels_per_point();
             viewport.visible = field.width() > 10.0 && field.height() > 10.0;
 
             let toolbar_rect = egui::Rect::from_min_size(
-                egui::pos2(field.center().x - (board_width.min(500.0) * 0.5), field.max.y + 5.0),
+                egui::pos2(
+                    field.center().x - (board_width.min(500.0) * 0.5),
+                    field.max.y + 5.0,
+                ),
                 egui::vec2(board_width.min(500.0), toolbar_height),
             );
             ui.allocate_ui_at_rect(toolbar_rect, |ui| {
@@ -264,7 +260,10 @@ fn transcript_view(
                 }
             });
     } else {
-        ui.colored_label(egui::Color32::from_rgb(220, 170, 90), "No microphone detected");
+        ui.colored_label(
+            egui::Color32::from_rgb(220, 170, 90),
+            "No microphone detected",
+        );
     }
     if let Some(error) = &speech.error {
         ui.colored_label(egui::Color32::from_rgb(235, 170, 120), error);
@@ -281,7 +280,10 @@ fn transcript_view(
             if replay.transcripts.is_empty() && speech.partial_text.is_empty() {
                 ui.vertical_centered(|ui| {
                     ui.add_space(70.0);
-                    ui.label(egui::RichText::new("Speech and manual notes will appear here.").color(MUTED));
+                    ui.label(
+                        egui::RichText::new("Speech and manual notes will appear here.")
+                            .color(MUTED),
+                    );
                 });
             }
             for segment in replay.transcripts {
@@ -319,7 +321,11 @@ fn transcript_view(
         });
 
     ui.separator();
-    ui.label(egui::RichText::new("MANUAL TRANSCRIPT").small().color(MUTED));
+    ui.label(
+        egui::RichText::new("MANUAL TRANSCRIPT")
+            .small()
+            .color(MUTED),
+    );
     ui.horizontal(|ui| {
         let response = ui.add(
             egui::TextEdit::singleline(&mut ui_state.manual_transcript)
@@ -359,11 +365,7 @@ fn transcript_view(
     }
 }
 
-fn result_view(
-    ui: &mut egui::Ui,
-    session: &mut CoachingSession,
-    result: &mut TacticalResult,
-) {
+fn result_view(ui: &mut egui::Ui, session: &mut CoachingSession, result: &mut TacticalResult) {
     let Some(output) = result.output.clone() else {
         return;
     };
@@ -456,7 +458,11 @@ fn timeline_panel(context: &egui::Context, session: &mut CoachingSession) {
                     .color(BLUE),
                 );
                 ui.separator();
-                ui.label(egui::RichText::new("Transcript segments").small().color(MUTED));
+                ui.label(
+                    egui::RichText::new("Transcript segments")
+                        .small()
+                        .color(MUTED),
+                );
                 ui.label(
                     egui::RichText::new(
                         replay_session(&session.session.events, None)
@@ -487,10 +493,7 @@ fn reset_dialog(
                 if ui.button("Cancel").clicked() {
                     ui_state.confirm_reset = false;
                 }
-                if ui
-                    .add(egui::Button::new("Reset").fill(RED))
-                    .clicked()
-                {
+                if ui.add(egui::Button::new("Reset").fill(RED)).clicked() {
                     session.reset();
                     speech.reset(session.generation);
                     ui_state.manual_transcript.clear();
@@ -503,7 +506,7 @@ fn reset_dialog(
 fn panel_frame(fill: egui::Color32) -> egui::Frame {
     egui::Frame::none()
         .fill(fill)
-        .stroke(egui::Stroke::new(1.0, BORDER))
+        .stroke(egui::Stroke::new(1.0_f32, BORDER))
         .inner_margin(egui::Margin::symmetric(14.0, 9.0))
 }
 
