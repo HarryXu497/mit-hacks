@@ -20,11 +20,11 @@ The initial native build downloads and compiles Bevy and Rapier and can take sev
 
 Orange moves with WASD and jumps with Space. Blue moves with the arrow keys and jumps with Enter. Close the window to exit.
 
-Press **C** to switch between the default full-field orthographic overview and the smooth ball-following perspective broadcast camera. The broadcast view may crop distant portions of the ground. Camera switching does not affect physics or controls.
+The game permanently uses the smooth ball-following perspective broadcast camera. It may crop distant portions of the ground; camera tracking does not affect physics or controls.
 
 The playable layout is now a 36 x 24 field with 8-unit goal openings and 5-unit goal height. Player/ball sizes, gravity, acceleration, jump force, damping, rewards, action space, and observation interface are unchanged; the enlarged field and goal bounds are level geometry that the training setup must share.
 
-Set `$env:CANOPY_CAMERA = 'broadcast'` before launching to start in broadcast mode (also works with capture mode). Remove it with `Remove-Item Env:CANOPY_CAMERA` to restore the default. The new stepped spectator terraces are decorative and have no colliders.
+The stepped spectator terraces are decorative and have no colliders.
 
 ## Capture the actual rendered scene
 

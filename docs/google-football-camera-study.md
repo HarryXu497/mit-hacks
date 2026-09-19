@@ -39,8 +39,8 @@ Source: [pitch and goal constants](https://github.com/google-research/football/b
 
 ## Recommended translation to our scene
 
-1. Keep a fixed whole-pitch overview as the first/default presentation. It matches the supplied inspiration and makes agent behavior easy to inspect. Our current camera is orthographic, at `(0, 36, 36)`, looking toward `(0, 2, -3.5)`, with a 48-unit horizontal span.
-2. Explore a second, optional broadcast view later: elevated on the long sideline, gentle perspective, restrained ball/player tracking, and smooth motion. Do not replace the overview with a camera that hides teammates without an explicit choice.
+1. Use the elevated broadcast view as the permanent presentation camera: gentle perspective, restrained ball/player tracking, and smooth motion. The current camera sits at a 30-unit height and 42-unit distance from its smoothed target, with a 38-degree vertical field of view.
+2. Because the broadcast view can crop distant ground, preserve the clear pitch markings, readable goals, and team silhouettes at its closest framing. Do not add foreground foliage that can hide the ball or players.
 3. Give the pitch more of the image. A useful initial art-direction target is roughly 75–85% of screen width, with enough margin for both goals. This is a proposed composition target, not a number taken from Google.
 4. Establish three readable layers: unobstructed playing surface; low, clear runoff and boundary props; taller jungle terraces, huts, cliffs, and waterfall backdrop. Put foreground leaves outside the ball/player sightlines.
 5. Suggest stadium capacity through repeated low-poly spectator terraces and horizontal rows of banners. Broader surrounding structures can create scale without changing gameplay dimensions.
@@ -55,6 +55,6 @@ Changing the true field or goal dimensions affects the training task and must be
 
 If agents consume rendered pixels, even a camera or art change alters their observations; confirm whether training uses state vectors or pixels before connecting this presentation to training.
 
-Before implementation, choose whether the priority is a permanently visible full field or a closer action-following broadcast view. My recommendation is full-field first, optional broadcast second.
+The implementation now prioritizes the closer action-following broadcast presentation permanently; the full-field overview remains a useful future debug camera if agent inspection later requires it.
 
 Additional reference: [Google's introduction and gameplay examples](https://research.google/blog/introducing-google-research-football-a-novel-reinforcement-learning-environment/).
