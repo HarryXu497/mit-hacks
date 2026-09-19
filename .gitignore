@@ -67,3 +67,5 @@ wandb/
 *.tmp
 *.temp
 .cache/
+
+docs/
