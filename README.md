@@ -1,10 +1,28 @@
 # Tactic Lab
 
-A browser-based 5-v-5 soccer coaching board that keeps player, ball,
+Tactic Lab is a 5-v-5 soccer coaching board that keeps player, ball,
 annotation, and transcript actions on one synchronized timeline and turns the
-recorded session into structured tactical JSON.
+recorded session into structured tactical JSON. The primary implementation is
+now the native Rust/Bevy client under `native/coaching`; the React application
+remains runnable as a migration reference.
 
-## Run locally
+## Run the native client
+
+Install Rust 1.75+, Node.js 20+, and the platform linker prerequisites, then:
+
+```bash
+npm install
+cp .env.example .env
+# Add your OPENAI_API_KEY and interpretation model to .env
+npm run dev:native
+```
+
+The launcher runs the local credential-holding service and native application;
+no browser is required. See
+[docs/native-coaching.md](./docs/native-coaching.md) for platform setup,
+permissions, storage, and verification.
+
+## Run the React reference
 
 ```bash
 npm install
