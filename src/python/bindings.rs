@@ -122,8 +122,8 @@ impl PyCubeSoccerEnv {
     }
 
     /// Set a team's whole-team tactic params directly.
-    fn set_team_params(&mut self, team: &str, defender_depth: f32, attacker_push: f32, width: f32, spacing: f32) -> PyResult<()> {
-        self.env.set_team_params(parse_team(team)?, TacticParams { defender_depth, attacker_push, width, spacing });
+    fn set_team_params(&mut self, team: &str, defender_depth: f32, attacker_push: f32, width: f32, spacing: f32, press: f32, line_height: f32, commitment: f32) -> PyResult<()> {
+        self.env.set_team_params(parse_team(team)?, TacticParams { defender_depth, attacker_push, width, spacing, press, line_height, commitment });
         Ok(())
     }
 
@@ -142,8 +142,8 @@ impl PyCubeSoccerEnv {
     }
 
     /// Override a single player's (by index) tactic params.
-    fn set_player_params(&mut self, team: &str, index: usize, defender_depth: f32, attacker_push: f32, width: f32, spacing: f32) -> PyResult<()> {
-        self.env.set_player_params(parse_team(team)?, index, TacticParams { defender_depth, attacker_push, width, spacing });
+    fn set_player_params(&mut self, team: &str, index: usize, defender_depth: f32, attacker_push: f32, width: f32, spacing: f32, press: f32, line_height: f32, commitment: f32) -> PyResult<()> {
+        self.env.set_player_params(parse_team(team)?, index, TacticParams { defender_depth, attacker_push, width, spacing, press, line_height, commitment });
         Ok(())
     }
 

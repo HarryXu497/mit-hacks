@@ -14,7 +14,9 @@ use crate::systems::physics::configure_physics;
 use crate::entities::{spawn_arena, spawn_field, spawn_goals, spawn_players, spawn_ball, Ball, CubePlayer};
 use crate::input::{AIActions, apply_ai_actions};
 use crate::game::{GameState, GoalScoredEvent, BallTouchedEvent};
-use crate::systems::movement::apply_player_movement;
+use crate::systems::movement::{apply_player_movement, clamp_velocities};
+use crate::systems::status_effects::{tick_status_effects, apply_status_forces, ImpulseEvent};
+use crate::systems::superpowers::{tick_superpower_cooldowns, activate_superpowers};
 use crate::systems::possession::{tick_cooldowns, update_possession, Possession};
 use crate::systems::scoring::detect_goals;
 use crate::systems::heuristic_ai::{apply_heuristic_ai, AiControlled, TeamTactics};
@@ -50,7 +52,7 @@ pub struct LatestRewards(pub Vec<f32>);
 /// Build the flat observation vector into `LatestObs` after the sim advances.
 fn extract_observations(
     mut latest: ResMut<LatestObs>,
-    player_query: Query<(Entity, &Transform, &Velocity, &CubePlayer)>,
+    player_query: Query<(Entity, &Transform, &Velocity, &CubePlayer, Option<&crate::systems::superpowers::Superpower>)>,
     ball_query: Query<(&Transform, &Velocity), With<Ball>>,
     game_state: Res<GameState>,
     possession: Res<Possession>,
@@ -173,14 +175,20 @@ pub fn build_headless_app() -> App {
         .init_resource::<RewardCalculator>()
         .init_resource::<TeamTactics>()
         .add_event::<GoalScoredEvent>()
-        .add_event::<BallTouchedEvent>();
+        .add_event::<BallTouchedEvent>()
+        .add_event::<ImpulseEvent>();
 
     app.add_systems(
         Update,
         (
             apply_ai_actions,      // Orange gets RL actions; Blue's slice is ignored...
             apply_heuristic_ai,    // ...then the heuristic overrides Blue's inputs.
+            tick_superpower_cooldowns,
+            activate_superpowers,
+            tick_status_effects,
             apply_player_movement,
+            apply_status_forces,
+            clamp_velocities,
             (tick_cooldowns, update_possession).chain(),
             detect_goals,
             handle_goal_headless,

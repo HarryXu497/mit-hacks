@@ -3,25 +3,25 @@ use bevy_rapier3d::prelude::*;
 use crate::entities::{CubePlayer, PlayerInput};
 use crate::game::config::*;
 
+/// Next horizontal velocity `(x, z)` from control input, folding in tactic
+/// speed/accel factors. Pure (no ECS): `input` is `(move_x, move_z)`, `current`
+/// and the return are `(x, z)`.
+pub fn next_horizontal_velocity(input: Vec2, current: Vec2, speed_factor: f32, accel_factor: f32) -> Vec2 {
+    let max_speed = CUBE_MAX_SPEED * speed_factor;
+    let target = input * max_speed;
+    let lerp_rate = (0.2 * accel_factor).clamp(0.0, 1.0);
+    current.lerp(target, lerp_rate)
+}
+
 pub fn apply_player_movement(
-    mut query: Query<(&PlayerInput, &mut Velocity, &CubePlayer, &Transform)>,
+    mut query: Query<(&PlayerInput, &mut Velocity, &CubePlayer, &Transform, &crate::systems::status_effects::StatusEffects)>,
     rapier_context: Res<RapierContext>,
 ) {
-    for (input, mut velocity, _player, transform) in query.iter_mut() {
-        // Movement in world coordinates (simple and direct)
-        let target_velocity = Vec3::new(
-            input.movement.x * CUBE_MAX_SPEED,
-            velocity.linvel.y,
-            input.movement.y * CUBE_MAX_SPEED,
-        );
-
-        // Smooth acceleration
-        let current_horizontal = Vec3::new(velocity.linvel.x, 0.0, velocity.linvel.z);
-        let target_horizontal = Vec3::new(target_velocity.x, 0.0, target_velocity.z);
-        let new_horizontal = current_horizontal.lerp(target_horizontal, 0.2);
-
-        velocity.linvel.x = new_horizontal.x;
-        velocity.linvel.z = new_horizontal.z;
+    for (input, mut velocity, _player, transform, status) in query.iter_mut() {
+        let current_h = Vec2::new(velocity.linvel.x, velocity.linvel.z);
+        let new_h = next_horizontal_velocity(input.movement, current_h, status.speed_factor, status.accel_factor);
+        velocity.linvel.x = new_h.x;
+        velocity.linvel.z = new_h.y; // Vec2.y is the world-Z component
 
         // Rotate cube to face movement direction using angular velocity (physics-based)
         if input.movement.length() > 0.1 {
@@ -74,16 +74,49 @@ pub fn apply_player_movement(
     }
 }
 
-/// Clamp player velocity to max speed
-pub fn clamp_velocities(
-    mut query: Query<&mut Velocity, With<CubePlayer>>,
-) {
+/// Safety cap: bound horizontal speed to MAX_SPEED_SAFETY * CUBE_MAX_SPEED so a
+/// knockback/force spike can't blow up the physics. Normal control never exceeds
+/// 1x, so this only binds during external pushes.
+pub fn clamp_velocities(mut query: Query<&mut Velocity, With<CubePlayer>>) {
+    let cap = CUBE_MAX_SPEED * MAX_SPEED_SAFETY;
     for mut velocity in query.iter_mut() {
         let horizontal_speed = Vec2::new(velocity.linvel.x, velocity.linvel.z).length();
-        if horizontal_speed > CUBE_MAX_SPEED {
-            let factor = CUBE_MAX_SPEED / horizontal_speed;
+        if horizontal_speed > cap {
+            let factor = cap / horizontal_speed;
             velocity.linvel.x *= factor;
             velocity.linvel.z *= factor;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frozen_cube_velocity_decays_to_zero() {
+        let mut v = Vec2::new(10.0, 0.0);
+        for _ in 0..40 {
+            v = next_horizontal_velocity(Vec2::new(1.0, 0.0), v, 0.0, 1.0);
+        }
+        assert!(v.length() < 0.01, "frozen cube velocity should decay to ~0, got {:?}", v);
+    }
+
+    #[test]
+    fn normal_cube_approaches_max_speed() {
+        let mut v = Vec2::ZERO;
+        for _ in 0..100 {
+            v = next_horizontal_velocity(Vec2::new(1.0, 0.0), v, 1.0, 1.0);
+        }
+        assert!((v.x - CUBE_MAX_SPEED).abs() < 0.1, "should approach CUBE_MAX_SPEED, got {}", v.x);
+    }
+
+    #[test]
+    fn speed_factor_scales_top_speed() {
+        let mut v = Vec2::ZERO;
+        for _ in 0..100 {
+            v = next_horizontal_velocity(Vec2::new(1.0, 0.0), v, 0.5, 1.0);
+        }
+        assert!((v.x - CUBE_MAX_SPEED * 0.5).abs() < 0.1, "half speed_factor => half top speed, got {}", v.x);
     }
 }

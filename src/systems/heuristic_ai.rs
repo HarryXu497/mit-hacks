@@ -13,6 +13,7 @@ const SUPPORT_STOP_DIST: f32 = 0.6;   // support players stop when this close to
 const REPULSION_RADIUS: f32 = 2.5;    // teammates within this distance push each other apart
 const REPULSION_STRENGTH: f32 = 0.8;  // how hard the spacing push is
 const HANDOFF_MARGIN: f32 = 1.5;      // a teammate must be this much closer to steal the ball role
+const SECONDARY_PRESS_FACTOR: f32 = 0.4; // non-nearest supports press this fraction as hard
 
 /// Tunable positioning parameters for the heuristic team AI.
 /// `Balanced` (see [`Tactic::params`]) reproduces the original hardcoded values.
@@ -26,6 +27,12 @@ pub struct TacticParams {
     pub width: f32,
     /// Teammate-repulsion strength multiplier (1.0 = legacy).
     pub spacing: f32,
+    /// Off-ball players' collapse toward the ball (0.0 = hold shape / legacy).
+    pub press: f32,
+    /// Whole-block forward/back bias toward the opp goal (0.0 = legacy).
+    pub line_height: f32,
+    /// Fraction of supports playing as attackers (0.5 = legacy alternation).
+    pub commitment: f32,
 }
 
 impl TacticParams {
@@ -37,60 +44,88 @@ impl TacticParams {
         if parts.is_empty() || total.abs() < 1e-6 {
             return Tactic::Balanced.params();
         }
-        let mut acc = TacticParams { defender_depth: 0.0, attacker_push: 0.0, width: 0.0, spacing: 0.0 };
+        let mut acc = TacticParams {
+            defender_depth: 0.0, attacker_push: 0.0, width: 0.0, spacing: 0.0,
+            press: 0.0, line_height: 0.0, commitment: 0.0,
+        };
         for (p, w) in parts {
             let f = w / total;
             acc.defender_depth += p.defender_depth * f;
             acc.attacker_push += p.attacker_push * f;
             acc.width += p.width * f;
             acc.spacing += p.spacing * f;
+            acc.press += p.press * f;
+            acc.line_height += p.line_height * f;
+            acc.commitment += p.commitment * f;
         }
         acc
     }
 }
 
-/// The named tactic presets. Expand toward ~10 for the coaching-game end goal.
-// TODO(vocab): add more presets (e.g. Counter, Tiki-Taka, Park-the-Bus, ...).
+/// The named tactic presets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Tactic { Balanced, HighPress, LowBlock, Wide }
+pub enum Tactic {
+    Balanced, HighPress, Gegenpress, LowBlock, ParkTheBus,
+    CounterAttack, Possession, WingPlay, NarrowMidBlock, AllOutAttack,
+}
 
 impl Tactic {
-    pub const ALL: [Tactic; 4] = [Tactic::Balanced, Tactic::HighPress, Tactic::LowBlock, Tactic::Wide];
+    pub const ALL: [Tactic; 10] = [
+        Tactic::Balanced, Tactic::HighPress, Tactic::Gegenpress, Tactic::LowBlock,
+        Tactic::ParkTheBus, Tactic::CounterAttack, Tactic::Possession, Tactic::WingPlay,
+        Tactic::NarrowMidBlock, Tactic::AllOutAttack,
+    ];
 
     pub fn params(self) -> TacticParams {
+        // fields: defender_depth, attacker_push, width, spacing, press, line_height, commitment
         match self {
-            Tactic::Balanced  => TacticParams { defender_depth: 0.50, attacker_push: 0.40, width: 1.0, spacing: 1.0 },
-            Tactic::HighPress => TacticParams { defender_depth: 0.25, attacker_push: 0.65, width: 1.0, spacing: 1.1 },
-            Tactic::LowBlock  => TacticParams { defender_depth: 0.80, attacker_push: 0.15, width: 0.8, spacing: 0.9 },
-            Tactic::Wide      => TacticParams { defender_depth: 0.50, attacker_push: 0.45, width: 1.5, spacing: 1.3 },
+            Tactic::Balanced       => TacticParams { defender_depth: 0.50, attacker_push: 0.40, width: 1.0, spacing: 1.0, press: 0.00, line_height:  0.00, commitment: 0.50 },
+            Tactic::HighPress      => TacticParams { defender_depth: 0.30, attacker_push: 0.65, width: 1.0, spacing: 1.1, press: 0.70, line_height:  0.30, commitment: 0.60 },
+            Tactic::Gegenpress     => TacticParams { defender_depth: 0.25, attacker_push: 0.60, width: 0.9, spacing: 1.2, press: 0.95, line_height:  0.35, commitment: 0.70 },
+            Tactic::LowBlock       => TacticParams { defender_depth: 0.85, attacker_push: 0.15, width: 0.8, spacing: 0.9, press: 0.00, line_height: -0.30, commitment: 0.25 },
+            Tactic::ParkTheBus     => TacticParams { defender_depth: 0.95, attacker_push: 0.10, width: 0.7, spacing: 0.8, press: 0.00, line_height: -0.45, commitment: 0.10 },
+            Tactic::CounterAttack  => TacticParams { defender_depth: 0.75, attacker_push: 0.70, width: 1.1, spacing: 1.1, press: 0.10, line_height: -0.20, commitment: 0.40 },
+            Tactic::Possession     => TacticParams { defender_depth: 0.45, attacker_push: 0.45, width: 1.2, spacing: 1.4, press: 0.20, line_height:  0.10, commitment: 0.50 },
+            Tactic::WingPlay       => TacticParams { defender_depth: 0.50, attacker_push: 0.50, width: 1.6, spacing: 1.3, press: 0.10, line_height:  0.00, commitment: 0.55 },
+            Tactic::NarrowMidBlock => TacticParams { defender_depth: 0.55, attacker_push: 0.35, width: 0.7, spacing: 0.9, press: 0.35, line_height:  0.00, commitment: 0.40 },
+            Tactic::AllOutAttack   => TacticParams { defender_depth: 0.40, attacker_push: 0.75, width: 1.3, spacing: 1.2, press: 0.45, line_height:  0.40, commitment: 0.85 },
         }
     }
 
     pub fn next(self) -> Tactic {
-        match self {
-            Tactic::Balanced => Tactic::HighPress,
-            Tactic::HighPress => Tactic::LowBlock,
-            Tactic::LowBlock => Tactic::Wide,
-            Tactic::Wide => Tactic::Balanced,
-        }
+        let all = Tactic::ALL;
+        let i = all.iter().position(|&t| t == self).unwrap();
+        all[(i + 1) % all.len()]
     }
 
     pub fn name(self) -> &'static str {
         match self {
             Tactic::Balanced => "Balanced",
             Tactic::HighPress => "High Press",
+            Tactic::Gegenpress => "Gegenpress",
             Tactic::LowBlock => "Low Block",
-            Tactic::Wide => "Wide",
+            Tactic::ParkTheBus => "Park the Bus",
+            Tactic::CounterAttack => "Counter-Attack",
+            Tactic::Possession => "Possession",
+            Tactic::WingPlay => "Wing Play",
+            Tactic::NarrowMidBlock => "Narrow Mid-Block",
+            Tactic::AllOutAttack => "All-Out Attack",
         }
     }
 
-    /// Resolve a preset by name, case- and space-insensitive; `None` if unknown.
+    /// Resolve a preset by name, case-/space-/hyphen-insensitive; `None` if unknown.
     pub fn from_name(s: &str) -> Option<Tactic> {
-        match s.trim().to_lowercase().replace(' ', "").as_str() {
+        match s.trim().to_lowercase().replace([' ', '-'], "").as_str() {
             "balanced" => Some(Tactic::Balanced),
             "highpress" => Some(Tactic::HighPress),
+            "gegenpress" => Some(Tactic::Gegenpress),
             "lowblock" => Some(Tactic::LowBlock),
-            "wide" => Some(Tactic::Wide),
+            "parkthebus" => Some(Tactic::ParkTheBus),
+            "counterattack" => Some(Tactic::CounterAttack),
+            "possession" => Some(Tactic::Possession),
+            "wingplay" => Some(Tactic::WingPlay),
+            "narrowmidblock" => Some(Tactic::NarrowMidBlock),
+            "alloutattack" => Some(Tactic::AllOutAttack),
             _ => None,
         }
     }
@@ -116,6 +151,8 @@ impl TeamDirective {
     pub fn set_base(&mut self, p: TacticParams) { self.base = p; }
     pub fn set_player(&mut self, index: usize, p: TacticParams) { self.per_player.insert(index, p); }
     pub fn clear_overrides(&mut self) { self.per_player.clear(); }
+    /// The team-wide base params (ignoring per-player overrides).
+    pub fn base_params(&self) -> TacticParams { self.base }
 }
 
 impl Default for TeamDirective {
@@ -177,13 +214,43 @@ pub fn heuristic_movement(team: Team, player_pos: Vec3, ball_pos: Vec3, ball_vel
 /// `defender` covers the lane toward the team's own goal; otherwise the player
 /// pushes up-field as an attacking outlet, offset in Z for width.
 fn support_target(team: Team, defender: bool, ball_pos: Vec3, p: &TacticParams) -> Vec3 {
-    if defender {
+    let mut t = if defender {
         let gx = own_goal_x(team);
         Vec3::new(ball_pos.x + (gx - ball_pos.x) * p.defender_depth, ball_pos.y, ball_pos.z * 0.4 * p.width)
     } else {
         let gx = opp_goal_x(team);
         Vec3::new(ball_pos.x + (gx - ball_pos.x) * p.attacker_push, ball_pos.y, -ball_pos.z * 0.6 * p.width)
+    };
+    // Whole-block engagement line: shove the target toward the opp goal by
+    // line_height * half-field, clamped to the pitch. Neutral 0.0 = no change.
+    let forward = opp_goal_x(team).signum();
+    t.x += p.line_height * (FIELD_WIDTH / 2.0) * forward;
+    t.x = t.x.clamp(-FIELD_WIDTH / 2.0, FIELD_WIDTH / 2.0);
+    t
+}
+
+/// Which support sorted-positions play as attackers, given `commitment`.
+/// Neutral 0.5 reproduces the legacy alternation (odd positions = attackers).
+/// Deviations convert the deepest defenders (low positions) up, or the
+/// forwardmost attackers (high positions) back, to hit the target count.
+fn attacker_positions(n_sup: usize, commitment: f32) -> Vec<bool> {
+    let n_att = ((commitment * n_sup as f32).floor() as usize).min(n_sup);
+    let mut is_att: Vec<bool> = (0..n_sup).map(|s| s % 2 == 1).collect(); // legacy alternation
+    let alt = is_att.iter().filter(|&&a| a).count();
+    if n_att > alt {
+        let mut need = n_att - alt;
+        for s in 0..n_sup {
+            if need == 0 { break; }
+            if !is_att[s] { is_att[s] = true; need -= 1; }
+        }
+    } else if n_att < alt {
+        let mut need = alt - n_att;
+        for s in (0..n_sup).rev() {
+            if need == 0 { break; }
+            if is_att[s] { is_att[s] = false; need -= 1; }
+        }
     }
+    is_att
 }
 
 /// Choose which player (by `player.index`) should hold the ball-handler role,
@@ -235,10 +302,23 @@ pub fn assign_team_movements(
 
     let mut support_order: Vec<usize> = (0..n).filter(|&k| players[k].index != handler_index).collect();
     support_order.sort_by_key(|&k| players[k].index);
+    // Commitment (team-level): how many supports are attackers vs defenders.
+    let commitment = directive.base_params().commitment;
+    let is_att = attacker_positions(support_order.len(), commitment);
     let mut defender_of = vec![false; n];
     for (s, &k) in support_order.iter().enumerate() {
-        defender_of[k] = s % 2 == 0;
+        defender_of[k] = !is_att[s];
     }
+
+    // Press: the support nearest the ball presses hardest.
+    let nearest_support = support_order
+        .iter()
+        .copied()
+        .min_by(|&a, &b| {
+            players[a].pos.distance_squared(ball_pos)
+                .partial_cmp(&players[b].pos.distance_squared(ball_pos))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
     let mut out = vec![(Vec2::ZERO, false); n];
     for i in 0..n {
@@ -248,7 +328,9 @@ pub fn assign_team_movements(
         let (mut base, jump) = if players[i].index == handler_index {
             heuristic_movement(team, pos, ball_pos, ball_vel)
         } else {
-            let target = support_target(team, defender_of[i], ball_pos, &p);
+            let mut target = support_target(team, defender_of[i], ball_pos, &p);
+            let press_w = p.press * if Some(i) == nearest_support { 1.0 } else { SECONDARY_PRESS_FACTOR };
+            target = target.lerp(ball_pos, press_w);
             let to_target = Vec2::new(target.x - pos.x, target.z - pos.z);
             let mv = if to_target.length() > SUPPORT_STOP_DIST {
                 to_target.normalize_or_zero()
@@ -318,6 +400,7 @@ pub fn apply_heuristic_ai(
             input.movement = *movement;
             input.jump = *jump;
         }
+        input.fire = true;
     }
 }
 
@@ -400,20 +483,6 @@ mod tests {
     }
 
     #[test]
-    fn balanced_params_match_legacy() {
-        let p = Tactic::Balanced.params();
-        assert_eq!(p, TacticParams { defender_depth: 0.50, attacker_push: 0.40, width: 1.0, spacing: 1.0 });
-    }
-
-    #[test]
-    fn tactic_next_cycles() {
-        assert_eq!(Tactic::Balanced.next(), Tactic::HighPress);
-        assert_eq!(Tactic::HighPress.next(), Tactic::LowBlock);
-        assert_eq!(Tactic::LowBlock.next(), Tactic::Wide);
-        assert_eq!(Tactic::Wide.next(), Tactic::Balanced);
-    }
-
-    #[test]
     fn tactic_from_name_is_case_and_space_insensitive() {
         assert_eq!(Tactic::from_name("Balanced"), Some(Tactic::Balanced));
         assert_eq!(Tactic::from_name("high press"), Some(Tactic::HighPress));
@@ -467,8 +536,53 @@ mod tests {
     fn wide_increases_lateral_spread() {
         let ball = Vec3::new(0.0, 1.0, 2.0);
         let bal = support_target(Team::Orange, true, ball, &Tactic::Balanced.params());
-        let wide = support_target(Team::Orange, true, ball, &Tactic::Wide.params());
+        let wide = support_target(Team::Orange, true, ball, &Tactic::WingPlay.params());
         assert!(wide.z.abs() > bal.z.abs(), "wide should spread laterally: wide {} vs bal {}", wide.z, bal.z);
+    }
+
+    #[test]
+    fn balanced_params_match_legacy_seven_fields() {
+        let p = Tactic::Balanced.params();
+        assert_eq!(p, TacticParams {
+            defender_depth: 0.50, attacker_push: 0.40, width: 1.0, spacing: 1.0,
+            press: 0.0, line_height: 0.0, commitment: 0.5,
+        });
+    }
+
+    #[test]
+    fn tactic_next_cycles_all_ten() {
+        let mut t = Tactic::Balanced;
+        let mut seen = vec![t];
+        for _ in 0..9 { t = t.next(); seen.push(t); }
+        assert_eq!(seen.len(), 10);
+        assert_eq!(t.next(), Tactic::Balanced, "wraps back to Balanced after 10");
+        for i in 0..10 { for j in (i+1)..10 { assert_ne!(seen[i], seen[j]); } }
+    }
+
+    #[test]
+    fn all_ten_presets_roundtrip_names() {
+        assert_eq!(Tactic::ALL.len(), 10);
+        for t in Tactic::ALL {
+            assert_eq!(Tactic::from_name(t.name()), Some(t), "{} must roundtrip", t.name());
+        }
+        assert_eq!(Tactic::from_name("counter-attack"), Some(Tactic::CounterAttack));
+        assert_eq!(Tactic::from_name("PARK THE BUS"), Some(Tactic::ParkTheBus));
+        assert_eq!(Tactic::from_name("nonsense"), None);
+    }
+
+    #[test]
+    fn blend_averages_all_seven_axes() {
+        let a = Tactic::Balanced.params();
+        let b = Tactic::AllOutAttack.params();
+        let m = TacticParams::blend(&[(a, 1.0), (b, 1.0)]);
+        assert!((m.press       - (a.press + b.press) / 2.0).abs() < 1e-6);
+        assert!((m.line_height - (a.line_height + b.line_height) / 2.0).abs() < 1e-6);
+        assert!((m.commitment  - (a.commitment + b.commitment) / 2.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn gegenpress_presses_harder_than_high_press() {
+        assert!(Tactic::Gegenpress.params().press > Tactic::HighPress.params().press);
     }
 
     #[test]
@@ -490,6 +604,59 @@ mod tests {
 
         assert!(moves_base[0].0 != moves_over[0].0, "overridden support (index 0) should move differently");
         assert_eq!(moves_base[1].0, moves_over[1].0, "non-overridden support (index 1) should be unchanged");
+    }
+
+    #[test]
+    fn line_height_shifts_block_forward() {
+        let ball = Vec3::new(0.0, 1.0, 0.0);
+        let mut hi = Tactic::Balanced.params();
+        hi.line_height = 0.3;
+        let bal = support_target(Team::Orange, true, ball, &Tactic::Balanced.params());
+        let fwd = support_target(Team::Orange, true, ball, &hi);
+        assert!(fwd.x > bal.x, "positive line_height shifts Orange support toward +x (opp goal): {} vs {}", fwd.x, bal.x);
+    }
+
+    #[test]
+    fn line_height_neutral_reproduces_legacy_support_target() {
+        let ball = Vec3::new(1.0, 1.0, 2.0);
+        let t = support_target(Team::Orange, true, ball, &Tactic::Balanced.params());
+        let gx = -FIELD_WIDTH / 2.0; // Orange own goal
+        let expx = (ball.x + (gx - ball.x) * 0.5).clamp(-FIELD_WIDTH / 2.0, FIELD_WIDTH / 2.0);
+        assert!((t.x - expx).abs() < 1e-5, "neutral line_height must match legacy x");
+        assert!((t.z - ball.z * 0.4).abs() < 1e-5, "z unchanged");
+    }
+
+    #[test]
+    fn commitment_reproduces_alternation_at_neutral() {
+        assert_eq!(attacker_positions(4, 0.5), vec![false, true, false, true]);
+        assert_eq!(attacker_positions(3, 0.5), vec![false, true, false]);
+        assert_eq!(attacker_positions(1, 0.5), vec![false]);
+    }
+
+    #[test]
+    fn commitment_high_sends_more_attackers() {
+        let low = attacker_positions(4, 0.0).iter().filter(|&&a| a).count();
+        let high = attacker_positions(4, 1.0).iter().filter(|&&a| a).count();
+        assert_eq!(low, 0);
+        assert_eq!(high, 4);
+        assert!(high > low);
+    }
+
+    #[test]
+    fn press_pulls_nearest_support_toward_ball() {
+        let players = vec![
+            TeamMate { index: 0, pos: Vec3::new(-3.0, 1.0, 0.5) },
+            TeamMate { index: 1, pos: Vec3::new(-5.0, 1.0, -2.0) },
+            TeamMate { index: 2, pos: Vec3::new(0.1, 1.0, 0.0) },
+        ];
+        let ball = Vec3::new(0.0, 1.0, 0.0);
+        let base = TeamDirective::uniform(Tactic::Balanced.params());
+        let mut pressing = Tactic::Balanced.params();
+        pressing.press = 1.0;
+        let dir = TeamDirective::uniform(pressing);
+        let (m0, _) = assign_team_movements(Team::Orange, &players, ball, Vec3::ZERO, Some(2), &base);
+        let (m1, _) = assign_team_movements(Team::Orange, &players, ball, Vec3::ZERO, Some(2), &dir);
+        assert!(m1[0].0.x > m0[0].0.x, "press should pull the nearest support toward the ball: {} vs {}", m1[0].0.x, m0[0].0.x);
     }
 
     #[test]

@@ -27,6 +27,7 @@ pub struct GooglyPupil {
 pub struct PlayerInput {
     pub movement: Vec2,  // X, Z
     pub jump: bool,
+    pub fire: bool,      // request to fire the cube's superpower this frame
 }
 
 #[derive(Bundle)]
@@ -44,6 +45,7 @@ pub struct CubePlayerBundle {
     pub locked_axes: LockedAxes,
     pub damping: Damping,
     pub ccd: Ccd,
+    pub status: crate::systems::status_effects::StatusEffects,
 }
 
 impl CubePlayerBundle {
@@ -83,6 +85,7 @@ impl CubePlayerBundle {
                 angular_damping: 0.0,
             },
             ccd: Ccd::disabled(), // CCD off for sim throughput; re-enable if cubes tunnel
+            status: crate::systems::status_effects::StatusEffects::default(),
         }
     }
 }

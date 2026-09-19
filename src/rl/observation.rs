@@ -14,6 +14,7 @@ pub struct AgentView<'a> {
     pub index: usize,
     pub transform: &'a Transform,
     pub velocity: &'a Velocity,
+    pub cooldown_ready: f32,
 }
 
 /// Build the per-agent observation vector for a single observer.
@@ -92,10 +93,13 @@ fn extract_one(
     out[i] = game_state.score_diff(observer.team) as f32 / 10.0;
     out[i + 1] = game_state.time_remaining / MATCH_DURATION_SECS;
 
-    // possession flags [self, teammate, opponent]
-    out[i + 2] = poss_flags[0];
-    out[i + 3] = poss_flags[1];
-    out[i + 4] = poss_flags[2];
+    // superpower cooldown-ready fraction (1.0 = ready / no power)
+    out[i + 2] = observer.cooldown_ready;
+
+    // possession flags [self, teammate, opponent]  (kept last-3)
+    out[i + 3] = poss_flags[0];
+    out[i + 4] = poss_flags[1];
+    out[i + 5] = poss_flags[2];
 
     out
 }
@@ -148,26 +152,27 @@ pub fn compute_observations(
 
 /// Bevy adapter: pull agent state from the ECS and build observations.
 pub fn get_observations(
-    player_query: &Query<(Entity, &Transform, &Velocity, &CubePlayer)>,
+    player_query: &Query<(Entity, &Transform, &Velocity, &CubePlayer, Option<&crate::systems::superpowers::Superpower>)>,
     ball_query: &Query<(&Transform, &Velocity), With<Ball>>,
     game_state: &GameState,
     possession: &crate::systems::possession::Possession,
 ) -> Option<Vec<[f32; OBSERVATION_SIZE]>> {
     let agents: Vec<AgentView> = player_query
         .iter()
-        .map(|(_, transform, velocity, player)| AgentView {
+        .map(|(_, transform, velocity, player, power)| AgentView {
             team: player.team,
             index: player.index,
             transform,
             velocity,
+            cooldown_ready: power.map(|p| p.ready_fraction()).unwrap_or(1.0),
         })
         .collect();
 
     let holder = possession.holder.and_then(|held| {
         player_query
             .iter()
-            .find(|(entity, _, _, _)| *entity == held)
-            .map(|(_, _, _, player)| (player.team, player.index))
+            .find(|(entity, _, _, _, _)| *entity == held)
+            .map(|(_, _, _, player, _)| (player.team, player.index))
     });
 
     let (ball_transform, ball_velocity) = ball_query.get_single().ok()?;
@@ -196,7 +201,7 @@ mod tests {
             .map(|i| {
                 let team = if i < PLAYERS_PER_TEAM { Team::Orange } else { Team::Blue };
                 let index = i % PLAYERS_PER_TEAM;
-                AgentView { team, index, transform: &transforms[i], velocity: &vels[i] }
+                AgentView { team, index, transform: &transforms[i], velocity: &vels[i], cooldown_ready: 1.0 }
             })
             .collect();
 
@@ -220,7 +225,7 @@ mod tests {
         let agents: Vec<AgentView> = (0..NUM_AGENTS)
             .map(|i| {
                 let team = if i < PLAYERS_PER_TEAM { Team::Orange } else { Team::Blue };
-                AgentView { team, index: i % PLAYERS_PER_TEAM, transform: &transforms[i], velocity: &vels[i] }
+                AgentView { team, index: i % PLAYERS_PER_TEAM, transform: &transforms[i], velocity: &vels[i], cooldown_ready: 1.0 }
             })
             .collect();
         let ball_t = t(0.0, 1.0, 0.0);
@@ -236,7 +241,7 @@ mod tests {
     fn wrong_agent_count_returns_none() {
         let tr = t(0.0, 1.0, 0.0);
         let ve = v(0.0, 0.0, 0.0);
-        let agents = vec![AgentView { team: Team::Orange, index: 0, transform: &tr, velocity: &ve }];
+        let agents = vec![AgentView { team: Team::Orange, index: 0, transform: &tr, velocity: &ve, cooldown_ready: 1.0 }];
         let ball_t = t(0.0, 1.0, 0.0);
         let ball_v = v(0.0, 0.0, 0.0);
         let gs = crate::game::GameState::default();
@@ -252,7 +257,7 @@ mod tests {
         let agents: Vec<AgentView> = (0..NUM_AGENTS)
             .map(|i| {
                 let team = if i < PLAYERS_PER_TEAM { Team::Orange } else { Team::Blue };
-                AgentView { team, index: i % PLAYERS_PER_TEAM, transform: &transforms[i], velocity: &vels[i] }
+                AgentView { team, index: i % PLAYERS_PER_TEAM, transform: &transforms[i], velocity: &vels[i], cooldown_ready: 1.0 }
             })
             .collect();
         let ball_t = t(0.0, 1.0, 0.0);
@@ -279,7 +284,7 @@ mod tests {
         let agents: Vec<AgentView> = (0..NUM_AGENTS)
             .map(|i| {
                 let team = if i < PLAYERS_PER_TEAM { Team::Orange } else { Team::Blue };
-                AgentView { team, index: i % PLAYERS_PER_TEAM, transform: &transforms[i], velocity: &vels[i] }
+                AgentView { team, index: i % PLAYERS_PER_TEAM, transform: &transforms[i], velocity: &vels[i], cooldown_ready: 1.0 }
             })
             .collect();
         let ball_t = t(0.0, 1.0, 0.0);
@@ -290,5 +295,25 @@ mod tests {
         for o in &obs {
             assert_eq!([o[OBSERVATION_SIZE - 3], o[OBSERVATION_SIZE - 2], o[OBSERVATION_SIZE - 1]], [0.0, 0.0, 0.0]);
         }
+    }
+
+    #[test]
+    fn cooldown_feature_is_just_before_possession_flags() {
+        let transforms: Vec<Transform> = (0..NUM_AGENTS).map(|i| t(i as f32, 1.0, 0.0)).collect();
+        let vels: Vec<Velocity> = (0..NUM_AGENTS).map(|_| v(0.0, 0.0, 0.0)).collect();
+        let agents: Vec<AgentView> = (0..NUM_AGENTS)
+            .map(|i| AgentView {
+                team: if i < PLAYERS_PER_TEAM { Team::Orange } else { Team::Blue },
+                index: i % PLAYERS_PER_TEAM,
+                transform: &transforms[i],
+                velocity: &vels[i],
+                cooldown_ready: 0.25,
+            })
+            .collect();
+        let ball_t = t(0.0, 1.0, 0.0);
+        let ball_v = v(0.0, 0.0, 0.0);
+        let gs = crate::game::GameState::default();
+        let obs = compute_observations(&agents, &ball_t, &ball_v, &gs, None).unwrap();
+        assert!((obs[0][OBSERVATION_SIZE - 4] - 0.25).abs() < 1e-6, "cooldown sits at size-4 (just before the 3 possession flags)");
     }
 }

@@ -216,7 +216,7 @@ mod tests {
         use crate::systems::heuristic_ai::{TeamTactics, TacticParams, Tactic};
         let mut env = CubeSoccerEnv::new(EnvConfig::default());
         env.reset(Some(0));
-        let p = TacticParams { defender_depth: 0.9, attacker_push: 0.1, width: 0.5, spacing: 0.7 };
+        let p = TacticParams { defender_depth: 0.9, attacker_push: 0.1, width: 0.5, spacing: 0.7, press: 0.3, line_height: -0.1, commitment: 0.5 };
         env.set_player_params(Team::Orange, 3, p);
         assert_eq!(env.app.world.resource::<TeamTactics>().orange.params_for(3), p);
         env.clear_player_overrides(Team::Orange);

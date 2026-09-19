@@ -43,6 +43,10 @@ pub const CUBE_FRICTION: f32 = 0.5;
 pub const CUBE_RESTITUTION: f32 = 0.3;  // Bounce
 
 pub const CUBE_MAX_SPEED: f32 = 15.0;   // Max speed
+/// Absolute horizontal-speed safety ceiling = MAX_SPEED_SAFETY * CUBE_MAX_SPEED.
+/// Never binds in normal play (control target is <= 1x); only bounds knockback/
+/// force spikes so physics can't blow up.
+pub const MAX_SPEED_SAFETY: f32 = 3.0;
 pub const CUBE_ACCELERATION: f32 = 50.0;
 pub const CUBE_JUMP_FORCE: f32 = 60.0;   // Small jump, can't jump over walls
 
@@ -78,11 +82,12 @@ pub const NUM_AGENTS: usize = 2 * PLAYERS_PER_TEAM;
 /// Per-agent observation length.
 /// Layout: self pos+vel (6) + teammates (6*(N-1)) + opponents (6*N)
 ///         + ball pos+vel (6) + goal dists (2) + score_diff + time (2)
+///         + superpower cooldown-ready fraction (1)
 ///         + possession flags (3: self/teammate/opponent has ball)
-///       = 13 + 12*N.
-pub const OBSERVATION_SIZE: usize = 13 + 12 * PLAYERS_PER_TEAM;
-/// Per-agent action length (move_x, move_z, jump).
-pub const ACTION_SIZE: usize = 3;
+///       = 14 + 12*N.
+pub const OBSERVATION_SIZE: usize = 14 + 12 * PLAYERS_PER_TEAM;
+/// Per-agent action length (move_x, move_z, jump, fire).
+pub const ACTION_SIZE: usize = 4;
 
 /// Physics ticks advanced per env.step() (action repeat / frame-skip).
 /// 2 ticks at 30Hz = ~15 decisions/sec (same control rate as the old 4@60Hz)
@@ -92,6 +97,23 @@ pub const ACTION_REPEAT: usize = 2;
 pub const RESET_POS_JITTER: f32 = 1.0;
 /// Max seeded XZ offset (meters) applied to the ball spawn on reset.
 pub const RESET_BALL_JITTER: f32 = 2.0;
+
+// === SUPERPOWERS ===
+pub const BLAST_RANGE: f32 = 8.0;
+pub const BLAST_HALF_ANGLE_DEG: f32 = 30.0;
+pub const BLAST_IMPULSE: f32 = 25.0;
+pub const BLAST_COOLDOWN: f32 = 5.0;
+pub const FREEZE_RANGE: f32 = 10.0;
+pub const FREEZE_HALF_ANGLE_DEG: f32 = 15.0;
+pub const FREEZE_SECS: f32 = 2.0;
+pub const FREEZE_COOLDOWN: f32 = 8.0;
+pub const BOOST_FACTOR: f32 = 2.0;
+pub const BOOST_SECS: f32 = 2.0;
+pub const BOOST_COOLDOWN: f32 = 10.0;
+pub const SLOW_FACTOR: f32 = 0.4;
+pub const SLOW_SECS: f32 = 3.0;
+pub const SLOW_RANGE: f32 = 12.0;
+pub const SLOW_COOLDOWN: f32 = 8.0;
 
 // === POSSESSION / SHOOTING ===
 /// Distance at which a player can gain or steal the ball (matches the touch-reward distance).
@@ -168,7 +190,7 @@ mod tests {
 
     #[test]
     fn observation_size_includes_possession_flags() {
-        assert_eq!(OBSERVATION_SIZE, 13 + 12 * PLAYERS_PER_TEAM);
+        assert_eq!(OBSERVATION_SIZE, 14 + 12 * PLAYERS_PER_TEAM);
     }
 
     #[test]

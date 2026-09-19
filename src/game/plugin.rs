@@ -6,7 +6,8 @@ use super::events::{GoalScoredEvent, GameOverEvent, ResetGameEvent, BallTouchedE
 use crate::entities::{spawn_arena, spawn_wall_scoreboard, spawn_field, spawn_goals, spawn_players, spawn_ball};
 use crate::systems::{
     camera::setup_camera,
-    movement::apply_player_movement,
+    movement::{apply_player_movement, clamp_velocities},
+    status_effects::{tick_status_effects, apply_status_forces, ImpulseEvent},
     physics::configure_physics,
     scoring::{detect_goals, handle_goal_scored, update_timers},
     reset::{reset_after_goal, reset_after_round, check_reset_timer, ResetTimer},
@@ -15,6 +16,7 @@ use crate::systems::{
     display::update_wall_scoreboard,
     eyes::animate_googly_eyes,
     trail::{spawn_trail_particles, animate_trail_particles, TrailSpawnTimer},
+    superpowers::{tick_superpower_cooldowns, activate_superpowers},
 };
 use crate::input::keyboard::keyboard_input_system;
 use crate::rendering::lighting::setup_lighting;
@@ -40,6 +42,7 @@ impl Plugin for CubeSoccerPlugin {
             .add_event::<GameOverEvent>()
             .add_event::<ResetGameEvent>()
             .add_event::<BallTouchedEvent>()
+            .add_event::<ImpulseEvent>()
 
             // Physics
             .add_plugins(RapierPhysicsPlugin::<NoUserData>::default())
@@ -63,14 +66,19 @@ impl Plugin for CubeSoccerPlugin {
             // Update systems during playing
             .add_systems(Update, (
                 keyboard_input_system,
+                tick_superpower_cooldowns,
+                activate_superpowers,
+                tick_status_effects,
                 apply_player_movement,
+                apply_status_forces,
+                clamp_velocities,
                 (tick_cooldowns, update_possession).chain(),
                 detect_goals,
                 handle_goal_scored,
                 update_timers,
                 update_ui,
                 update_wall_scoreboard,
-            ).run_if(in_state(MatchState::Playing)))
+            ).chain().run_if(in_state(MatchState::Playing)))
 
             // Reset after goal (with 1 second delay)
             .add_systems(OnEnter(MatchState::GoalScored), (reset_after_goal, clear_possession))

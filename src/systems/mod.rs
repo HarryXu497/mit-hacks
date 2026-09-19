@@ -24,6 +24,8 @@ pub mod physics;
 pub mod possession;
 pub mod reset;
 pub mod scoring;
+pub mod status_effects;
+pub mod superpowers;
 pub mod trail;
 
 pub use camera::*;
@@ -37,3 +39,5 @@ pub use movement::*;
 pub use physics::*;
 pub use reset::*;
 pub use scoring::*;
+pub use status_effects::*;
+pub use superpowers::*;
