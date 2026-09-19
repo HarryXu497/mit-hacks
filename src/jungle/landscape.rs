@@ -201,16 +201,27 @@ fn batch_far_forest(
             *p + Vec3::Y * (*h * 0.5),
             Vec3::new(0.28 + *h * 0.02, *h, 0.28 + *h * 0.02),
         );
-        for j in 0..2 {
-            let a = *seed as f32 * 1.73 + j as f32 * 3.14;
+        // Two or three stacked canopy tiers: a broad shaded skirt, a main mass,
+        // and (on taller trees) a narrow crown. Per-tree jitter keeps the
+        // horizon from reading as one repeated blob.
+        let tiers = 2 + (*seed % 2);
+        let squat = 0.82 + random(*seed * 5 + 77) * 0.42;
+        for j in 0..tiers {
+            let ft = j as f32 / tiers as f32;
+            let a = *seed as f32 * 1.73 + j as f32 * 2.39;
+            let spread = (1.22 - ft * 0.52) * squat;
             push_canopy(
                 &mut canopies[(*seed + j) % greens.len()],
                 top + Vec3::new(
-                    a.cos() * *h * 0.16,
-                    -(j as f32) * *h * 0.15,
-                    a.sin() * *h * 0.16,
+                    a.cos() * *h * 0.13,
+                    *h * (ft * 0.30 - 0.20),
+                    a.sin() * *h * 0.13,
                 ),
-                Vec3::new(*h * 0.58, *h * 0.35, *h * 0.50),
+                Vec3::new(
+                    *h * 0.62 * spread,
+                    *h * 0.30 * (1.05 - ft * 0.25),
+                    *h * 0.54 * spread,
+                ),
             );
         }
     }
@@ -230,7 +241,11 @@ fn batch_far_forest(
 /// One closed summit cap and a continuous fractured cliff, not a stack of ellipsoids.
 fn massif(rx: f32, rz: f32, top: f32, bottom: f32, seed: usize, summit: bool) -> Mesh {
     let n = 64usize;
-    let layers = 8usize;
+    let layers = 18usize;
+    // Bedding planes and the vertical fluting between buttresses. Both counts
+    // come from the seed so neighbouring outcrops are not the same rock twice.
+    let strata = (4 + seed % 3) as f32;
+    let flutes = (7 + seed % 6) as f32;
     let mut p = Vec::new();
     let mut colors = Vec::new();
     let mut indices = Vec::new();
@@ -238,34 +253,63 @@ fn massif(rx: f32, rz: f32, top: f32, bottom: f32, seed: usize, summit: bool) ->
     colors.push([0.28, 0.49, 0.10, 1.]);
     for layer in 0..=layers {
         let t = layer as f32 / layers as f32;
+        // Every displacement below fades in from the cap, so the grass table and
+        // the props that follow `rim()` around it stay exactly where they were.
+        // The stadium summit keeps that fade long and the relief gentle; the free
+        // outcrops have nothing pinned to their rims, so they can be bolder.
+        let boldness = if summit { 1. } else { 2.1 };
+        let fade = (t * if summit { 4. } else { 9. }).min(1.);
+        let course = (t * strata).floor();
+        let within = t * strata - course;
         for i in 0..=n {
             let a = i as f32 / n as f32 * std::f32::consts::TAU;
             let fissure =
                 (a * 7. + seed as f32).sin() * 0.65 + (a * 13. + seed as f32).cos() * 0.24;
+            // Each course steps back and overhangs slightly at its top edge, so
+            // the face reads as stacked rock bands rather than one extrusion.
+            let ledge = (1. - within).powi(2) * 0.055 * boldness;
+            let setback = course / strata * 0.09 * boldness;
+            let jitter = (random(seed + course as usize * 13) - 0.5) * 0.05 * boldness;
+            // Gullies cut between the buttresses, deepening toward the foot.
+            let flute =
+                (1. - (a * flutes * 0.5 + seed as f32).sin().abs()) * (0.05 + t * 0.08) * boldness;
             let spread = if layer == 0 {
-                1.
+                // The turf table overhangs the first course, which is what makes
+                // a mesa read as a mesa instead of a capped pipe.
+                if summit {
+                    1.
+                } else {
+                    1.07
+                }
             } else {
                 // Keep the upper face behind carvings and cascades; widen only
                 // below the inhabited ledges into the mountain's foot.
-                1. - t * 0.13 + (t - 0.65).max(0.) * 0.55
+                let base = 1. - t * 0.13 + (t - 0.65).max(0.) * 0.55;
+                base + (ledge - setback + jitter - flute) * fade
             };
             let mut v = rim(a, rx * spread, rz * spread);
             v += Vec3::new(a.cos(), 0., a.sin()) * fissure * t.min(0.2) * 1.5;
             v.y = top + (bottom - top) * t;
             if layer != 0 && layer != layers {
                 v.y += (random(seed + i * 3 + layer * 19) - 0.5) * 2.;
+                // Lift each bedding plane's lip so courses read horizontally.
+                v.y += (1. - within).powi(2) * (top - bottom) * 0.012 * fade;
             }
             p.push(v.to_array());
             let shade = 0.5 + (a * 9. + layer as f32 * 0.8).sin() * 0.24;
+            // Sunlit buttress noses, shaded gullies, and a small tint shift per
+            // course so the strata stay legible at broadcast distance.
+            let relief = 1. + ((a * flutes * 0.5 + seed as f32).sin().abs() - 0.5) * 0.22;
+            let banded = 1. + (course * 1.7).sin() * 0.05;
             let col = if layer == 0 {
                 [0.27 + shade * 0.07, 0.45 + shade * 0.1, 0.11, 1.]
-            } else if shade > 0.82 && layer < 5 {
+            } else if shade > 0.82 && layer < 9 {
                 [0.19, 0.33, 0.13, 1.]
             } else {
                 [
-                    0.30 + shade * 0.12,
-                    0.32 + shade * 0.11,
-                    0.27 + shade * 0.10,
+                    (0.30 + shade * 0.12) * relief * banded,
+                    (0.32 + shade * 0.11) * relief * banded,
+                    (0.27 + shade * 0.10) * relief * banded,
                     1.,
                 ]
             };
@@ -293,34 +337,84 @@ fn valley_height(x: f32, z: f32) -> f32 {
     VALLEY_Y + noise(x, z) * 5.
 }
 
-fn mountain(radius: f32, peak: f32, seed: usize) -> Mesh {
+const MOUNTAIN_FOOT: f32 = -44.;
+
+/// Height of the ridge spine at `u` (-1..1 along the range), as a fraction of
+/// the massif's peak height. Three gaussian summits combined with `max` leave
+/// real saddles between real tops, which is what separates a range from a cone.
+fn ridge_profile(seed: usize, u: f32) -> f32 {
+    let s = seed as f32 * 0.37;
+    let mut h: f32 = 0.;
+    for i in 0..3 {
+        let centre = -0.62 + i as f32 * 0.62 + (random(seed * 7 + i) - 0.5) * 0.4;
+        let width = 0.30 + random(seed * 11 + i) * 0.24;
+        let amp = 0.52 + random(seed * 13 + i) * 0.48;
+        // Exponent below 2 gives a peaked summit with straighter flanks than a
+        // gaussian, which would read as a soft hump.
+        h = h.max(amp * (-((u - centre).abs() / width).powf(1.35)).exp());
+    }
+    // Crest is never a clean arc: break it with three out-of-phase wobbles, the
+    // fastest of them folded so the skyline gets notches rather than ripples.
+    let notch = 1. - (u * 21. + s * 3.).sin().abs();
+    (h * (0.94 + (u * 6.3 + s).sin() * 0.05 + (u * 14.1 - s).cos() * 0.032 - notch * 0.045))
+        .clamp(0., 1.)
+}
+
+/// A point on the range's surface. `u` runs along the spine, `v` across it
+/// (-1..1, 0 on the crest). The mesh and the tree scatter share this so planting
+/// sits on the slope instead of floating beside it.
+fn ridge_point(len: f32, depth: f32, peak: f32, seed: usize, u: f32, v: f32) -> Vec3 {
+    let s = seed as f32 * 0.37;
+    let spine = MOUNTAIN_FOOT + (peak - MOUNTAIN_FOOT) * ridge_profile(seed, u);
+    let av = v.abs();
+    // Concave flanks, then gullies cut down them: sharp because the fold is
+    // `1 - |sin|`, so spurs meet gullies at a crease.
+    let gully = 1. - (u * (13. + (seed % 5) as f32 * 3.) + s * 2.).sin().abs();
+    let flank = (1. - av.powf(1.4)).max(0.) * (1. - gully * 0.34 * av);
+    let grain = 1. + (u * 23. + av * 9. + s).sin() * 0.04;
+    let y = MOUNTAIN_FOOT + (spine - MOUNTAIN_FOOT) * flank * grain;
+    // The spine meanders instead of running dead straight across the frame.
+    let meander = (u * 2.3 + s).sin() * 0.22 + (u * 5.1 - s).cos() * 0.1;
+    Vec3::new(u * len, y, (v + meander) * depth)
+}
+
+/// `haze` (0..1) washes the rock toward sky tone. Ranges further back get more
+/// of it, so depth reads as aerial perspective rather than fog alone.
+fn mountain(len: f32, depth: f32, peak: f32, seed: usize, haze: f32) -> Mesh {
     let mut p = Vec::new();
     let mut colors = Vec::new();
     let mut indices = Vec::new();
-    let segments = 24usize;
-    for layer in 0..=10 {
-        let t = layer as f32 / 10.;
-        let r = radius * (0.05 + t.powf(0.8) * 0.95);
-        for i in 0..=segments {
-            let a = i as f32 / segments as f32 * std::f32::consts::TAU;
-            let rough = 0.87 + random(seed + i % segments) * 0.26;
-            p.push([
-                a.cos() * r * rough + (1. - t) * 3.,
-                peak + (-44. - peak) * t,
-                a.sin() * r * 0.72 * rough,
-            ]);
-            let moss = random(seed + i % segments * 7 + layer * 19) > 0.52;
-            colors.push(if moss {
-                [0.22, 0.40, 0.18, 1.]
-            } else {
-                [0.37, 0.43, 0.38, 1.]
-            });
+    let nu = 56usize;
+    let nv = 18usize;
+    for iu in 0..=nu {
+        let u = iu as f32 / nu as f32 * 2. - 1.;
+        for iv in 0..=nv {
+            let v = iv as f32 / nv as f32 * 2. - 1.;
+            let point = ridge_point(len, depth, peak, seed, u, v);
+            p.push(point.to_array());
+            // Bare rock on the tops, forest colour washing up the lower slopes;
+            // the sunward flank stays lighter than the shaded one.
+            let alt = ((point.y - MOUNTAIN_FOOT) / (peak - MOUNTAIN_FOOT).max(1.)).clamp(0., 1.);
+            let bare = ((alt - 0.30) / 0.38).clamp(0., 1.);
+            let light = 0.86 + (1. - v.abs()) * 0.18 - v.max(0.) * 0.12;
+            let rock = [0.34, 0.39, 0.49];
+            let moss = [0.15, 0.31, 0.18];
+            let sky = [0.55, 0.70, 0.82];
+            let mut col = [
+                (moss[0] + (rock[0] - moss[0]) * bare) * light,
+                (moss[1] + (rock[1] - moss[1]) * bare) * light,
+                (moss[2] + (rock[2] - moss[2]) * bare) * light,
+            ];
+            for ch in 0..3 {
+                col[ch] += (sky[ch] - col[ch]) * haze;
+            }
+            colors.push([col[0], col[1], col[2], 1.]);
         }
     }
-    for layer in 0..10 {
-        for i in 0..segments {
-            let a = (layer * (segments + 1) + i) as u32;
-            let b = a + (segments + 1) as u32;
+    for iu in 0..nu {
+        for iv in 0..nv {
+            let a = (iu * (nv + 1) + iv) as u32;
+            let b = a + (nv + 1) as u32;
             indices.extend_from_slice(&[a, a + 1, b, a + 1, b + 1, b]);
         }
     }
@@ -349,20 +443,41 @@ fn valley_mesh() -> Mesh {
     }
     mesh_from(p, c, ids)
 }
+/// A broadleaf clump: two or three stacked tiers of blades, each tier smaller,
+/// rotated and tinted differently. Tier count, lean, spread and aspect all come
+/// from `seed`, so no two clumps in the scene share a silhouette.
 fn sprig(c: &mut Commands, k: &Kit, p: Vec3, s: f32, seed: usize) {
-    for j in 0..5 {
-        let a = j as f32 * 1.256 + seed as f32;
-        let rot = Quat::from_rotation_y(-a) * Quat::from_rotation_z(0.4);
-        c.spawn(PbrBundle {
-            mesh: k.leaf.clone(),
-            material: k.greens[(seed + j) % 3].clone(),
-            transform: Transform::from_translation(
-                p + Vec3::new(a.cos() * s * 0.35, s * 0.3, a.sin() * s * 0.35),
-            )
-            .with_rotation(rot)
-            .with_scale(Vec3::new(s, 0.14 * s, 0.32 * s)),
-            ..default()
-        });
+    let s = s * 1.55; // clumps read as foliage masses, not sprouts
+    let tiers = 2 + (seed % 2);
+    let lean = Quat::from_rotation_z((random(seed * 3 + 41) - 0.5) * 0.5)
+        * Quat::from_rotation_x((random(seed * 3 + 42) - 0.5) * 0.4);
+    for tier in 0..tiers {
+        let ft = tier as f32 / tiers as f32;
+        // Lower tiers are the widest; the crown tapers and sits higher.
+        let ts = s * (1.15 - ft * 0.42);
+        let blades = 3 + (seed + tier) % 3;
+        let droop = 0.30 + ft * 0.34;
+        for j in 0..blades {
+            let a = j as f32 * std::f32::consts::TAU / blades as f32
+                + tier as f32 * 0.8
+                + random(seed + tier * 7) * 6.28;
+            let reach = ts * (0.30 + random(seed + j * 5 + tier * 13) * 0.22);
+            let rot = Quat::from_rotation_y(-a) * Quat::from_rotation_z(droop);
+            c.spawn(PbrBundle {
+                mesh: k.leaf.clone(),
+                material: k.greens[(seed + j + tier * 2) % 3].clone(),
+                transform: Transform::from_translation(
+                    p + lean * Vec3::new(a.cos() * reach, s * (0.22 + ft * 0.62), a.sin() * reach),
+                )
+                .with_rotation(lean * rot)
+                .with_scale(Vec3::new(
+                    ts * (0.85 + random(seed + j) * 0.35),
+                    0.15 * ts,
+                    0.34 * ts,
+                )),
+                ..default()
+            });
+        }
     }
 }
 
@@ -1096,43 +1211,71 @@ pub(super) fn build(
         let flare = 1. + depth / 42. * 0.12;
         let mut p = rim(a, SUMMIT_X * flare + 0.2, SUMMIT_Z * flare + 0.3);
         p.y = -depth;
-        let s = 0.65 + random(i + 9200) * 1.0;
-        oval(
-            c,
-            k,
-            greens[i % 6].clone(),
-            p,
-            Vec3::new(s, 0.65 * s, s * 0.7),
-            a,
-        );
+        // Each clump is two or three overlapping lobes of different greens, so
+        // the cliff face carries a broken canopy edge rather than pebble-like
+        // domes. Same clump count as before, more mass per clump.
+        let s = (0.65 + random(i + 9200) * 1.0) * 1.9;
+        let lobes = 2 + i % 2;
+        for lobe in 0..lobes {
+            let fl = lobe as f32;
+            let off = Vec3::new(
+                (a + fl * 2.1).cos() * s * 0.34,
+                fl * s * 0.30 - 0.1,
+                (a + fl * 2.1).sin() * s * 0.26,
+            );
+            let ls = s * (1. - fl * 0.26);
+            oval(
+                c,
+                k,
+                greens[(i + lobe * 2) % 6].clone(),
+                p + off,
+                Vec3::new(ls, 0.62 * ls, ls * 0.72),
+                a + fl * 0.8,
+            );
+        }
         if i % 3 == 0 {
-            sprig(c, k, p + Vec3::Y * 0.45, s, i);
+            sprig(c, k, p + Vec3::Y * 0.45, s * 0.55, i);
         }
     }
-    for i in 0..10 {
-        let x = -170. + i as f32 * 14. + random(i + 910) * 10.;
-        let z = -105. - random(i + 911) * 100.;
-        let top = -32. + random(i + 912) * 25.;
-        let rx = 10. + random(i + 913) * 15.;
-        c.spawn(PbrBundle {
-            mesh: meshes.add(mountain(rx * 1.5, top, i * 107 + 90)),
-            material: white.clone(),
-            transform: Transform::from_xyz(x, 0., z),
-            ..default()
-        });
-        for t in 0..10 {
-            let a = t as f32 * 2.399;
-            let fraction = 0.2 + random(t + i * 43) * 0.75;
-            let r = rx * 1.5 * (0.05 + fraction.powf(0.8) * 0.95) * 0.90;
-            far_entries.push((
-                Vec3::new(
-                    x + a.cos() * r + (1. - fraction) * 3.,
-                    top + (-44. - top) * fraction,
-                    z + a.sin() * r * 0.72,
-                ),
-                8. + random(t + i) * 6.,
-                i + t,
-            ));
+    // Three overlapping ranges instead of a row of cones: a forested near ridge,
+    // a taller mid range rising through its saddles, and bare far peaks. Each
+    // range is a long spine with several summits, and the bands are staggered so
+    // one range's tops sit in the gaps of the one in front. Overlap makes depth.
+    for (band, count, z_near, z_span, top_lo, top_hi, len_lo, len_hi) in [
+        (0usize, 3usize, -120., 20., 4., 13., 62., 84.),
+        (1, 3, -178., 28., 15., 25., 78., 104.),
+        (2, 3, -250., 36., 27., 39., 96., 130.),
+    ] {
+        for i in 0..count {
+            let seed = band * 1301 + i * 107 + 90;
+            let x = -140. + i as f32 * (280. / count as f32)
+                + (band as f32 - 1.) * 48.
+                + random(seed + 910) * 34.;
+            let z = z_near - random(seed + 911) * z_span;
+            let top = top_lo + random(seed + 912) * (top_hi - top_lo);
+            let len = len_lo + random(seed + 913) * (len_hi - len_lo);
+            let depth = len * (0.30 + random(seed + 914) * 0.12);
+            c.spawn(PbrBundle {
+                mesh: meshes.add(mountain(len, depth, top, seed, band as f32 * 0.15)),
+                material: white.clone(),
+                transform: Transform::from_xyz(x, 0., z),
+                ..default()
+            });
+            // Only the near range carries individual trees; the rest rely on
+            // silhouette and haze, which keeps the batch count down.
+            if band > 0 {
+                continue;
+            }
+            for t in 0..12 {
+                let u = -0.85 + (t as f32 / 11.) * 1.7;
+                let v = if t % 2 == 0 { 0.62 } else { -0.58 } * (0.7 + random(t + i * 43) * 0.5);
+                let p = ridge_point(len, depth, top, seed, u, v);
+                far_entries.push((
+                    Vec3::new(x + p.x, p.y - 1., z + p.z),
+                    8. + random(t + i) * 6.,
+                    i + t,
+                ));
+            }
         }
     }
     batch_far_forest(c, k, meshes, &greens, &far_entries);
@@ -1144,7 +1287,7 @@ pub(super) fn build(
         ..default()
     });
     c.spawn(PbrBundle {
-        mesh: meshes.add(mountain(26., -17., 717)),
+        mesh: meshes.add(mountain(38., 17., -17., 717, 0.12)),
         material: white.clone(),
         transform: Transform::from_xyz(-10., 0., -110.),
         ..default()

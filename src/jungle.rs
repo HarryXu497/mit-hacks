@@ -123,7 +123,9 @@ fn palm_at(c: &mut Commands, k: &Kit, x: f32, z: f32, h: f32, phase: f32, ground
             material: k.greens[j % 3].clone(),
             transform: Transform::from_translation(crown)
                 .with_rotation(rot)
-                .with_scale(Vec3::splat(0.8 + h * 0.045)),
+                // Crowns scale with trunk height so tall palms read as palms at
+                // broadcast distance instead of bristles on a pole.
+                .with_scale(Vec3::splat(1.05 + h * 0.082) * (0.88 + (j % 3) as f32 * 0.12)),
             ..default()
         });
     }
