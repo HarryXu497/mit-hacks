@@ -7,7 +7,7 @@ pub struct CameraRig {
 }
 
 fn broadcast_transform(target: Vec3) -> Transform {
-    Transform::from_translation(target + Vec3::new(0., 30., 42.)).looking_at(target, Vec3::Y)
+    Transform::from_translation(target + Vec3::new(0., 43., 62.)).looking_at(target, Vec3::Y)
 }
 
 #[derive(Component)]
@@ -26,8 +26,8 @@ pub fn setup_camera(mut commands: Commands) {
         bevy::pbr::FogSettings {
             color: Color::rgb(0.53, 0.75, 0.78),
             falloff: bevy::pbr::FogFalloff::Linear {
-                start: 55.0,
-                end: 110.0,
+                start: 95.0,
+                end: 190.0,
             },
             ..default()
         },

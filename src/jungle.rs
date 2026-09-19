@@ -16,6 +16,56 @@ pub struct Waterfall {
     speed: f32,
 }
 
+/// Each spectator participates in a traveling stadium wave.
+#[derive(Component)]
+pub struct CrowdWave {
+    base_y: f32,
+    phase: f32,
+}
+
+#[derive(Component)]
+pub struct CrowdArm {
+    parent: Entity,
+    side: f32,
+}
+
+pub fn animate_crowd_arms(
+    time: Res<Time>,
+    crowd: Query<&CrowdWave>,
+    mut arms: Query<(&mut Transform, &CrowdArm)>,
+) {
+    for (mut t, arm) in &mut arms {
+        if let Ok(spectator) = crowd.get(arm.parent) {
+            let wave = (time.elapsed_seconds() * 1.7 - spectator.phase)
+                .sin()
+                .max(0.)
+                .powi(6);
+            t.translation.y = -0.15 + wave * 0.95;
+            t.rotation = Quat::from_rotation_z(-arm.side * wave * 2.4);
+        }
+    }
+}
+
+#[derive(Component)]
+pub struct WaterRipple {
+    origin: Vec3,
+    phase: f32,
+    vertical: bool,
+}
+
+pub fn animate_water(time: Res<Time>, mut water: Query<(&mut Transform, &WaterRipple)>) {
+    for (mut transform, ripple) in &mut water {
+        let wave = (time.elapsed_seconds() * 2.8 + ripple.phase).sin();
+        transform.translation = ripple.origin;
+        if ripple.vertical {
+            transform.translation.z += wave * 0.10;
+        } else {
+            transform.translation.y += wave * 0.07;
+            transform.translation.z += (time.elapsed_seconds() * 0.6 + ripple.phase).sin() * 0.35;
+        }
+    }
+}
+
 struct Kit {
     cube: Handle<Mesh>,
     leaf: Handle<Mesh>,
@@ -60,12 +110,15 @@ fn beam(c: &mut Commands, k: &Kit, mat: Handle<StandardMaterial>, a: Vec3, b: Ve
     });
 }
 fn palm(c: &mut Commands, k: &Kit, x: f32, z: f32, h: f32, phase: f32) {
+    palm_at(c, k, x, z, h, phase, 0.);
+}
+fn palm_at(c: &mut Commands, k: &Kit, x: f32, z: f32, h: f32, phase: f32, ground: f32) {
     beam(
         c,
         k,
         k.wood.clone(),
-        Vec3::new(x, 0., z),
-        Vec3::new(x + 0.45, h, z),
+        Vec3::new(x, ground, z),
+        Vec3::new(x + 0.45, ground + h, z),
         0.38,
     );
     for j in 0..7 {
@@ -75,7 +128,7 @@ fn palm(c: &mut Commands, k: &Kit, x: f32, z: f32, h: f32, phase: f32) {
             PbrBundle {
                 mesh: k.leaf.clone(),
                 material: k.greens[j % 3].clone(),
-                transform: Transform::from_xyz(x + 0.45, h, z)
+                transform: Transform::from_xyz(x + 0.45, ground + h, z)
                     .with_rotation(rot)
                     .with_scale(Vec3::new(3.0, 0.23, 1.0)),
                 ..default()
@@ -152,6 +205,12 @@ fn monkey(c: &mut Commands, k: &Kit, parent: Entity, team: Team) {
     ];
     for (p, s, m) in parts {
         let e = block(c, k, m, p, s);
+        if p.y == -0.15 {
+            c.entity(e).insert(CrowdArm {
+                parent,
+                side: p.x.signum(),
+            });
+        }
         c.entity(parent).add_child(e);
     }
     // An angular curling tail, readable even at the match camera distance.
@@ -219,8 +278,8 @@ pub fn build_jungle(
         &mut c,
         &k,
         k.rock.clone(),
-        Vec3::new(0., -1., 0.),
-        Vec3::new(ARENA_WIDTH + 4., 3., ARENA_DEPTH + 4.),
+        Vec3::new(0., 0.1, 0.),
+        Vec3::new(ARENA_WIDTH, 1.3, ARENA_DEPTH),
     );
     block(
         &mut c,
@@ -448,7 +507,7 @@ pub fn build_jungle(
         c.spawn(PbrBundle {
             mesh: k.leaf.clone(),
             material: k.greens[i % 3].clone(),
-            transform: Transform::from_xyz(x, h, -10.3)
+            transform: Transform::from_xyz(x, h, scoreboard_z + 0.4)
                 .with_rotation(Quat::from_rotation_z(i as f32))
                 .with_scale(Vec3::new(0.5, 0.15, 0.38)),
             ..default()
@@ -489,8 +548,8 @@ pub fn build_jungle(
             Vec3::new(0., 1.5, z),
             Vec3::new(FIELD_WIDTH, 1., 0.12),
         );
-        for i in 0..6 {
-            let x = -FIELD_WIDTH / 2. + 3. + i as f32 * 6.;
+        for i in 0..9 {
+            let x = -FIELD_WIDTH / 2. + i as f32 * FIELD_WIDTH / 8.;
             block(
                 &mut c,
                 &k,
@@ -502,6 +561,19 @@ pub fn build_jungle(
     }
     for side in [-1., 1.] {
         let side_gap = (FIELD_DEPTH - GOAL_DEPTH) / 2.;
+        for z in [-1., 1.] {
+            block(
+                &mut c,
+                &k,
+                k.rock.clone(),
+                Vec3::new(
+                    side * FIELD_WIDTH / 2.,
+                    1.5,
+                    z * (FIELD_DEPTH / 2. + SIDE_EXTENSION / 2.),
+                ),
+                Vec3::new(0.12, 1., SIDE_EXTENSION),
+            );
+        }
         let gap_center_z = (FIELD_DEPTH / 2. + GOAL_DEPTH / 2.) / 2.;
         for z in [-gap_center_z, gap_center_z] {
             block(
@@ -552,10 +624,17 @@ pub fn build_jungle(
             for seat in 0..8 {
                 let x = side * (6. + seat as f32 * 1.35);
                 let spectator = c
-                    .spawn(SpatialBundle {
-                        transform: Transform::from_xyz(x, y + 0.6, z).with_scale(Vec3::splat(0.45)),
-                        ..default()
-                    })
+                    .spawn((
+                        SpatialBundle {
+                            transform: Transform::from_xyz(x, y + 0.6, z)
+                                .with_scale(Vec3::splat(0.45)),
+                            ..default()
+                        },
+                        CrowdWave {
+                            base_y: y + 0.6,
+                            phase: x * 0.22 + row as f32 * 0.32,
+                        },
+                    ))
                     .id();
                 monkey(
                     &mut c,
@@ -592,7 +671,7 @@ pub fn build_jungle(
     for i in 0..76 {
         let t = i as f32 * 2.39996;
         let (x, z) = if i < 40 {
-            (-28. + i as f32 * 1.4, -18. - (i % 4) as f32 * 2.)
+            (-37. + i as f32 * 1.9, -27. - (i % 4) as f32 * 2.)
         } else {
             (
                 if i % 2 == 0 {
@@ -626,137 +705,210 @@ pub fn build_jungle(
             });
         }
     }
-    for side in [-1., 1.] {
-        // Terrace and whitewater tie the falls into the cliff rather than a floating sheet.
-        block(
-            &mut c,
-            &k,
-            k.rock.clone(),
-            Vec3::new(side * 15.6, 11.3, -16.3),
-            Vec3::new(3.7, 0.7, 2.),
-        );
-        block(
-            &mut c,
-            &k,
-            k.water.clone(),
-            Vec3::new(side * 15.6, 1.05, -14.8),
-            Vec3::new(4., 0.12, 3.),
-        );
-        for i in 0..7 {
-            let x = side * (14.4 + i as f32 * 0.4);
+    // The pitch sits on a rock mesa above a flowing river gorge.
+    let river = mats.add(StandardMaterial {
+        base_color: Color::rgba(0.16, 0.67, 0.79, 0.82),
+        perceptual_roughness: 0.18,
+        metallic: 0.18,
+        reflectance: 0.65,
+        alpha_mode: AlphaMode::Blend,
+        ..default()
+    });
+    block(
+        &mut c,
+        &k,
+        k.greens[0].clone(),
+        Vec3::new(0., -9., 0.),
+        Vec3::new(135., 2., 105.),
+    );
+    block(
+        &mut c,
+        &k,
+        river.clone(),
+        Vec3::new(0., -6.8, 0.),
+        Vec3::new(94., 0.16, 78.),
+    );
+    for layer in 0..4 {
+        let y = -1.5 - layer as f32 * 1.65;
+        for i in 0..40 {
+            let angle = i as f32 * std::f32::consts::TAU / 40.;
+            let a = angle.cos();
+            let b = angle.sin();
+            let p = Vec3::new(
+                a.signum() * a.abs().sqrt() * (ARENA_WIDTH / 2. - 1.),
+                y,
+                b.signum() * b.abs().sqrt() * (ARENA_DEPTH / 2. - 1.),
+            );
             c.spawn(PbrBundle {
                 mesh: k.stone.clone(),
-                material: k.white.clone(),
-                transform: Transform::from_xyz(x, 1.2, -15.8).with_scale(Vec3::new(0.4, 0.18, 0.5)),
+                material: k.rock.clone(),
+                transform: Transform::from_translation(p).with_scale(Vec3::new(5., 2.2, 4.)),
                 ..default()
             });
         }
+    }
+    for side in [-1., 1.] {
+        let fall_x = side * 26.;
+        let fall_z = -29.;
+        // Asymmetric faceted cliffs support the water source and divide the backdrop.
+        for j in 0..8 {
+            c.spawn(PbrBundle {
+                mesh: k.stone.clone(),
+                material: k.rock.clone(),
+                transform: Transform::from_xyz(
+                    side * (18. + j as f32 * 3.8),
+                    2. + (j % 3) as f32 * 2.,
+                    -34.,
+                )
+                .with_scale(Vec3::new(5., 7. + (j % 3) as f32 * 1.8, 5.)),
+                ..default()
+            });
+            palm(
+                &mut c,
+                &k,
+                side * (20. + j as f32 * 3.8),
+                -37.,
+                10. + (j % 3) as f32,
+                j as f32,
+            );
+        }
         block(
             &mut c,
             &k,
-            k.water.clone(),
-            Vec3::new(side * 21., 0.4, -15.),
-            Vec3::new(7., 0.15, 32.),
+            river.clone(),
+            Vec3::new(fall_x, 10.6, -32.),
+            Vec3::new(4.8, 0.15, 7.),
         );
-        for j in 0..5 {
-            block(
-                &mut c,
-                &k,
-                k.rock.clone(),
-                Vec3::new(side * (17. + j as f32 * 2.), 5. + (j % 2) as f32, -24.),
-                Vec3::new(3., 12., 5.),
-            );
-        }
-        for j in 0..5 {
-            block(
-                &mut c,
-                &k,
-                k.water.clone(),
-                Vec3::new(side * (14.5 + j as f32 * 0.55), 6., -16.0),
-                Vec3::new(0.55, 10.8, 0.12),
-            );
+        // Thin translucent water ribbons, falling highlights, and a broad landing pool.
+        for ribbon in 0..12 {
+            let x = fall_x - 2.2 + ribbon as f32 * 0.4;
             let e = block(
                 &mut c,
                 &k,
-                k.white.clone(),
-                Vec3::new(side * (14.5 + j as f32 * 0.55), 2. + j as f32 * 1.7, -15.9),
-                Vec3::new(0.12, 1.4, 0.03),
+                river.clone(),
+                Vec3::new(x, 2., fall_z),
+                Vec3::new(0.43, 17.4, 0.18),
             );
-            c.entity(e).insert(Waterfall {
-                top: 11.,
-                bottom: 1.5,
-                speed: 3. + j as f32 * 0.25,
+            c.entity(e).insert(WaterRipple {
+                origin: Vec3::new(x, 2., fall_z),
+                phase: ribbon as f32,
+                vertical: true,
+            });
+            for streak in 0..3 {
+                let e = block(
+                    &mut c,
+                    &k,
+                    k.white.clone(),
+                    Vec3::new(x, -6. + streak as f32 * 5.4, fall_z + 0.16),
+                    Vec3::new(0.055, 1.4 + ribbon as f32 * 0.06, 0.025),
+                );
+                c.entity(e).insert(Waterfall {
+                    top: 10.5,
+                    bottom: -6.5,
+                    speed: 7. + ribbon as f32 * 0.18,
+                });
+            }
+        }
+        for i in 0..24 {
+            let a = i as f32 * 2.399;
+            let p = Vec3::new(
+                fall_x + a.cos() * (1. + (i % 4) as f32 * 0.6),
+                -6.45,
+                fall_z + 1. + a.sin() * 1.7,
+            );
+            let e = c
+                .spawn(PbrBundle {
+                    mesh: k.leaf.clone(),
+                    material: k.white.clone(),
+                    transform: Transform::from_translation(p).with_scale(Vec3::new(0.65, 0.1, 0.4)),
+                    ..default()
+                })
+                .id();
+            c.entity(e).insert(WaterRipple {
+                origin: p,
+                phase: a,
+                vertical: false,
             });
         }
-        // Rope bridge and a small open viewing hut.
-        for j in 0..16 {
-            let x = side * (10.5 + j as f32 * 0.45);
-            let h = 4.3 - ((j as f32 / 15.) * std::f32::consts::PI).sin() * 0.7;
+        // River-bank islands and foreground vegetation establish a lower landscape.
+        for i in 0..18 {
+            let z = -35. + i as f32 * 4.5;
+            let x = side * (39. + (i % 3) as f32 * 2.);
+            c.spawn(PbrBundle {
+                mesh: k.stone.clone(),
+                material: k.greens[i % 3].clone(),
+                transform: Transform::from_xyz(x, -6.4, z).with_scale(Vec3::new(6., 2., 4.5)),
+                ..default()
+            });
+            if i % 2 == 0 {
+                palm_at(&mut c, &k, x, z, 3. + (i % 4) as f32, i as f32, -4.8);
+            }
+        }
+        for i in 0..36 {
+            let p = Vec3::new(
+                side * (32. + (i % 4) as f32 * 1.8),
+                -6.55,
+                -31. + i as f32 * 1.8,
+            );
+            let e = block(&mut c, &k, k.water.clone(), p, Vec3::new(0.12, 0.03, 1.5));
+            c.entity(e).insert(WaterRipple {
+                origin: p,
+                phase: i as f32 * 0.7,
+                vertical: false,
+            });
+        }
+        // Sagging bridge from the stands across the gorge to a viewing platform.
+        for j in 0..24 {
+            let x = side * (18. + j as f32 * 0.65);
+            let h = 2.8 - (j as f32 / 23. * std::f32::consts::PI).sin() * 1.4;
             block(
                 &mut c,
                 &k,
                 k.gold.clone(),
-                Vec3::new(x, h, -17.5),
-                Vec3::new(0.48, 0.15, 1.6),
+                Vec3::new(x, h, -25.),
+                Vec3::new(0.6, 0.18, 2.2),
             );
             if j % 3 == 0 {
-                for z in [-18.2, -16.8] {
-                    block(
+                for z in [-26., -24.] {
+                    beam(
                         &mut c,
                         &k,
                         k.wood.clone(),
-                        Vec3::new(x, h + 0.6, z),
-                        Vec3::new(0.1, 1.3, 0.1),
+                        Vec3::new(x, h, z),
+                        Vec3::new(x, h + 1.3, z),
+                        0.12,
                     );
+                    if j < 21 {
+                        beam(
+                            &mut c,
+                            &k,
+                            k.gold.clone(),
+                            Vec3::new(x, h + 1.3, z),
+                            Vec3::new(x + side * 1.95, h + 1.15, z),
+                            0.065,
+                        );
+                    }
                 }
             }
-        }
-        for z in [-18.2, -16.8] {
-            beam(
-                &mut c,
-                &k,
-                k.gold.clone(),
-                Vec3::new(side * 10.5, 5., z),
-                Vec3::new(side * 17.25, 5., z),
-                0.09,
-            );
-        }
-        let x = side * 17.25;
-        block(
-            &mut c,
-            &k,
-            k.wood.clone(),
-            Vec3::new(x, 4., -17.5),
-            Vec3::new(4., 0.3, 4.),
-        );
-        for dx in [-1.6, 1.6] {
-            for dz in [-1.6, 1.6] {
-                block(
-                    &mut c,
-                    &k,
-                    k.wood.clone(),
-                    Vec3::new(x + dx, 4., -17.5 + dz),
-                    Vec3::new(0.2, 8., 0.2),
-                );
-            }
-        }
-        for j in 0..4 {
-            block(
-                &mut c,
-                &k,
-                k.gold.clone(),
-                Vec3::new(x, 7.7 + j as f32 * 0.35, -17.5),
-                Vec3::new(4.6 - j as f32, 0.4, 4.6 - j as f32),
-            );
         }
     }
 }
 
 pub fn animate_jungle(
     time: Res<Time>,
-    mut leaves: Query<(&mut Transform, &Sway)>,
-    mut water: Query<(&mut Transform, &Waterfall), Without<Sway>>,
+    mut leaves: Query<(&mut Transform, &Sway), Without<CrowdWave>>,
+    mut water: Query<(&mut Transform, &Waterfall), (Without<Sway>, Without<CrowdWave>)>,
+    mut crowd: Query<(&mut Transform, &CrowdWave), (Without<Sway>, Without<Waterfall>)>,
 ) {
+    for (mut t, spectator) in &mut crowd {
+        let wave = (time.elapsed_seconds() * 1.7 - spectator.phase)
+            .sin()
+            .max(0.)
+            .powi(6);
+        t.translation.y = spectator.base_y + wave * 0.65;
+        t.rotation =
+            Quat::from_rotation_z((time.elapsed_seconds() * 2.3 + spectator.phase).sin() * 0.07);
+    }
     for (mut t, s) in &mut leaves {
         t.rotation =
             s.base * Quat::from_rotation_z((time.elapsed_seconds() * 0.8 + s.phase).sin() * 0.045);

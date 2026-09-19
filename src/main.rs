@@ -31,12 +31,17 @@ fn capture_preview(
         return;
     };
     *frames += 1;
-    if *frames == 90 {
+    let capture_frame = std::env::var("CANOPY_CAPTURE_FRAME")
+        .ok()
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(90)
+        .clamp(1, 3600);
+    if *frames == capture_frame {
         screenshots
             .save_screenshot_to_disk(window.single(), path)
             .unwrap();
     }
-    if *frames == 130 {
+    if *frames == capture_frame + 40 {
         exit.send(bevy::app::AppExit);
     }
 }

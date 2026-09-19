@@ -10,8 +10,8 @@ pub const PLAYER_GROUP: Group = Group::GROUP_2;
 pub const BARRIER_GROUP: Group = Group::GROUP_3;
 
 // === ARENA (White environment) ===
-pub const ARENA_WIDTH: f32 = 42.0; // X - total width
-pub const ARENA_DEPTH: f32 = 38.0; // Z - depth (must be > extended field)
+pub const ARENA_WIDTH: f32 = 58.0; // X - total width
+pub const ARENA_DEPTH: f32 = 46.0; // Z - depth (must be > extended field)
 pub const ARENA_HEIGHT: f32 = 15.0; // Y - wall height
 
 pub const WALL_THICKNESS: f32 = 0.5;
@@ -19,8 +19,8 @@ pub const WALL_COLOR: Color = Color::rgb(0.95, 0.95, 0.95); // Off-white
 pub const GRID_COLOR: Color = Color::rgb(0.85, 0.85, 0.85); // Grey lines
 
 // === FIELD (Grey play area) ===
-pub const FIELD_WIDTH: f32 = 36.0; // X
-pub const FIELD_DEPTH: f32 = 24.0; // Z
+pub const FIELD_WIDTH: f32 = 48.0; // X
+pub const FIELD_DEPTH: f32 = 32.0; // Z
 pub const FIELD_HEIGHT: f32 = 1.0; // Y - platform thickness
 pub const FIELD_COLOR: Color = Color::rgb(0.25, 0.25, 0.25); // Dark grey
 pub const FIELD_GRID_SPACING: f32 = 2.0; // White grid spacing

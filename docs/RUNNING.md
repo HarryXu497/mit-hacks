@@ -22,7 +22,7 @@ Orange moves with WASD and jumps with Space. Blue moves with the arrow keys and 
 
 The game permanently uses the smooth ball-following perspective broadcast camera. It may crop distant portions of the ground; camera tracking does not affect physics or controls.
 
-The playable layout is now a 36 x 24 field with 8-unit goal openings and 5-unit goal height. Player/ball sizes, gravity, acceleration, jump force, damping, rewards, action space, and observation interface are unchanged; the enlarged field and goal bounds are level geometry that the training setup must share.
+The playable layout is now a 48 x 32 field with 8-unit goal openings and 5-unit goal height. Player/ball sizes, gravity, acceleration, jump force and damping retain their existing values. Level dimensions and five-player formation slots must be shared with the training integration.
 
 The stepped spectator terraces are decorative and have no colliders.
 
@@ -40,7 +40,9 @@ Capture mode saves the camera image after rendering has warmed up and then exits
 
 `src/jungle.rs` builds the procedural field, markings, monkey children, goals, foliage, bridges, huts, water, and scoreboard housing. It reuses meshes and materials. No downloaded models or textures are required.
 
-The scene deliberately uses geometric characters and faceted environment forms. The earlier rounded-character concept has been superseded. There are two simulated players in this version; additional trained team members are a separate integration with the gameplay owner.
+The scene uses geometric characters and faceted environment forms. There are five physical players per team, with distinct formation positions restored after every reset. Keyboard controls move formation slot zero on each team; the other eight players await agent inputs. The upstream RL interface remains a two-agent placeholder, so five-agent training integration still belongs to the gameplay owner.
+
+The river gorge, water ribbons, foam, swaying vegetation and spectator waves are animated presentation geometry without colliders. Water is a stylized visual effect rather than a fluid simulation. Set `CANOPY_CAPTURE_FRAME` to a frame number (default 90) to inspect different animation phases in capture mode.
 
 `src/systems/camera.rs` controls the match camera, and `src/rendering/lighting.rs` controls daylight and fill. The existing scoreboard digits still display real score and round time.
 

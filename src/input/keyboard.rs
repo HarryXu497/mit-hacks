@@ -4,9 +4,10 @@ use crate::game::Team;
 
 pub fn keyboard_input_system(
     keyboard: Res<ButtonInput<KeyCode>>,
-    mut query: Query<(&mut PlayerInput, &CubePlayer)>,
+    mut query: Query<(&mut PlayerInput, &CubePlayer, Option<&crate::entities::roster::FormationSlot>)>,
 ) {
-    for (mut input, player) in query.iter_mut() {
+    for (mut input, player, slot) in query.iter_mut() {
+        if slot.is_some_and(|slot| slot.0 != 0) { continue; }
         input.movement = Vec2::ZERO;
         input.jump = false;
 

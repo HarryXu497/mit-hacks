@@ -3,7 +3,7 @@ use bevy_rapier3d::prelude::*;
 
 use super::state::{GameState, MatchState};
 use super::events::{GoalScoredEvent, GameOverEvent, ResetGameEvent, BallTouchedEvent};
-use crate::entities::{spawn_arena, spawn_wall_scoreboard, spawn_field, spawn_goals, spawn_players, spawn_ball};
+use crate::entities::{spawn_arena, spawn_wall_scoreboard, spawn_field, spawn_goals, spawn_ball};
 use crate::systems::{
     camera::setup_camera,
     movement::apply_player_movement,
@@ -51,7 +51,7 @@ impl Plugin for CubeSoccerPlugin {
                 spawn_wall_scoreboard,
                 spawn_field,
                 spawn_goals,
-                spawn_players,
+                crate::entities::roster::spawn_rosters,
                 spawn_ball,
                 setup_camera,
                 setup_lighting,
@@ -59,6 +59,8 @@ impl Plugin for CubeSoccerPlugin {
             ))
             .add_systems(PostStartup, crate::jungle::build_jungle)
             .add_systems(Update, crate::jungle::animate_jungle)
+            .add_systems(Update, crate::jungle::animate_water)
+            .add_systems(Update, crate::jungle::animate_crowd_arms)
             .add_systems(PostUpdate, crate::systems::camera::update_camera.before(bevy::transform::TransformSystem::TransformPropagate))
 
             // Update systems during playing

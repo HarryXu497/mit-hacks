@@ -29,6 +29,7 @@ pub mod ball;
 pub mod cube_player;
 pub mod field;
 pub mod goal;
+pub mod roster;
 
 pub use arena::{spawn_arena, spawn_wall_scoreboard, Arena};
 pub use ball::{spawn_ball, get_ball_spawn_position, Ball, BallBundle};

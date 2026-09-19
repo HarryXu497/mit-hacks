@@ -1,8 +1,8 @@
+use super::effects::spawn_decomposition;
+use crate::entities::{get_ball_spawn_position, get_spawn_position, Ball, CubePlayer};
+use crate::game::{GameState, MatchState, RESET_DELAY_SECS};
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
-use crate::entities::{Ball, CubePlayer, get_spawn_position, get_ball_spawn_position};
-use crate::game::{GameState, MatchState, RESET_DELAY_SECS};
-use super::effects::spawn_decomposition;
 
 #[derive(Resource)]
 pub struct ResetTimer(pub Timer);
@@ -19,11 +19,19 @@ pub fn reset_after_goal(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut ball_query: Query<(&mut Transform, &mut Velocity), (With<Ball>, Without<CubePlayer>)>,
-    mut player_query: Query<(&mut Transform, &mut Velocity, &CubePlayer), Without<Ball>>,
+    mut player_query: Query<
+        (
+            &mut Transform,
+            &mut Velocity,
+            &CubePlayer,
+            Option<&crate::entities::roster::FormationSlot>,
+        ),
+        Without<Ball>,
+    >,
     mut game_state: ResMut<GameState>,
 ) {
     // Spawn decomposition effects for players before resetting
-    for (transform, _, player) in player_query.iter() {
+    for (transform, _, player, _) in player_query.iter() {
         spawn_decomposition(
             &mut commands,
             &mut meshes,
@@ -41,8 +49,11 @@ pub fn reset_after_goal(
     }
 
     // Reset player positions and velocities
-    for (mut transform, mut velocity, player) in player_query.iter_mut() {
-        transform.translation = get_spawn_position(player.team);
+    for (mut transform, mut velocity, player, slot) in player_query.iter_mut() {
+        transform.translation = slot.map_or_else(
+            || get_spawn_position(player.team),
+            |slot| crate::entities::roster::formation_position(player.team, slot.0),
+        );
         velocity.linvel = Vec3::ZERO;
         velocity.angvel = Vec3::ZERO;
     }
@@ -60,12 +71,20 @@ pub fn reset_after_round(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut ball_query: Query<(&mut Transform, &mut Velocity), (With<Ball>, Without<CubePlayer>)>,
-    mut player_query: Query<(&mut Transform, &mut Velocity, &CubePlayer), Without<Ball>>,
+    mut player_query: Query<
+        (
+            &mut Transform,
+            &mut Velocity,
+            &CubePlayer,
+            Option<&crate::entities::roster::FormationSlot>,
+        ),
+        Without<Ball>,
+    >,
     mut game_state: ResMut<GameState>,
     mut next_state: ResMut<NextState<MatchState>>,
 ) {
     // Spawn decomposition effects for players before resetting
-    for (transform, _, player) in player_query.iter() {
+    for (transform, _, player, _) in player_query.iter() {
         spawn_decomposition(
             &mut commands,
             &mut meshes,
@@ -83,8 +102,11 @@ pub fn reset_after_round(
     }
 
     // Reset player positions and velocities
-    for (mut transform, mut velocity, player) in player_query.iter_mut() {
-        transform.translation = get_spawn_position(player.team);
+    for (mut transform, mut velocity, player, slot) in player_query.iter_mut() {
+        transform.translation = slot.map_or_else(
+            || get_spawn_position(player.team),
+            |slot| crate::entities::roster::formation_position(player.team, slot.0),
+        );
         velocity.linvel = Vec3::ZERO;
         velocity.angvel = Vec3::ZERO;
     }
@@ -110,7 +132,15 @@ pub fn check_reset_timer(
 
 pub fn reset_game(
     mut ball_query: Query<(&mut Transform, &mut Velocity), (With<Ball>, Without<CubePlayer>)>,
-    mut player_query: Query<(&mut Transform, &mut Velocity, &CubePlayer), Without<Ball>>,
+    mut player_query: Query<
+        (
+            &mut Transform,
+            &mut Velocity,
+            &CubePlayer,
+            Option<&crate::entities::roster::FormationSlot>,
+        ),
+        Without<Ball>,
+    >,
     mut game_state: ResMut<GameState>,
 ) {
     // Reset game state
@@ -124,8 +154,11 @@ pub fn reset_game(
     }
 
     // Reset players
-    for (mut transform, mut velocity, player) in player_query.iter_mut() {
-        transform.translation = get_spawn_position(player.team);
+    for (mut transform, mut velocity, player, slot) in player_query.iter_mut() {
+        transform.translation = slot.map_or_else(
+            || get_spawn_position(player.team),
+            |slot| crate::entities::roster::formation_position(player.team, slot.0),
+        );
         velocity.linvel = Vec3::ZERO;
         velocity.angvel = Vec3::ZERO;
     }
