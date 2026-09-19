@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .npm-cache/
+.vite/
 .playwright-cli/
 output/playwright/
 .DS_Store
