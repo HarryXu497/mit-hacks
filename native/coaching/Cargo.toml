@@ -2,7 +2,7 @@
 name = "tactic-lab-native"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.75"
+rust-version = "1.85"
 
 [lib]
 name = "tactic_lab_native"
@@ -42,6 +42,7 @@ humantime = "2.1"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+tactic-lab-player-creation = { path = "../player-creation" }
 tokio = { version = "1.40", features = ["rt-multi-thread", "macros", "sync", "time"] }
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
 url = "2.5"
