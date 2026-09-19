@@ -10,6 +10,7 @@ use crate::systems::{
     physics::configure_physics,
     scoring::{detect_goals, handle_goal_scored, update_timers},
     reset::{reset_after_goal, reset_after_round, check_reset_timer, ResetTimer},
+    possession::{Possession, tick_cooldowns, update_possession, shoot_ball, dribble_ball, clear_possession},
     effects::animate_fragments,
     display::update_wall_scoreboard,
     eyes::animate_googly_eyes,
@@ -32,6 +33,7 @@ impl Plugin for CubeSoccerPlugin {
             .init_resource::<GameState>()
             .init_resource::<ResetTimer>()
             .init_resource::<TrailSpawnTimer>()
+            .init_resource::<Possession>()
 
             // Events
             .add_event::<GoalScoredEvent>()
@@ -62,6 +64,12 @@ impl Plugin for CubeSoccerPlugin {
             .add_systems(Update, (
                 keyboard_input_system,
                 apply_player_movement,
+                (
+                    tick_cooldowns,
+                    update_possession,
+                    shoot_ball,
+                    dribble_ball,
+                ).chain(),
                 detect_goals,
                 handle_goal_scored,
                 update_timers,
@@ -70,11 +78,11 @@ impl Plugin for CubeSoccerPlugin {
             ).run_if(in_state(MatchState::Playing)))
 
             // Reset after goal (with 1 second delay)
-            .add_systems(OnEnter(MatchState::GoalScored), reset_after_goal)
+            .add_systems(OnEnter(MatchState::GoalScored), (reset_after_goal, clear_possession))
             .add_systems(Update, check_reset_timer.run_if(in_state(MatchState::GoalScored)))
 
             // Reset after round timeout (immediate)
-            .add_systems(OnEnter(MatchState::RoundOver), reset_after_round)
+            .add_systems(OnEnter(MatchState::RoundOver), (reset_after_round, clear_possession))
 
             // Animate effects (always running)
             .add_systems(Update, (
