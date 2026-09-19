@@ -1,15 +1,9 @@
 node_modules/
-dist/
 target/
 .npm-cache/
-.vite/
-.playwright-cli/
-output/playwright/
 output/sessions/
 .DS_Store
 *.tsbuildinfo
-vite.config.js
-vite.config.d.ts
 
 # Local secrets and environment overrides
 .env

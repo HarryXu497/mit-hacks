@@ -1,7 +1,5 @@
 # First screen visual specification
 
-The accepted concept is `first-screen-concept.png` in this directory.
-
 - Primary viewport: 16:10 laptop display.
 - Focal surface: portrait green magnetic tactics board in a restrained silver
   frame, with the toolbar mounted to the lower frame.

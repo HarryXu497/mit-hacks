@@ -9,5 +9,5 @@
     "moduleResolution": "Bundler",
     "types": ["node", "vitest/globals"]
   },
-  "include": ["vite.config.ts", "vitest.live.config.ts", "server", "tests/live", "src/domain"]
+  "include": ["vitest.config.ts", "vitest.live.config.ts", "server", "tests/live", "src/domain"]
 }

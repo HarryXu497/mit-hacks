@@ -2,9 +2,9 @@
 
 Tactic Lab is a 5-v-5 soccer coaching board that keeps player, ball,
 annotation, and transcript actions on one synchronized timeline and turns the
-recorded session into structured tactical JSON. The primary implementation is
-now the native Rust/Bevy client under `native/coaching`; the React application
-remains runnable as a migration reference.
+recorded session into structured tactical JSON. The primary client is the
+native Rust/Bevy application under `native/coaching`. The Node service in
+`server/` handles live transcription and model-backed interpretation.
 
 ## Run the native client
 
@@ -22,19 +22,16 @@ no browser is required. See
 [docs/native-coaching.md](./docs/native-coaching.md) for platform setup,
 permissions, storage, and verification.
 
-## Run the React reference
+## Run the local service only
 
 ```bash
 npm install
 cp .env.example .env
-# Add your OPENAI_API_KEY to .env
-npm run dev
+npm run dev:api
 ```
 
-Chrome is recommended for live browser speech recognition. Manual transcript
-entry remains available when speech recognition is unsupported or permission
-is denied. `npm run dev` starts the Vite client and the server-only API route;
-the OpenAI key is never sent to the browser.
+This starts the interpretation and transcription API on `127.0.0.1:8787`.
+The OpenAI key stays on the server and is never sent to the native client.
 
 ## Verification
 
@@ -51,7 +48,6 @@ run the two opt-in integration tests against the configured OpenAI model:
 npm run test:live
 ```
 
-Recorded sessions are autosaved locally. Model-backed JSON generation uses the
-server route and falls back to the deterministic interpreter when the service
-is unavailable. See [next-steps.md](./next-steps.md) for architecture and future
-hardening notes.
+Model-backed JSON generation uses the server route. The native client falls
+back to deterministic output when the service is unavailable. See
+[next-steps.md](./next-steps.md) for architecture and future hardening notes.

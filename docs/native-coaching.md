@@ -36,8 +36,8 @@ npm run dev:native
 
 The portable launcher checks Cargo, starts the local API on `127.0.0.1:8787`,
 waits for `/api/health`, then runs the native client. It terminates both child
-processes when the app or launcher exits. The React reference remains
-available through `npm run dev`.
+processes when the app or launcher exits. Run the service alone with
+`npm run dev:api`.
 
 Environment overrides:
 
@@ -86,8 +86,6 @@ replacement where supported.
 ```sh
 npm run typecheck
 npm test
-npm run build
-
 cargo fmt --manifest-path native/coaching/Cargo.toml --check
 cargo clippy --manifest-path native/coaching/Cargo.toml --all-targets -- -D warnings
 cargo test --manifest-path native/coaching/Cargo.toml
