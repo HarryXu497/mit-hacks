@@ -12,6 +12,7 @@
 pub mod lighting;
 pub mod materials;
 pub mod post_process;
+pub mod stylized;
 
 pub use lighting::*;
 pub use materials::*;

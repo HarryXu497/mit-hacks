@@ -7,7 +7,9 @@ pub struct CameraRig {
 }
 
 fn broadcast_transform(target: Vec3) -> Transform {
-    Transform::from_translation(target + Vec3::new(0., 43., 62.)).looking_at(target, Vec3::Y)
+    // Summit broadcast: show the cliff face below the pitch and the distant valley.
+    Transform::from_translation(target + Vec3::new(0., 48., 73.))
+        .looking_at(target + Vec3::new(0., -4., 0.), Vec3::Y)
 }
 
 #[derive(Component)]
@@ -18,7 +20,7 @@ pub fn setup_camera(mut commands: Commands) {
         Camera3dBundle {
             transform: broadcast_transform(Vec3::ZERO),
             projection: Projection::Perspective(PerspectiveProjection {
-                fov: 38.0_f32.to_radians(),
+                fov: 42.0_f32.to_radians(),
                 ..default()
             }),
             ..default()
@@ -26,8 +28,8 @@ pub fn setup_camera(mut commands: Commands) {
         bevy::pbr::FogSettings {
             color: Color::rgb(0.53, 0.75, 0.78),
             falloff: bevy::pbr::FogFalloff::Linear {
-                start: 95.0,
-                end: 190.0,
+                start: 110.0,
+                end: 360.0,
             },
             ..default()
         },

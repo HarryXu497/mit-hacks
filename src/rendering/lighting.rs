@@ -4,7 +4,7 @@ pub fn setup_lighting(mut commands: Commands) {
     // Strong ambient light (white environment)
     commands.insert_resource(AmbientLight {
         color: Color::rgb(0.72, 0.84, 1.0),
-        brightness: 180.0,
+        brightness: 260.0,
     });
 
     // Soft directional light (optional shadows)
@@ -22,7 +22,7 @@ pub fn setup_lighting(mut commands: Commands) {
     // Additional fill light from the opposite side
     commands.spawn(DirectionalLightBundle {
         directional_light: DirectionalLight {
-            illuminance: 1200.0,
+            illuminance: 1800.0,
             shadows_enabled: false,
             ..default()
         },

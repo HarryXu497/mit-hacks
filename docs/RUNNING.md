@@ -38,11 +38,15 @@ Capture mode saves the camera image after rendering has warmed up and then exits
 
 ## Where the artwork lives
 
+The latest forest-stadium pass is documented in [forest-stadium-direction.md](forest-stadium-direction.md). `src/jungle/landscape.rs` builds the continuous terrain, river valley, forest and packed grandstand. `src/rendering/stylized.rs` applies the embedded cel-lighting and animated-water shader from `assets/shaders/jungle.wgsl`.
+
 `src/jungle.rs` builds the procedural field, markings, monkey children, goals, foliage, bridges, huts, water, and scoreboard housing. It reuses meshes and materials. No downloaded models or textures are required.
 
 The scene uses geometric characters and faceted environment forms. There are five physical players per team, with distinct formation positions restored after every reset. Keyboard controls move formation slot zero on each team; the other eight players await agent inputs. The upstream RL interface remains a two-agent placeholder, so five-agent training integration still belongs to the gameplay owner.
 
-The river gorge, water ribbons, foam, swaying vegetation and spectator waves are animated presentation geometry without colliders. Water is a stylized visual effect rather than a fluid simulation. Set `CANOPY_CAPTURE_FRAME` to a frame number (default 90) to inspect different animation phases in capture mode.
+The river gorge, water ribbons, foam and waterfall streaks are animated presentation geometry without colliders. Foliage and spectators are intentionally static for performance. Water is a stylized visual effect rather than a fluid simulation. Set `CANOPY_CAPTURE_FRAME` to a frame number (default 90) to inspect different water phases in capture mode.
+
+The speed pass batches the distant forest and mountain vegetation into a handful of static meshes, uses fewer larger canopy masses, merges each team crowd into one static mesh, and removes crowd/foliage update systems. Water keeps its motion, but uses fewer animated waterfall strips and landing ripples. The close field, goals, players, stands, scoreboard and waterfall presentation remain detailed.
 
 `src/systems/camera.rs` controls the match camera, and `src/rendering/lighting.rs` controls daylight and fill. The existing scoreboard digits still display real score and round time.
 
