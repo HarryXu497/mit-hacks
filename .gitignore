@@ -2,6 +2,7 @@ node_modules/
 target/
 .npm-cache/
 output/sessions/
+output/player-creations/
 .DS_Store
 *.tsbuildinfo
 
