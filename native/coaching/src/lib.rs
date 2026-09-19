@@ -62,7 +62,8 @@ impl Plugin for CoachingPlugin {
             .add_event::<RequestInterpretation>()
             .add_event::<SetCoachingActive>()
             .add_event::<EnterGame>()
-            .add_systems(Startup, (configure_egui, spawn_board).chain())
+            .add_systems(Startup, configure_egui)
+            .add_systems(OnEnter(AppPhase::Coaching), spawn_board)
             .add_systems(
                 Update,
                 (
@@ -79,7 +80,8 @@ impl Plugin for CoachingPlugin {
                     autosave_session,
                 )
                     .chain()
-                    .run_if(coaching_is_active),
+                    .run_if(coaching_is_active)
+                    .run_if(in_state(AppPhase::Coaching)),
             )
             .add_systems(Update, (update_lifecycle, handle_enter_game).chain());
     }

@@ -2,6 +2,8 @@ use bevy::prelude::*;
 use bevy::window::{PresentMode, WindowResolution};
 use bevy_egui::EguiPlugin;
 use tactic_lab_native::{game::GamePlugin, phase::AppPhase, CoachingPlugin};
+use tactic_lab_player_creation::state::ContinueToCoaching;
+use tactic_lab_player_creation::PlayerCreationPlugin;
 
 fn main() {
     App::new()
@@ -22,7 +24,18 @@ fn main() {
         )
         .init_state::<AppPhase>()
         .add_plugins(EguiPlugin)
+        .add_plugins(PlayerCreationPlugin::default().yielding_to_coaching())
+        .add_systems(Update, handle_continue_to_coaching)
         .add_plugins(CoachingPlugin)
         .add_plugins(GamePlugin)
         .run();
+}
+
+fn handle_continue_to_coaching(
+    mut finished: EventReader<ContinueToCoaching>,
+    mut next_phase: ResMut<NextState<AppPhase>>,
+) {
+    if finished.read().next().is_some() {
+        next_phase.set(AppPhase::Coaching);
+    }
 }
