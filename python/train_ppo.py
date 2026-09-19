@@ -19,12 +19,12 @@ try:
 except ImportError:
     WANDB_AVAILABLE = False
 
-from env import CubeSoccerEnv
+from env import CubeSoccerTeamEnv
 
 
 def make_env(seed):
     def _init():
-        env = CubeSoccerEnv()
+        env = CubeSoccerTeamEnv()  # Orange team brain vs built-in heuristic (Blue)
         env.reset(seed=seed)
         return env
     return _init
@@ -61,7 +61,7 @@ def main():
 
     # Eval environment
     eval_render_mode = "human" if args.render_eval else None
-    eval_env = CubeSoccerEnv(render_mode=eval_render_mode)
+    eval_env = CubeSoccerTeamEnv(render_mode=eval_render_mode)
 
     # Callbacks
     callbacks = [

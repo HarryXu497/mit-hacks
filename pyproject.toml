@@ -24,4 +24,6 @@ train = [
 
 [tool.maturin]
 features = ["python"]
-python-source = "python"
+# Native-extension-only build: maturin compiles the `cube_soccer` module (with
+# PyCubeSoccerEnv). The pure-Python helpers (env.py, train_ppo.py) live in
+# `python/` and are run from there, importing the compiled extension.
