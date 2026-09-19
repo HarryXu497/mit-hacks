@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use bevy::window::{PresentMode, WindowResolution};
 use bevy_egui::EguiPlugin;
-use tactic_lab_native::CoachingPlugin;
+use tactic_lab_native::{game::GamePlugin, phase::AppPhase, CoachingPlugin};
 
 fn main() {
     App::new()
@@ -20,7 +20,9 @@ fn main() {
                 })
                 .set(ImagePlugin::default_nearest()),
         )
+        .init_state::<AppPhase>()
         .add_plugins(EguiPlugin)
         .add_plugins(CoachingPlugin)
+        .add_plugins(GamePlugin)
         .run();
 }

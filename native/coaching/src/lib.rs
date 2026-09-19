@@ -1,7 +1,9 @@
 pub mod board;
+pub mod game;
 pub mod interpretation;
 pub mod model;
 pub mod persistence;
+pub mod phase;
 pub mod replay;
 pub mod session;
 pub mod speech;
@@ -20,6 +22,7 @@ use interpretation::{
 use persistence::{autosave_session, load_recovery, AutosaveTracker, PersistenceStatus};
 use session::{tick_session, CoachingSession};
 use speech::{receive_speech, SpeechRuntime};
+use phase::AppPhase;
 use ui::{coaching_ui, configure_egui, CoachingUiState};
 
 pub struct CoachingPlugin;
@@ -78,7 +81,7 @@ impl Plugin for CoachingPlugin {
                     .chain()
                     .run_if(coaching_is_active),
             )
-            .add_systems(Update, update_lifecycle);
+            .add_systems(Update, (update_lifecycle, handle_enter_game).chain());
     }
 }
 
@@ -110,5 +113,16 @@ fn update_lifecycle(
                 commands.entity(entity).despawn_recursive();
             }
         }
+    }
+}
+
+fn handle_enter_game(
+    mut enter_game: EventReader<EnterGame>,
+    mut set_active: EventWriter<SetCoachingActive>,
+    mut next_phase: ResMut<NextState<AppPhase>>,
+) {
+    if enter_game.read().next().is_some() {
+        set_active.send(SetCoachingActive(false));
+        next_phase.set(AppPhase::Game);
     }
 }
