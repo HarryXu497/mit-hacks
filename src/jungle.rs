@@ -52,6 +52,10 @@ struct Kit {
     orange: Handle<StandardMaterial>,
     blue: Handle<StandardMaterial>,
     face: Handle<StandardMaterial>,
+    fur: Handle<StandardMaterial>,
+    fur_dark: Handle<StandardMaterial>,
+    muzzle: Handle<StandardMaterial>,
+    eye_white: Handle<StandardMaterial>,
     flower_yellow: Handle<StandardMaterial>,
 }
 fn material(m: &mut Assets<StandardMaterial>, c: Color) -> Handle<StandardMaterial> {
@@ -130,73 +134,88 @@ fn palm_at(c: &mut Commands, k: &Kit, x: f32, z: f32, h: f32, phase: f32, ground
         });
     }
 }
+/// A cube player's visible character. Built inside the 1.5-unit collider it
+/// represents: nothing here changes the hitbox, only what sits on top of it.
+///
+/// Proportions follow the reference: head roughly 45% of standing height, a
+/// pale muzzle mask under large eye globes, ears on the head's sides, short
+/// tapered limbs and a curling tail. Team colour lives in the kit -- cap, jersey
+/// and shorts -- so a brown-furred character still reads orange or blue from the
+/// broadcast camera.
 fn monkey(c: &mut Commands, k: &Kit, parent: Entity, team: Team) {
-    let fur = if team == Team::Orange {
+    let kit = if team == Team::Orange {
         k.orange.clone()
     } else {
         k.blue.clone()
     };
-    let parts = [
-        (
-            Vec3::new(0., 0., 0.),
-            Vec3::new(0.8, 0.8, 0.65),
-            fur.clone(),
-        ),
-        (
-            Vec3::new(0., 0.57, 0.08),
-            Vec3::new(1.05, 0.95, 0.9),
-            fur.clone(),
-        ),
-        (
-            Vec3::new(0., 0.51, 0.55),
-            Vec3::new(0.76, 0.66, 0.08),
-            k.face.clone(),
-        ),
-        (
-            Vec3::new(-0.62, 0.55, 0.05),
-            Vec3::new(0.25, 0.37, 0.25),
-            fur.clone(),
-        ),
-        (
-            Vec3::new(0.62, 0.55, 0.05),
-            Vec3::new(0.25, 0.37, 0.25),
-            fur.clone(),
-        ),
-        (
-            Vec3::new(-0.19, 0.62, 0.61),
-            Vec3::new(0.10, 0.19, 0.05),
-            k.dark.clone(),
-        ),
-        (
-            Vec3::new(0.19, 0.62, 0.61),
-            Vec3::new(0.10, 0.19, 0.05),
-            k.dark.clone(),
-        ),
-        (
-            Vec3::new(-0.48, -0.15, 0.05),
-            Vec3::new(0.25, 0.55, 0.27),
-            fur.clone(),
-        ),
-        (
-            Vec3::new(0.48, -0.15, 0.05),
-            Vec3::new(0.25, 0.55, 0.27),
-            fur.clone(),
-        ),
-        (
-            Vec3::new(-0.24, -0.55, 0.1),
-            Vec3::new(0.29, 0.34, 0.43),
-            k.face.clone(),
-        ),
-        (
-            Vec3::new(0.24, -0.55, 0.1),
-            Vec3::new(0.29, 0.34, 0.43),
-            k.face.clone(),
-        ),
+    let round = k.terrain.clone();
+    let facet = k.leaf.clone();
+
+    // (mesh, material, offset, half-extents)
+    let parts: Vec<(Handle<Mesh>, Handle<StandardMaterial>, Vec3, Vec3)> = vec![
+        // Head and face
+        (round.clone(), k.fur.clone(), Vec3::new(0., 0.34, 0.), Vec3::new(0.56, 0.52, 0.50)),
+        (round.clone(), kit.clone(), Vec3::new(0., 0.58, -0.03), Vec3::new(0.59, 0.41, 0.53)),
+        (round.clone(), k.muzzle.clone(), Vec3::new(0., 0.20, 0.34), Vec3::new(0.34, 0.26, 0.26)),
+        (facet.clone(), k.fur_dark.clone(), Vec3::new(0., 0.11, 0.52), Vec3::new(0.09, 0.06, 0.07)),
+        // Ears, with a pale inner disc
+        (round.clone(), k.fur.clone(), Vec3::new(-0.56, 0.38, -0.02), Vec3::new(0.15, 0.19, 0.14)),
+        (round.clone(), k.fur.clone(), Vec3::new(0.56, 0.38, -0.02), Vec3::new(0.15, 0.19, 0.14)),
+        (round.clone(), k.muzzle.clone(), Vec3::new(-0.63, 0.38, 0.), Vec3::new(0.07, 0.11, 0.08)),
+        (round.clone(), k.muzzle.clone(), Vec3::new(0.63, 0.38, 0.), Vec3::new(0.07, 0.11, 0.08)),
+        // Eye globes and pupils: the feature that carries the character
+        (round.clone(), k.eye_white.clone(), Vec3::new(-0.19, 0.45, 0.38), Vec3::new(0.15, 0.17, 0.13)),
+        (round.clone(), k.eye_white.clone(), Vec3::new(0.19, 0.45, 0.38), Vec3::new(0.15, 0.17, 0.13)),
+        (round.clone(), k.dark.clone(), Vec3::new(-0.19, 0.44, 0.48), Vec3::new(0.07, 0.09, 0.05)),
+        (round.clone(), k.dark.clone(), Vec3::new(0.19, 0.44, 0.48), Vec3::new(0.07, 0.09, 0.05)),
+        // Jersey body and shorts
+        (round.clone(), kit.clone(), Vec3::new(0., -0.20, 0.), Vec3::new(0.45, 0.39, 0.36)),
+        (round.clone(), k.fur_dark.clone(), Vec3::new(0., -0.48, 0.), Vec3::new(0.34, 0.16, 0.29)),
+        // Arms and feet
+        (round.clone(), k.fur.clone(), Vec3::new(-0.46, -0.18, 0.06), Vec3::new(0.13, 0.26, 0.15)),
+        (round.clone(), k.fur.clone(), Vec3::new(0.46, -0.18, 0.06), Vec3::new(0.13, 0.26, 0.15)),
+        (round.clone(), k.muzzle.clone(), Vec3::new(-0.46, -0.42, 0.08), Vec3::new(0.11, 0.10, 0.12)),
+        (round.clone(), k.muzzle.clone(), Vec3::new(0.46, -0.42, 0.08), Vec3::new(0.11, 0.10, 0.12)),
+        (round.clone(), k.muzzle.clone(), Vec3::new(-0.20, -0.62, 0.10), Vec3::new(0.15, 0.10, 0.22)),
+        (round.clone(), k.muzzle.clone(), Vec3::new(0.20, -0.62, 0.10), Vec3::new(0.15, 0.10, 0.22)),
     ];
-    for (p, s, m) in parts {
-        let e = block(c, k, m, p, s);
-        c.entity(e)
-            .insert(crate::rendering::stylized::ActorSurface);
+
+    for (mesh, material, offset, size) in parts {
+        let e = c
+            .spawn((
+                PbrBundle {
+                    mesh,
+                    material,
+                    transform: Transform::from_translation(offset).with_scale(size),
+                    ..default()
+                },
+                crate::rendering::stylized::ActorSurface,
+            ))
+            .id();
+        c.entity(parent).add_child(e);
+    }
+
+    // Tail: a short chain of shrinking segments curling up behind the body.
+    for i in 0..5 {
+        let t = i as f32 / 4.;
+        let a = t * 2.4;
+        let p = Vec3::new(
+            0.,
+            -0.36 + a.sin() * 0.42 - t * 0.06,
+            -0.40 - a.cos() * 0.30 + 0.30,
+        );
+        let e = c
+            .spawn((
+                PbrBundle {
+                    mesh: round.clone(),
+                    material: k.fur.clone(),
+                    transform: Transform::from_translation(p)
+                        .with_scale(Vec3::splat(0.13 - t * 0.045)),
+                    ..default()
+                },
+                crate::rendering::stylized::ActorSurface,
+            ))
+            .id();
         c.entity(parent).add_child(e);
     }
 }
@@ -329,6 +348,10 @@ pub fn build_jungle(
         orange: material(&mut mats, Color::rgb(0.87, 0.36, 0.06)),
         blue: material(&mut mats, Color::rgb(0.08, 0.34, 0.85)),
         face: material(&mut mats, Color::rgb(0.98, 0.77, 0.42)),
+        fur: material(&mut mats, Color::rgb(0.67, 0.41, 0.18)),
+        fur_dark: material(&mut mats, Color::rgb(0.42, 0.23, 0.10)),
+        muzzle: material(&mut mats, Color::rgb(0.94, 0.77, 0.54)),
+        eye_white: material(&mut mats, Color::rgb(0.98, 0.98, 0.96)),
         flower_yellow: material(&mut mats, Color::rgb(1.0, 0.72, 0.08)),
     };
     c.insert_resource(ClearColor(Color::rgb(0.18, 0.38, 0.30)));

@@ -54,8 +54,11 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front: bool) -> FragmentOut
         // ground in this style -- the ground itself never contains either.
         if settings.y > 0.5 {
             let facing = max(dot(p.N, p.V), 0.0);
-            let rim = pow(1.0 - facing, 2.2);
-            shaded = shaded * (1.0 - rim * 0.88);
+            // Tight exponent: on a part only ~20px across, a soft rim swallows the
+            // whole silhouette and the kit colour stops reading. This keeps the
+            // contour to the outer edge and leaves the face of each form lit.
+            let rim = pow(1.0 - facing, 3.6);
+            shaded = shaded * (1.0 - rim * 0.72);
             let hot = pow(facing, 7.0) * 0.30;
             shaded = shaded + vec3<f32>(hot);
         }
