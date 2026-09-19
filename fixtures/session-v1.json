@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "id": "session-fixture",
+  "title": "Fixture build-up",
+  "status": "review",
+  "elapsedMs": 5000,
+  "events": [
+    {
+      "id": "recording-1",
+      "type": "recording_started",
+      "timestampMs": 0
+    },
+    {
+      "id": "move-1",
+      "type": "entity_moved",
+      "timestampMs": 1200,
+      "entity": { "kind": "player", "id": 3 },
+      "startedAtMs": 800,
+      "from": { "x": 0.7, "y": 0.23 },
+      "to": { "x": 0.55, "y": 0.4 },
+      "path": [
+        { "x": 0.7, "y": 0.23 },
+        { "x": 0.62, "y": 0.31 },
+        { "x": 0.55, "y": 0.4 }
+      ]
+    },
+    {
+      "id": "annotation-1",
+      "type": "annotation_added",
+      "timestampMs": 1800,
+      "startedAtMs": 1500,
+      "annotation": {
+        "id": "arrow-1",
+        "kind": "arrow",
+        "points": [
+          { "x": 0.55, "y": 0.4 },
+          { "x": 0.45, "y": 0.52 }
+        ]
+      }
+    },
+    {
+      "id": "transcript-1",
+      "type": "transcript_added",
+      "timestampMs": 2400,
+      "segment": {
+        "id": "segment-1",
+        "startMs": 1000,
+        "endMs": 2400,
+        "text": "Player three moves inside.",
+        "source": "speech"
+      }
+    },
+    {
+      "id": "transcript-edit-1",
+      "type": "transcript_edited",
+      "timestampMs": 2600,
+      "segmentId": "segment-1",
+      "text": "Player three moves inside to receive."
+    },
+    {
+      "id": "recording-2",
+      "type": "recording_stopped",
+      "timestampMs": 5000
+    }
+  ],
+  "createdAt": "2026-09-19T19:48:00.000Z"
+}

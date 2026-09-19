@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import { interpretSession, tacticalOutputSchema } from "./interpret";
 import { effectiveEvents, replaySession } from "./replay";
+import { sessionSchema } from "./schemas";
 import { clampPoint, createSession } from "./session";
 import type { RawSessionEvent } from "./types";
 
@@ -68,5 +70,20 @@ describe("session domain", () => {
     expect(tacticalOutputSchema.safeParse(result).success).toBe(true);
     expect(result.steps[0].movements[0].entityId).toBe("ball");
     expect(result.steps[0].evidence.transcriptSegmentIds).toEqual(["segment-1"]);
+  });
+
+  it("replays the shared native compatibility fixture", () => {
+    const fixture = JSON.parse(
+      readFileSync(new URL("../../fixtures/session-v1.json", import.meta.url), "utf8"),
+    );
+    const session = sessionSchema.parse(fixture);
+    const replay = replaySession(session.events);
+
+    expect(replay.board.players.find((player) => player.id === 3)?.position).toEqual({
+      x: 0.55,
+      y: 0.4,
+    });
+    expect(replay.transcripts[0]?.text).toBe("Player three moves inside to receive.");
+    expect(tacticalOutputSchema.safeParse(interpretSession(session)).success).toBe(true);
   });
 });
