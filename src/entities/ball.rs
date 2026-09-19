@@ -59,7 +59,7 @@ impl BallBundle {
                 linear_damping: BALL_LINEAR_DAMPING,
                 angular_damping: BALL_ANGULAR_DAMPING,
             },
-            ccd: Ccd::enabled(),
+            ccd: Ccd::disabled(), // CCD off for sim throughput; re-enable if the ball tunnels
         }
     }
 }

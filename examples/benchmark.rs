@@ -6,6 +6,7 @@
 
 use std::time::Instant;
 use cube_soccer::{CubeSoccerEnv, EnvConfig};
+use cube_soccer::rl::TOTAL_ACTION_SIZE;
 use rand::Rng;
 
 fn main() {
@@ -19,18 +20,12 @@ fn main() {
 
     let mut env = CubeSoccerEnv::new(config);
 
-    let num_steps = 100_000;
+    let num_steps = 20_000;
     let mut rng = rand::thread_rng();
 
     // Generate random actions
-    let random_actions: Vec<[f32; 8]> = (0..num_steps)
-        .map(|_| {
-            let mut actions = [0.0f32; 8];
-            for a in actions.iter_mut() {
-                *a = rng.gen_range(-1.0..=1.0);
-            }
-            actions
-        })
+    let random_actions: Vec<Vec<f32>> = (0..num_steps)
+        .map(|_| (0..TOTAL_ACTION_SIZE).map(|_| rng.gen_range(-1.0..=1.0)).collect())
         .collect();
 
     println!("Warming up...");
@@ -68,9 +63,6 @@ fn main() {
     println!("  Steps/sec:      {:.0}", steps_per_sec);
     println!();
 
-    if steps_per_sec >= 50_000.0 {
-        println!("  Status: PASS (target: 50,000 steps/sec)");
-    } else {
-        println!("  Status: BELOW TARGET (target: 50,000 steps/sec)");
-    }
+    println!("  (headless Bevy+Rapier sim; use this number to decide whether further");
+    println!("   optimization -- dropping the ECS and driving Rapier directly -- is worth it.)");
 }

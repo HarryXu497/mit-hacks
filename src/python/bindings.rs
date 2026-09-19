@@ -5,11 +5,34 @@ use numpy::{PyArray1, PyReadonlyArray1, IntoPyArray};
 
 #[cfg(feature = "python")]
 use crate::rl::{CubeSoccerEnv, EnvConfig};
+#[cfg(feature = "python")]
+use crate::game::config as cube_soccer_shapes;
+#[cfg(feature = "python")]
+use pyo3::exceptions::PyValueError;
+#[cfg(feature = "python")]
+use crate::game::Team;
+#[cfg(feature = "python")]
+use crate::systems::heuristic_ai::{Tactic, TacticParams};
 
 #[cfg(feature = "python")]
-#[pyclass]
+#[pyclass(unsendable)]
 pub struct PyCubeSoccerEnv {
     env: CubeSoccerEnv,
+}
+
+#[cfg(feature = "python")]
+fn parse_team(team: &str) -> PyResult<Team> {
+    match team.trim().to_lowercase().as_str() {
+        "orange" => Ok(Team::Orange),
+        "blue" => Ok(Team::Blue),
+        other => Err(PyValueError::new_err(format!("unknown team: {other:?} (expected 'orange' or 'blue')"))),
+    }
+}
+
+#[cfg(feature = "python")]
+fn parse_preset(name: &str) -> PyResult<Tactic> {
+    Tactic::from_name(name)
+        .ok_or_else(|| PyValueError::new_err(format!("unknown tactic: {name:?}")))
 }
 
 #[cfg(feature = "python")]
@@ -33,8 +56,8 @@ impl PyCubeSoccerEnv {
         py: Python<'py>,
         seed: Option<u64>,
     ) -> PyResult<&'py PyArray1<f32>> {
-        let obs = self.env.reset(seed);
-        Ok(obs.to_vec().into_pyarray(py))
+        let obs = self.env.reset(seed); // Vec<f32>, len NUM_AGENTS * OBSERVATION_SIZE
+        Ok(obs.into_pyarray(py))
     }
 
     fn step<'py>(
@@ -42,19 +65,14 @@ impl PyCubeSoccerEnv {
         py: Python<'py>,
         actions: PyReadonlyArray1<f32>,
     ) -> PyResult<(
-        &'py PyArray1<f32>,  // observations
-        (f32, f32),          // rewards (orange, blue)
-        bool,                // done
-        bool,                // truncated
-        PyObject,            // info dict
+        &'py PyArray1<f32>, // flat observations (NUM_AGENTS * OBSERVATION_SIZE)
+        Vec<f32>,           // per-agent rewards (NUM_AGENTS)
+        bool,               // done
+        bool,               // truncated
+        PyObject,           // info dict
     )> {
         let actions_slice: &[f32] = actions.as_slice()?;
-        let mut actions_array = [0.0f32; 8];
-        for (i, &v) in actions_slice.iter().take(8).enumerate() {
-            actions_array[i] = v;
-        }
-
-        let result = self.env.step(&actions_array);
+        let result = self.env.step(actions_slice);
 
         let info = pyo3::types::PyDict::new(py);
         info.set_item("score_orange", result.info.score[0])?;
@@ -65,8 +83,8 @@ impl PyCubeSoccerEnv {
         }
 
         Ok((
-            result.observations.to_vec().into_pyarray(py),
-            (result.rewards[0], result.rewards[1]),
+            result.observations.into_pyarray(py),
+            result.rewards,
             result.done,
             result.truncated,
             info.into(),
@@ -86,6 +104,53 @@ impl PyCubeSoccerEnv {
     #[getter]
     fn action_space(&self) -> PyResult<(Vec<f32>, Vec<f32>, Vec<usize>)> {
         Ok(self.env.get_action_space())
+    }
+
+    #[getter]
+    fn num_agents(&self) -> usize { cube_soccer_shapes::NUM_AGENTS }
+    #[getter]
+    fn players_per_team(&self) -> usize { cube_soccer_shapes::PLAYERS_PER_TEAM }
+    #[getter]
+    fn observation_size(&self) -> usize { cube_soccer_shapes::OBSERVATION_SIZE }
+    #[getter]
+    fn action_size(&self) -> usize { cube_soccer_shapes::ACTION_SIZE }
+
+    /// Set a team's whole-team tactic from a preset name (e.g. "High Press").
+    fn set_team_preset(&mut self, team: &str, name: &str) -> PyResult<()> {
+        self.env.set_team_preset(parse_team(team)?, parse_preset(name)?);
+        Ok(())
+    }
+
+    /// Set a team's whole-team tactic params directly.
+    fn set_team_params(&mut self, team: &str, defender_depth: f32, attacker_push: f32, width: f32, spacing: f32) -> PyResult<()> {
+        self.env.set_team_params(parse_team(team)?, TacticParams { defender_depth, attacker_push, width, spacing });
+        Ok(())
+    }
+
+    /// Set a team's base tactic to a weighted blend of presets.
+    /// `presets` and `weights` must be equal length (e.g. ["Low Block","Wide"], [0.7,0.3]).
+    fn set_team_blend(&mut self, team: &str, presets: Vec<String>, weights: Vec<f32>) -> PyResult<()> {
+        if presets.len() != weights.len() {
+            return Err(PyValueError::new_err("presets and weights must be the same length"));
+        }
+        let mut parts: Vec<(TacticParams, f32)> = Vec::with_capacity(presets.len());
+        for (name, w) in presets.iter().zip(weights) {
+            parts.push((parse_preset(name)?.params(), w));
+        }
+        self.env.set_team_blend(parse_team(team)?, &parts);
+        Ok(())
+    }
+
+    /// Override a single player's (by index) tactic params.
+    fn set_player_params(&mut self, team: &str, index: usize, defender_depth: f32, attacker_push: f32, width: f32, spacing: f32) -> PyResult<()> {
+        self.env.set_player_params(parse_team(team)?, index, TacticParams { defender_depth, attacker_push, width, spacing });
+        Ok(())
+    }
+
+    /// Remove all per-player overrides for a team.
+    fn clear_player_overrides(&mut self, team: &str) -> PyResult<()> {
+        self.env.clear_player_overrides(parse_team(team)?);
+        Ok(())
     }
 }
 

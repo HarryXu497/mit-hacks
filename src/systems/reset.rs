@@ -42,7 +42,7 @@ pub fn reset_after_goal(
 
     // Reset player positions and velocities
     for (mut transform, mut velocity, player) in player_query.iter_mut() {
-        transform.translation = get_spawn_position(player.team);
+        transform.translation = get_spawn_position(player.team, player.index);
         velocity.linvel = Vec3::ZERO;
         velocity.angvel = Vec3::ZERO;
     }
@@ -84,7 +84,7 @@ pub fn reset_after_round(
 
     // Reset player positions and velocities
     for (mut transform, mut velocity, player) in player_query.iter_mut() {
-        transform.translation = get_spawn_position(player.team);
+        transform.translation = get_spawn_position(player.team, player.index);
         velocity.linvel = Vec3::ZERO;
         velocity.angvel = Vec3::ZERO;
     }
@@ -125,7 +125,7 @@ pub fn reset_game(
 
     // Reset players
     for (mut transform, mut velocity, player) in player_query.iter_mut() {
-        transform.translation = get_spawn_position(player.team);
+        transform.translation = get_spawn_position(player.team, player.index);
         velocity.linvel = Vec3::ZERO;
         velocity.angvel = Vec3::ZERO;
     }

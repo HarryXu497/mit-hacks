@@ -13,6 +13,7 @@ fn player_collision_groups() -> CollisionGroups {
 #[derive(Component)]
 pub struct CubePlayer {
     pub team: Team,
+    pub index: usize,
     pub can_jump: bool,
 }
 
@@ -26,6 +27,7 @@ pub struct GooglyPupil {
 pub struct PlayerInput {
     pub movement: Vec2,  // X, Z
     pub jump: bool,
+    pub shoot: f32,      // shot strength [0,1]; > SHOOT_THRESHOLD fires a shot
 }
 
 #[derive(Bundle)]
@@ -48,6 +50,7 @@ pub struct CubePlayerBundle {
 impl CubePlayerBundle {
     pub fn new(
         team: Team,
+        index: usize,
         position: Vec3,
         meshes: &mut ResMut<Assets<Mesh>>,
         materials: &mut ResMut<Assets<StandardMaterial>>,
@@ -55,7 +58,7 @@ impl CubePlayerBundle {
         let color = team.color();
 
         Self {
-            player: CubePlayer { team, can_jump: true },
+            player: CubePlayer { team, index, can_jump: true },
             input: PlayerInput::default(),
             pbr: PbrBundle {
                 mesh: meshes.add(Cuboid::new(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE)),
@@ -80,7 +83,7 @@ impl CubePlayerBundle {
                 linear_damping: 2.0,
                 angular_damping: 0.0,
             },
-            ccd: Ccd::enabled(),
+            ccd: Ccd::disabled(), // CCD off for sim throughput; re-enable if cubes tunnel
         }
     }
 }
@@ -102,31 +105,22 @@ pub fn spawn_players(
     let eye_mesh = meshes.add(Sphere::new(0.2).mesh().uv(16, 8));
     let pupil_mesh = meshes.add(Sphere::new(0.12).mesh().uv(12, 6));
 
-    // Orange player (left)
-    spawn_player_with_eyes(
-        &mut commands,
-        &mut meshes,
-        &mut materials,
-        Team::Orange,
-        Vec3::new(-FIELD_WIDTH / 4.0, FIELD_HEIGHT + CUBE_SIZE, 0.0),
-        eye_white.clone(),
-        pupil_black.clone(),
-        eye_mesh.clone(),
-        pupil_mesh.clone(),
-    );
-
-    // Blue player (right)
-    spawn_player_with_eyes(
-        &mut commands,
-        &mut meshes,
-        &mut materials,
-        Team::Blue,
-        Vec3::new(FIELD_WIDTH / 4.0, FIELD_HEIGHT + CUBE_SIZE, 0.0),
-        eye_white,
-        pupil_black,
-        eye_mesh,
-        pupil_mesh,
-    );
+    for team in [Team::Orange, Team::Blue] {
+        for index in 0..PLAYERS_PER_TEAM {
+            spawn_player_with_eyes(
+                &mut commands,
+                &mut meshes,
+                &mut materials,
+                team,
+                index,
+                get_spawn_position(team, index),
+                eye_white.clone(),
+                pupil_black.clone(),
+                eye_mesh.clone(),
+                pupil_mesh.clone(),
+            );
+        }
+    }
 }
 
 fn spawn_player_with_eyes(
@@ -134,6 +128,7 @@ fn spawn_player_with_eyes(
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
     team: Team,
+    index: usize,
     position: Vec3,
     eye_material: Handle<StandardMaterial>,
     pupil_material: Handle<StandardMaterial>,
@@ -145,7 +140,7 @@ fn spawn_player_with_eyes(
     let eye_y = 0.15;  // Slightly above center
     let eye_spacing = 0.3;  // Distance between eyes
 
-    commands.spawn(CubePlayerBundle::new(team, position, meshes, materials))
+    commands.spawn(CubePlayerBundle::new(team, index, position, meshes, materials))
         .with_children(|parent| {
             // Left eye (white globe)
             parent.spawn(PbrBundle {
@@ -187,10 +182,47 @@ fn spawn_player_with_eyes(
         });
 }
 
-/// Get the initial spawn position for a player
-pub fn get_spawn_position(team: Team) -> Vec3 {
-    match team {
-        Team::Orange => Vec3::new(-FIELD_WIDTH / 4.0, FIELD_HEIGHT + CUBE_SIZE, 0.0),
-        Team::Blue => Vec3::new(FIELD_WIDTH / 4.0, FIELD_HEIGHT + CUBE_SIZE, 0.0),
+/// Get the initial spawn position for a player at `index` on `team`.
+/// Players are spread along the Z axis on their team's side of the field.
+pub fn get_spawn_position(team: Team, index: usize) -> Vec3 {
+    let x = match team {
+        Team::Orange => -FIELD_WIDTH / 4.0,
+        Team::Blue => FIELD_WIDTH / 4.0,
+    };
+
+    let z = if PLAYERS_PER_TEAM <= 1 {
+        0.0
+    } else {
+        let span = FIELD_DEPTH / 2.0;
+        let t = index as f32 / (PLAYERS_PER_TEAM - 1) as f32; // 0.0 ..= 1.0
+        -span / 2.0 + t * span
+    };
+
+    Vec3::new(x, FIELD_HEIGHT + CUBE_SIZE, z)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game::config::{PLAYERS_PER_TEAM, FIELD_WIDTH};
+
+    #[test]
+    fn spawn_positions_are_on_correct_side() {
+        for index in 0..PLAYERS_PER_TEAM {
+            let orange = get_spawn_position(Team::Orange, index);
+            let blue = get_spawn_position(Team::Blue, index);
+            assert!(orange.x < 0.0, "orange should be on -x side");
+            assert!(blue.x > 0.0, "blue should be on +x side");
+            assert!(orange.x.abs() <= FIELD_WIDTH / 2.0);
+        }
+    }
+
+    #[test]
+    fn spawn_positions_are_distinct_within_team() {
+        if PLAYERS_PER_TEAM >= 2 {
+            let a = get_spawn_position(Team::Orange, 0);
+            let b = get_spawn_position(Team::Orange, 1);
+            assert!((a.z - b.z).abs() > 0.01, "teammates must not overlap");
+        }
     }
 }
