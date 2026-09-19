@@ -57,8 +57,6 @@ pub enum CanvasCommand {
     Undo,
     Clear,
     Save,
-    NextPlayer,
-    PreviousPlayer,
     SelectBrush,
     SelectEraser,
     Grow,
@@ -152,12 +150,6 @@ pub fn keyboard_commands(context: &egui::Context) -> Vec<CanvasCommand> {
         }
         if input.key_pressed(egui::Key::Enter) {
             commands.push(CanvasCommand::Save);
-        }
-        if input.key_pressed(egui::Key::ArrowRight) {
-            commands.push(CanvasCommand::NextPlayer);
-        }
-        if input.key_pressed(egui::Key::ArrowLeft) {
-            commands.push(CanvasCommand::PreviousPlayer);
         }
         commands
     })
