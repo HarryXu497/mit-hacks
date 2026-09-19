@@ -5,7 +5,7 @@
 //! UI or the data model. No API credentials live in this process: a future
 //! remote store should post to the local service that already holds them.
 
-use crate::state::{DrawingSlot, PlayerCreationSession, PlayerId, Team};
+use crate::state::{DrawingSlot, PlayerCreationSession};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -30,9 +30,12 @@ pub struct StrokeCounts {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PlayerManifestEntry {
-    pub player_id: u8,
-    pub team: Team,
+pub struct CreationManifest {
+    pub schema_version: u8,
+    pub session_id: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub canvas: CanvasMetadata,
     /// Paths are relative to the manifest, so the directory can be moved or
     /// uploaded as a unit.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -46,46 +49,11 @@ pub struct PlayerManifestEntry {
     pub stroke_counts: StrokeCounts,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CreationManifest {
-    pub schema_version: u8,
-    pub session_id: String,
-    pub created_at: String,
-    pub updated_at: String,
-    pub canvas: CanvasMetadata,
-    pub players: Vec<PlayerManifestEntry>,
-}
-
 impl CreationManifest {
-    /// Builds the manifest from the live session. Entries are keyed by player
-    /// id and rebuilt from current state, so repeated saves update in place and
-    /// can never append a duplicate entry for the same player.
+    /// Builds the manifest from the live session. Rebuilt from current state
+    /// on every save, so repeated saves update the same file in place.
     pub fn from_session(session: &PlayerCreationSession) -> Self {
-        let players = PlayerId::all()
-            .map(|player| {
-                let entry = session.entry(player);
-                PlayerManifestEntry {
-                    player_id: player.get(),
-                    team: player.team(),
-                    appearance_path: entry
-                        .appearance_saved_at
-                        .is_some()
-                        .then(|| drawing_file_name(player, DrawingSlot::Appearance)),
-                    superpower_path: entry
-                        .superpower_saved_at
-                        .is_some()
-                        .then(|| drawing_file_name(player, DrawingSlot::Superpower)),
-                    appearance_saved_at: entry.appearance_saved_at.clone(),
-                    superpower_saved_at: entry.superpower_saved_at.clone(),
-                    stroke_counts: StrokeCounts {
-                        appearance: entry.appearance.stroke_count(),
-                        superpower: entry.superpower.stroke_count(),
-                    },
-                }
-            })
-            .collect();
-
+        let entry = &session.player;
         Self {
             schema_version: MANIFEST_SCHEMA_VERSION,
             session_id: session.id.clone(),
@@ -95,21 +63,28 @@ impl CreationManifest {
                 width: crate::state::CANVAS_WIDTH,
                 height: crate::state::CANVAS_HEIGHT,
             },
-            players,
+            appearance_path: entry
+                .appearance_saved_at
+                .is_some()
+                .then(|| drawing_file_name(DrawingSlot::Appearance)),
+            superpower_path: entry
+                .superpower_saved_at
+                .is_some()
+                .then(|| drawing_file_name(DrawingSlot::Superpower)),
+            appearance_saved_at: entry.appearance_saved_at.clone(),
+            superpower_saved_at: entry.superpower_saved_at.clone(),
+            stroke_counts: StrokeCounts {
+                appearance: entry.appearance.stroke_count(),
+                superpower: entry.superpower.stroke_count(),
+            },
         }
-    }
-
-    pub fn entry(&self, player: PlayerId) -> Option<&PlayerManifestEntry> {
-        self.players
-            .iter()
-            .find(|entry| entry.player_id == player.get())
     }
 }
 
-/// `player-03-appearance.png`. Zero-padded so a directory listing sorts in
-/// roster order rather than 1, 10, 2.
-pub fn drawing_file_name(player: PlayerId, slot: DrawingSlot) -> String {
-    format!("player-{:02}-{}.png", player.get(), slot.slug())
+/// `appearance.png` / `superpower.png` — the naming convention that keeps the
+/// two drawings unambiguous on disk.
+pub fn drawing_file_name(slot: DrawingSlot) -> String {
+    format!("{}.png", slot.slug())
 }
 
 /// Where a session's artifacts live, relative to the store root.
@@ -117,21 +92,15 @@ pub fn session_directory(root: &Path, session_id: &str) -> PathBuf {
     root.join("player-creations").join(session_id)
 }
 
-pub fn drawing_path(root: &Path, session_id: &str, player: PlayerId, slot: DrawingSlot) -> PathBuf {
-    session_directory(root, session_id).join(drawing_file_name(player, slot))
+pub fn drawing_path(root: &Path, session_id: &str, slot: DrawingSlot) -> PathBuf {
+    session_directory(root, session_id).join(drawing_file_name(slot))
 }
 
 /// Storage backend for creation artifacts. Swap the implementation to add a
 /// model handoff; the UI only ever sees this trait.
 pub trait CreationStore: Send + Sync {
     /// Persists one rendered drawing and returns where it landed.
-    fn save_drawing(
-        &self,
-        session_id: &str,
-        player: PlayerId,
-        slot: DrawingSlot,
-        png: &[u8],
-    ) -> Result<PathBuf>;
+    fn save_drawing(&self, session_id: &str, slot: DrawingSlot, png: &[u8]) -> Result<PathBuf>;
 
     /// Writes the manifest, replacing any previous copy.
     fn write_manifest(&self, manifest: &CreationManifest) -> Result<PathBuf>;
@@ -160,14 +129,8 @@ impl LocalFileStore {
 }
 
 impl CreationStore for LocalFileStore {
-    fn save_drawing(
-        &self,
-        session_id: &str,
-        player: PlayerId,
-        slot: DrawingSlot,
-        png: &[u8],
-    ) -> Result<PathBuf> {
-        let path = drawing_path(&self.root, session_id, player, slot);
+    fn save_drawing(&self, session_id: &str, slot: DrawingSlot, png: &[u8]) -> Result<PathBuf> {
+        let path = drawing_path(&self.root, session_id, slot);
         atomic_write(&path, png)?;
         Ok(path)
     }
@@ -222,43 +185,33 @@ mod tests {
     use crate::drawing::BrushTool;
     use crate::state::PlayerCreationSession;
 
-    fn player(id: u8) -> PlayerId {
-        PlayerId::new(id).unwrap()
-    }
-
-    fn draw_and_save(session: &mut PlayerCreationSession, id: u8, slot: DrawingSlot) {
-        session.select(player(id));
-        let canvas = session.active_canvas_mut(slot);
+    fn draw_and_save(session: &mut PlayerCreationSession, slot: DrawingSlot) {
+        let canvas = session.canvas_mut(slot);
         canvas.begin_stroke(BrushTool::Brush, [255, 255, 255, 255], 0.1);
         canvas.extend_stroke([0.4, 0.4]);
         canvas.extend_stroke([0.6, 0.6]);
         canvas.end_stroke();
         session
-            .active_entry_mut()
+            .player
             .mark_saved(slot, crate::state::iso_timestamp());
     }
 
     #[test]
-    fn save_paths_are_stable_and_scoped_to_session_and_player() {
+    fn save_paths_are_stable_and_scoped_to_session_and_slot() {
         let root = Path::new("output");
-        let path = drawing_path(root, "session-abc", player(3), DrawingSlot::Appearance);
+        let path = drawing_path(root, "session-abc", DrawingSlot::Appearance);
         assert_eq!(
             path,
-            Path::new("output/player-creations/session-abc/player-03-appearance.png")
+            Path::new("output/player-creations/session-abc/appearance.png")
         );
 
-        // Same player, other slot, and same slot, other player, stay distinct.
         assert_ne!(
             path,
-            drawing_path(root, "session-abc", player(3), DrawingSlot::Superpower)
+            drawing_path(root, "session-abc", DrawingSlot::Superpower)
         );
         assert_ne!(
             path,
-            drawing_path(root, "session-abc", player(4), DrawingSlot::Appearance)
-        );
-        assert_ne!(
-            path,
-            drawing_path(root, "session-xyz", player(3), DrawingSlot::Appearance)
+            drawing_path(root, "session-xyz", DrawingSlot::Appearance)
         );
     }
 
@@ -272,12 +225,8 @@ mod tests {
         assert!(json["createdAt"].is_string());
         assert!(json["updatedAt"].is_string());
         assert_eq!(json["canvas"]["width"], crate::state::CANVAS_WIDTH);
-        assert_eq!(json["players"].as_array().unwrap().len(), 10);
-        assert_eq!(json["players"][0]["playerId"], 1);
-        assert_eq!(json["players"][0]["team"], "red");
-        assert_eq!(json["players"][9]["team"], "yellow");
         // Nothing saved yet, so no drawing paths are advertised.
-        assert!(json["players"][0].get("appearancePath").is_none());
+        assert!(json.get("appearancePath").is_none());
     }
 
     #[test]
@@ -290,34 +239,22 @@ mod tests {
     }
 
     #[test]
-    fn repeated_saves_update_entries_in_place() {
+    fn repeated_saves_update_the_manifest_in_place() {
         let mut session = PlayerCreationSession::default();
-        draw_and_save(&mut session, 3, DrawingSlot::Appearance);
+        draw_and_save(&mut session, DrawingSlot::Appearance);
 
         let first = CreationManifest::from_session(&session);
-        assert_eq!(first.players.len(), 10);
-        assert!(first.entry(player(3)).unwrap().appearance_path.is_some());
-        assert!(first.entry(player(3)).unwrap().superpower_path.is_none());
+        assert!(first.appearance_path.is_some());
+        assert!(first.superpower_path.is_none());
 
-        // Saving the same player again, then the other slot, must not append.
-        draw_and_save(&mut session, 3, DrawingSlot::Appearance);
-        draw_and_save(&mut session, 3, DrawingSlot::Superpower);
+        // Saving the same slot again, then the other slot, must not append.
+        draw_and_save(&mut session, DrawingSlot::Appearance);
+        draw_and_save(&mut session, DrawingSlot::Superpower);
 
         let second = CreationManifest::from_session(&session);
+        assert!(second.appearance_path.is_some() && second.superpower_path.is_some());
         assert_eq!(
-            second.players.len(),
-            10,
-            "manifest must stay one entry per player"
-        );
-        assert_eq!(
-            second.players.iter().filter(|e| e.player_id == 3).count(),
-            1,
-            "player 3 must appear exactly once"
-        );
-        let entry = second.entry(player(3)).unwrap();
-        assert!(entry.appearance_path.is_some() && entry.superpower_path.is_some());
-        assert_eq!(
-            entry.stroke_counts.appearance, 2,
+            second.stroke_counts.appearance, 2,
             "both appearance saves kept their strokes"
         );
     }
@@ -327,15 +264,14 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let store = LocalFileStore::new(directory.path().to_path_buf());
         let mut session = PlayerCreationSession::default();
-        draw_and_save(&mut session, 7, DrawingSlot::Appearance);
+        draw_and_save(&mut session, DrawingSlot::Appearance);
 
         let png = session
-            .entry_mut(player(7))
             .canvas_mut(DrawingSlot::Appearance)
             .to_png()
             .unwrap();
         let drawing_path = store
-            .save_drawing(&session.id, player(7), DrawingSlot::Appearance, &png)
+            .save_drawing(&session.id, DrawingSlot::Appearance, &png)
             .unwrap();
         let manifest_path = store
             .write_manifest(&CreationManifest::from_session(&session))
@@ -348,10 +284,7 @@ mod tests {
         let decoded: CreationManifest =
             serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
         assert_eq!(decoded.session_id, session.id);
-        assert_eq!(
-            decoded.entry(player(7)).unwrap().appearance_path.as_deref(),
-            Some("player-07-appearance.png")
-        );
+        assert_eq!(decoded.appearance_path.as_deref(), Some("appearance.png"));
 
         // Rewriting leaves exactly one manifest and no temporary files behind.
         store
@@ -373,7 +306,7 @@ mod tests {
         fs::write(&blocker, b"not a directory").unwrap();
 
         let store = LocalFileStore::new(directory.path().to_path_buf());
-        let result = store.save_drawing("session-abc", player(1), DrawingSlot::Appearance, b"x");
+        let result = store.save_drawing("session-abc", DrawingSlot::Appearance, b"x");
         assert!(
             result.is_err(),
             "the caller must be able to keep the user on screen"
