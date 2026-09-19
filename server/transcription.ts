@@ -79,14 +79,14 @@ function proxyTranscription(client: WebSocket): void {
 
   const finalizeUtterance = () => {
     const text = confirmedSegments.join(" ").trim();
-    if (currentItemId && text) {
-      sendClient({
-        type: "final",
-        itemId: currentItemId,
-        text,
-        startMs: utteranceStartMs ?? sessionOffsetMs,
-        endMs: utteranceEndMs,
-      });
+    if (text) {
+      const rangeStart = utteranceStartMs ?? sessionOffsetMs;
+      const rangeEnd = Math.max(utteranceEndMs, rangeStart);
+      for (const { sentence, startMs, endMs } of splitIntoTimedSentences(text, rangeStart, rangeEnd)) {
+        const itemId = `item-${nextItemId}`;
+        nextItemId += 1;
+        sendClient({ type: "final", itemId, text: sentence, startMs, endMs });
+      }
     }
     currentItemId = null;
     confirmedSegments = [];
@@ -259,6 +259,27 @@ function appendProviderAudio(provider: WebSocket, audio: string): void {
 
 function samplesToSeconds(samples: number): number {
   return samples / 24000;
+}
+
+/**
+ * Splits an utterance's confirmed text into sentences and distributes the
+ * utterance's measured time range across them proportionally by character
+ * length, since Deepgram only reports timing for the utterance as a whole.
+ */
+function splitIntoTimedSentences(
+  text: string,
+  rangeStart: number,
+  rangeEnd: number,
+): Array<{ sentence: string; startMs: number; endMs: number }> {
+  const sentences = (text.match(/[^.!?]+(?:[.!?]+|$)/g) ?? [text]).map((s) => s.trim()).filter(Boolean);
+  const totalChars = sentences.reduce((sum, s) => sum + s.length, 0) || 1;
+  let consumed = 0;
+  return sentences.map((sentence) => {
+    const startMs = Math.round(rangeStart + (consumed / totalChars) * (rangeEnd - rangeStart));
+    consumed += sentence.length;
+    const endMs = Math.round(rangeStart + (consumed / totalChars) * (rangeEnd - rangeStart));
+    return { sentence, startMs, endMs };
+  });
 }
 
 function firstAlternative(event: unknown): Record<string, unknown> {
