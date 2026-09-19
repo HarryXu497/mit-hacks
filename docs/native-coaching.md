@@ -8,7 +8,8 @@ remains available as a behavior and JSON-contract reference.
 
 - Rust 1.75 or newer with Cargo
 - Node.js 20 or newer and npm
-- An OpenAI API key for live transcription and model-backed interpretation
+- A Deepgram API key for live transcription
+- An OpenAI API key for model-backed interpretation
 
 On macOS, install the Xcode command-line tools:
 
@@ -30,7 +31,7 @@ machine or CI.
 ```sh
 npm install
 cp .env.example .env
-# Set OPENAI_API_KEY and OPENAI_MODEL in .env
+# Set DEEPGRAM_API_KEY, OPENAI_API_KEY, and OPENAI_MODEL in .env
 npm run dev:native
 ```
 
@@ -43,13 +44,14 @@ Environment overrides:
 
 - `API_PORT`: local Node service port, default `8787`
 - `OPENAI_MODEL`: structured tactical interpretation model
-- `OPENAI_TRANSCRIPTION_MODEL`: realtime transcription model, default
-  `gpt-live-transcribe`
+- `DEEPGRAM_API_KEY`: Deepgram credential for live transcription
+- `DEEPGRAM_MODEL`: live transcription model, default `nova-2`
 - `TACTIC_LAB_API_URL`: native interpretation service URL
 - `TACTIC_LAB_WS_URL`: native transcription WebSocket URL
 
-The native client streams 24 kHz mono PCM to the local service. API
-credentials never enter the native process.
+The native client streams 24 kHz mono PCM to the local service, which
+proxies it to Deepgram's streaming transcription API. API credentials never
+enter the native process.
 
 ## Microphone permissions
 

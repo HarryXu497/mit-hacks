@@ -13,7 +13,8 @@ Install Rust 1.75+, Node.js 20+, and the platform linker prerequisites, then:
 ```bash
 npm install
 cp .env.example .env
-# Add your OPENAI_API_KEY and interpretation model to .env
+# Add your DEEPGRAM_API_KEY (transcription) and OPENAI_API_KEY/OPENAI_MODEL
+# (interpretation) to .env
 npm run dev:native
 ```
 
@@ -31,7 +32,8 @@ npm run dev:api
 ```
 
 This starts the interpretation and transcription API on `127.0.0.1:8787`.
-The OpenAI key stays on the server and is never sent to the native client.
+The Deepgram and OpenAI keys stay on the server and are never sent to the
+native client.
 
 ## Verification
 

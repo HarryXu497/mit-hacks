@@ -22,12 +22,7 @@ interface StopMessage {
 
 type ClientMessage = StartMessage | AudioMessage | StopMessage;
 
-interface ItemTiming {
-  startMs?: number;
-  endMs?: number;
-}
-
-const OPENAI_REALTIME_URL = "wss://api.openai.com/v1/realtime?intent=transcription";
+const DEEPGRAM_LISTEN_URL = "wss://api.deepgram.com/v1/listen";
 
 export function attachTranscriptionWebSocket(server: Server): void {
   const socketServer = new WebSocketServer({ noServer: true });
@@ -53,13 +48,15 @@ function proxyTranscription(client: WebSocket): void {
   let receivedSamples = 0;
   let providerReady = false;
   let stopping = false;
-  let stopCommitAcknowledged = false;
+  let pendingUtterance = false;
+  let expectingProviderClose = false;
   let stopTimer: NodeJS.Timeout | null = null;
   const queuedAudio: string[] = [];
-  const transcriptByItem = new Map<string, string>();
-  const timingByItem = new Map<string, ItemTiming>();
-  const pendingItems = new Set<string>();
-  const completedItems = new Set<string>();
+  let nextItemId = 0;
+  let currentItemId: string | null = null;
+  let confirmedSegments: string[] = [];
+  let utteranceStartMs: number | null = null;
+  let utteranceEndMs = 0;
 
   const sendClient = (message: Record<string, unknown>) => {
     if (client.readyState === WebSocket.OPEN && generation !== null) {
@@ -70,13 +67,32 @@ function proxyTranscription(client: WebSocket): void {
   const finish = () => {
     if (stopTimer) clearTimeout(stopTimer);
     stopTimer = null;
+    expectingProviderClose = true;
     sendClient({ type: "done" });
     provider?.close();
     client.close();
   };
 
   const maybeFinish = () => {
-    if (stopping && stopCommitAcknowledged && pendingItems.size === 0) finish();
+    if (stopping && !pendingUtterance) finish();
+  };
+
+  const finalizeUtterance = () => {
+    const text = confirmedSegments.join(" ").trim();
+    if (currentItemId && text) {
+      sendClient({
+        type: "final",
+        itemId: currentItemId,
+        text,
+        startMs: utteranceStartMs ?? sessionOffsetMs,
+        endMs: utteranceEndMs,
+      });
+    }
+    currentItemId = null;
+    confirmedSegments = [];
+    utteranceStartMs = null;
+    pendingUtterance = false;
+    maybeFinish();
   };
 
   client.on("message", (raw) => {
@@ -95,66 +111,63 @@ function proxyTranscription(client: WebSocket): void {
       }
       generation = message.generation;
       sessionOffsetMs = message.sessionOffsetMs;
-      if (!process.env.OPENAI_API_KEY) {
-        sendClient({ type: "error", message: "OPENAI_API_KEY is not configured." });
+      if (!process.env.DEEPGRAM_API_KEY) {
+        sendClient({ type: "error", message: "DEEPGRAM_API_KEY is not configured." });
         return;
       }
-      provider = connectProvider(client, {
+      provider = connectProvider({
+        onClose: () => {
+          if (!expectingProviderClose && client.readyState === WebSocket.OPEN) {
+            sendClient({ type: "error", message: "The transcription provider disconnected." });
+          }
+        },
         onOpen: () => {
           providerReady = true;
           for (const audio of queuedAudio.splice(0)) appendProviderAudio(provider!, audio);
-          if (stopping && receivedSamples > 0) {
-            provider!.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
-          }
           sendClient({ type: "ready" });
         },
         onEvent: (event) => {
           const type = stringField(event, "type");
-          const itemId = stringField(event, "item_id");
-          if (type === "input_audio_buffer.speech_started" && itemId) {
-            timingByItem.set(itemId, {
-              startMs: sessionOffsetMs + numberField(event, "audio_start_ms", samplesToMs(receivedSamples)),
-            });
-          } else if (type === "input_audio_buffer.speech_stopped" && itemId) {
-            const timing = timingByItem.get(itemId) ?? {};
-            timing.endMs =
-              sessionOffsetMs + numberField(event, "audio_end_ms", samplesToMs(receivedSamples));
-            timingByItem.set(itemId, timing);
-          } else if (type === "input_audio_buffer.committed" && itemId) {
-            pendingItems.add(itemId);
-            if (stopping) stopCommitAcknowledged = true;
-            maybeFinish();
-          } else if (
-            type === "conversation.item.input_audio_transcription.delta" &&
-            itemId
-          ) {
-            const text = (transcriptByItem.get(itemId) ?? "") + stringField(event, "delta");
-            transcriptByItem.set(itemId, text);
-            sendClient({ type: "partial", itemId, text });
-          } else if (
-            type === "conversation.item.input_audio_transcription.completed" &&
-            itemId &&
-            !completedItems.has(itemId)
-          ) {
-            completedItems.add(itemId);
-            pendingItems.delete(itemId);
-            const timing = timingByItem.get(itemId);
-            const endMs =
-              timing?.endMs ?? sessionOffsetMs + samplesToMs(receivedSamples);
-            const startMs = timing?.startMs ?? Math.max(sessionOffsetMs, endMs - 2400);
-            sendClient({
-              type: "final",
-              itemId,
-              text: stringField(event, "transcript") || transcriptByItem.get(itemId) || "",
-              startMs,
-              endMs,
-            });
-            maybeFinish();
-          } else if (type === "error") {
-            const error = objectField(event, "error");
+          if (type === "Results") {
+            const alternative = firstAlternative(event);
+            const transcript = stringField(alternative, "transcript");
+            const isFinal = booleanField(event, "is_final");
+            const speechFinal = booleanField(event, "speech_final");
+
+            if (!transcript) {
+              if (isFinal && speechFinal) finalizeUtterance();
+              return;
+            }
+
+            if (currentItemId === null) {
+              currentItemId = `item-${nextItemId}`;
+              nextItemId += 1;
+              confirmedSegments = [];
+              utteranceStartMs = null;
+            }
+            pendingUtterance = true;
+
+            const start = numberField(event, "start", samplesToSeconds(receivedSamples));
+            const duration = numberField(event, "duration", 0);
+            utteranceEndMs = Math.round(sessionOffsetMs + (start + duration) * 1000);
+            if (utteranceStartMs === null) {
+              utteranceStartMs = Math.round(sessionOffsetMs + start * 1000);
+            }
+
+            if (!isFinal) {
+              const preview = [...confirmedSegments, transcript].join(" ").trim();
+              sendClient({ type: "partial", itemId: currentItemId, text: preview });
+              return;
+            }
+
+            confirmedSegments.push(transcript);
+            const confirmedText = confirmedSegments.join(" ").trim();
+            sendClient({ type: "partial", itemId: currentItemId, text: confirmedText });
+            if (speechFinal) finalizeUtterance();
+          } else if (type === "Error") {
             sendClient({
               type: "error",
-              message: stringField(error, "message") || "OpenAI transcription failed.",
+              message: stringField(event, "description") || "Deepgram transcription failed.",
             });
           }
         },
@@ -176,17 +189,18 @@ function proxyTranscription(client: WebSocket): void {
 
     if (message.type === "stop" && !stopping) {
       stopping = true;
+      expectingProviderClose = true;
       if (receivedSamples === 0) {
-        stopCommitAcknowledged = true;
         finish();
         return;
       }
       if (providerReady) {
-        provider.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
+        provider.send(JSON.stringify({ type: "CloseStream" }));
       }
       stopTimer = setTimeout(() => {
-        if (pendingItems.size === 0) finish();
-        else {
+        if (!pendingUtterance) {
+          finish();
+        } else {
           sendClient({
             type: "error",
             message: "Timed out while finalizing the transcript.",
@@ -204,45 +218,27 @@ function proxyTranscription(client: WebSocket): void {
   });
 }
 
-function connectProvider(
-  client: WebSocket,
-  handlers: {
-    onOpen: () => void;
-    onEvent: (event: Record<string, unknown>) => void;
-    onError: (message: string) => void;
-  },
-): WebSocket {
-  const provider = new WebSocket(OPENAI_REALTIME_URL, {
-    headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+function connectProvider(handlers: {
+  onOpen: () => void;
+  onEvent: (event: Record<string, unknown>) => void;
+  onError: (message: string) => void;
+  onClose: () => void;
+}): WebSocket {
+  const model = process.env.DEEPGRAM_MODEL ?? "nova-2";
+  const query = new URLSearchParams({
+    encoding: "linear16",
+    sample_rate: "24000",
+    channels: "1",
+    interim_results: "true",
+    punctuate: "true",
+    smart_format: "true",
+    endpointing: "300",
+    model,
   });
-  provider.on("open", () => {
-    provider.send(
-      JSON.stringify({
-        type: "session.update",
-        session: {
-          type: "transcription",
-          audio: {
-            input: {
-              format: { type: "audio/pcm", rate: 24000 },
-              transcription: {
-                model: process.env.OPENAI_TRANSCRIPTION_MODEL ?? "gpt-live-transcribe",
-                languages: ["en"],
-                delay: "low",
-                prompt: "A soccer coach explaining a five-versus-five tactical demonstration.",
-              },
-              turn_detection: {
-                type: "server_vad",
-                threshold: 0.5,
-                prefix_padding_ms: 300,
-                silence_duration_ms: 500,
-              },
-            },
-          },
-        },
-      }),
-    );
-    handlers.onOpen();
+  const provider = new WebSocket(`${DEEPGRAM_LISTEN_URL}?${query.toString()}`, {
+    headers: { Authorization: `Token ${process.env.DEEPGRAM_API_KEY}` },
   });
+  provider.on("open", handlers.onOpen);
   provider.on("message", (raw: RawData) => {
     try {
       handlers.onEvent(JSON.parse(raw.toString()) as Record<string, unknown>);
@@ -251,22 +247,26 @@ function connectProvider(
     }
   });
   provider.on("error", (error) => handlers.onError(error.message));
-  provider.on("close", () => {
-    if (client.readyState === WebSocket.OPEN) {
-      handlers.onError("The transcription provider disconnected.");
-    }
-  });
+  provider.on("close", handlers.onClose);
   return provider;
 }
 
 function appendProviderAudio(provider: WebSocket, audio: string): void {
   if (provider.readyState === WebSocket.OPEN) {
-    provider.send(JSON.stringify({ type: "input_audio_buffer.append", audio }));
+    provider.send(Buffer.from(audio, "base64"));
   }
 }
 
-function samplesToMs(samples: number): number {
-  return Math.round((samples / 24000) * 1000);
+function samplesToSeconds(samples: number): number {
+  return samples / 24000;
+}
+
+function firstAlternative(event: unknown): Record<string, unknown> {
+  const channel = objectField(event, "channel");
+  const alternatives = channel["alternatives"];
+  if (!Array.isArray(alternatives) || alternatives.length === 0) return {};
+  const alternative = alternatives[0];
+  return alternative && typeof alternative === "object" ? (alternative as Record<string, unknown>) : {};
 }
 
 function stringField(value: unknown, key: string): string {
@@ -279,6 +279,12 @@ function numberField(value: unknown, key: string, fallback: number): number {
   if (!value || typeof value !== "object") return fallback;
   const field = (value as Record<string, unknown>)[key];
   return typeof field === "number" ? field : fallback;
+}
+
+function booleanField(value: unknown, key: string): boolean {
+  if (!value || typeof value !== "object") return false;
+  const field = (value as Record<string, unknown>)[key];
+  return field === true;
 }
 
 function objectField(value: unknown, key: string): Record<string, unknown> {

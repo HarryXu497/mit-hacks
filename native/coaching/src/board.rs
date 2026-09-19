@@ -11,6 +11,10 @@ use bevy::window::PrimaryWindow;
 use bevy_egui::egui;
 
 const TOKEN_RADIUS: f32 = 0.034;
+/// Aspect ratio (width / height) of the board panel's viewport rect, shared
+/// with `native/coaching/src/ui.rs` so the camera projection and the panel
+/// layout can't drift apart.
+pub const BOARD_ASPECT: f32 = 0.875;
 
 #[derive(Component)]
 pub struct CoachingOwned;
@@ -76,7 +80,7 @@ pub fn spawn_board_entities(
 ) {
     let projection = OrthographicProjection {
         scaling_mode: ScalingMode::Fixed {
-            width: 1.12,
+            width: 1.12 * BOARD_ASPECT,
             height: 1.12,
         },
         ..default()
@@ -262,8 +266,8 @@ fn draw_annotation(gizmos: &mut Gizmos, annotation: &Annotation, color: Color) {
     }
     if annotation.kind == AnnotationKind::Arrow && annotation.points.len() >= 2 {
         let end = to_vec2(*annotation.points.last().unwrap());
-        let previous = to_vec2(annotation.points[annotation.points.len() - 2]);
-        let direction = (end - previous).normalize_or_zero();
+        let start = to_vec2(*annotation.points.first().unwrap());
+        let direction = (end - start).normalize_or_zero();
         let side = Vec2::new(-direction.y, direction.x);
         gizmos.line_2d(end, end - direction * 0.035 + side * 0.018, color);
         gizmos.line_2d(end, end - direction * 0.035 - side * 0.018, color);

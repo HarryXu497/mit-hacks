@@ -1,4 +1,4 @@
-use crate::board::{append_undo, BoardInteraction, BoardViewport};
+use crate::board::{append_undo, BoardInteraction, BoardViewport, BOARD_ASPECT};
 use crate::interpretation::{InterpretationState, RequestInterpretation, TacticalResult};
 use crate::EnterGame;
 use crate::model::{create_id, RawSessionEvent, SessionStatus, Tool, TranscriptSource};
@@ -147,8 +147,8 @@ fn board_panel(
             let available = ui.available_rect_before_wrap();
             let toolbar_height = 58.0;
             let board_height = (available.height() - toolbar_height - 8.0).max(120.0);
-            let board_width = (board_height * 0.875).min(available.width().max(120.0));
-            let board_height = (board_width / 0.875).min(board_height);
+            let board_width = (board_height * BOARD_ASPECT).min(available.width().max(120.0));
+            let board_height = (board_width / BOARD_ASPECT).min(board_height);
             let center = egui::pos2(available.center().x, available.min.y + board_height * 0.5);
             let field = egui::Rect::from_center_size(center, egui::vec2(board_width, board_height))
                 .intersect(ui.max_rect());

@@ -11,7 +11,7 @@ Hackathon app: a coach moves 10 tokens + a ball on a 2D board while speaking. Th
 - **Primary app:** Bevy 0.13 native client at `native/coaching` (`cargo run --bin native-coaching`)
 - **Local API:** Node/Express in `server/` — transcription + `POST /api/interpret`
 - **Run both:** `source "$HOME/.cargo/env"` then `npm run dev:native` (script is `scripts/dev-native.mjs`)
-- **Env:** copy `.env.example` → `.env` with `OPENAI_API_KEY` and `OPENAI_MODEL`. Never commit `.env`.
+- **Env:** copy `.env.example` → `.env` with `DEEPGRAM_API_KEY` (live transcription), `OPENAI_API_KEY` and `OPENAI_MODEL` (interpretation). Never commit `.env`.
 
 Architecture rules are in `AGENTS.md`. Demo is a fixed 5-v-5 (red 1–5, yellow 6–10), normalized coords 0–1. Tactical JSON is an external interface; this repo does not own its consumers.
 
