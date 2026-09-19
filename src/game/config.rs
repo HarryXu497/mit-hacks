@@ -46,7 +46,7 @@ pub const CUBE_MAX_SPEED: f32 = 15.0;   // Max speed
 /// Absolute horizontal-speed safety ceiling = MAX_SPEED_SAFETY * CUBE_MAX_SPEED.
 /// Never binds in normal play (control target is <= 1x); only bounds knockback/
 /// force spikes so physics can't blow up.
-pub const MAX_SPEED_SAFETY: f32 = 3.0;
+pub const MAX_SPEED_SAFETY: f32 = 5.0;
 pub const CUBE_ACCELERATION: f32 = 50.0;
 pub const CUBE_JUMP_FORCE: f32 = 60.0;   // Small jump, can't jump over walls
 
@@ -75,7 +75,7 @@ pub const RESET_DELAY_SECS: f32 = 1.0;  // 1 second pause after goal
 pub const MAX_EPISODE_STEPS: u32 = 1000;
 
 /// Number of players on each team (both teams equal). Compile-time constant.
-pub const PLAYERS_PER_TEAM: usize = 5;
+pub const PLAYERS_PER_TEAM: usize = 1;
 /// Total number of agents across both teams.
 pub const NUM_AGENTS: usize = 2 * PLAYERS_PER_TEAM;
 
@@ -101,13 +101,13 @@ pub const RESET_BALL_JITTER: f32 = 2.0;
 // === SUPERPOWERS ===
 pub const BLAST_RANGE: f32 = 8.0;
 pub const BLAST_HALF_ANGLE_DEG: f32 = 30.0;
-pub const BLAST_IMPULSE: f32 = 25.0;
+pub const BLAST_IMPULSE: f32 = 55.0;
 pub const BLAST_COOLDOWN: f32 = 5.0;
 pub const FREEZE_RANGE: f32 = 10.0;
 pub const FREEZE_HALF_ANGLE_DEG: f32 = 15.0;
 pub const FREEZE_SECS: f32 = 2.0;
 pub const FREEZE_COOLDOWN: f32 = 8.0;
-pub const BOOST_FACTOR: f32 = 2.0;
+pub const BOOST_FACTOR: f32 = 1.5;
 pub const BOOST_SECS: f32 = 2.0;
 pub const BOOST_COOLDOWN: f32 = 10.0;
 pub const SLOW_FACTOR: f32 = 0.4;
