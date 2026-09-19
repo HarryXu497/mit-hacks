@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.npm-cache/
+.playwright-cli/
+output/playwright/
+.DS_Store
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
+
+# Local secrets and environment overrides
+.env
+.env.*
+!.env.example
