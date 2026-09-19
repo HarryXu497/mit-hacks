@@ -121,14 +121,17 @@ impl Canvas {
     }
 
     /// Commits the in-progress stroke. A stroke with no points is discarded; a
-    /// single-point stroke is kept so that a click leaves a dot.
+    /// single-point stroke is kept so that a click leaves a dot. Points are
+    /// smoothed first so raw pointer-sample kinks never reach the raster or
+    /// the stored stroke.
     pub fn end_stroke(&mut self) {
-        let Some(active) = self.active.take() else {
+        let Some(mut active) = self.active.take() else {
             return;
         };
         if active.points.is_empty() {
             return;
         }
+        active.points = smooth_points(&active.points);
         rasterize_stroke(&mut self.pixels, self.width, self.height, &active);
         self.strokes.push(active);
     }
@@ -249,19 +252,32 @@ fn stamp_segment(
     radius: f32,
     stroke: &Stroke,
 ) {
-    let min_x = (a[0].min(b[0]) - radius).floor().max(0.0) as u32;
-    let max_x = (a[0].max(b[0]) + radius).ceil().min((width - 1) as f32) as u32;
-    let min_y = (a[1].min(b[1]) - radius).floor().max(0.0) as u32;
-    let max_y = (a[1].max(b[1]) + radius).ceil().min((height - 1) as f32) as u32;
+    // Feathering band around the edge, scaled down for thin brushes so a
+    // small stroke doesn't feather itself into near-invisibility.
+    let band = (radius * 0.35).clamp(0.6, 1.5);
+
+    let min_x = (a[0].min(b[0]) - radius - band).floor().max(0.0) as u32;
+    let max_x = (a[0].max(b[0]) + radius + band)
+        .ceil()
+        .min((width - 1) as f32) as u32;
+    let min_y = (a[1].min(b[1]) - radius - band).floor().max(0.0) as u32;
+    let max_y = (a[1].max(b[1]) + radius + band)
+        .ceil()
+        .min((height - 1) as f32) as u32;
 
     for y in min_y..=max_y {
         for x in min_x..=max_x {
             let distance = distance_to_segment([x as f32, y as f32], a, b);
-            if distance > radius {
+            if distance > radius + band {
                 continue;
             }
-            // One pixel of feathering keeps edges from looking stair-stepped.
-            let coverage = (radius - distance).clamp(0.0, 1.0);
+            // A smoothstep falloff over `band` pixels around the edge, rather
+            // than a hard cutoff, is what keeps curved strokes from looking
+            // faceted/staircased.
+            let coverage = edge_coverage(distance, radius, band);
+            if coverage <= 0.0 {
+                continue;
+            }
             let index = ((y as usize * width as usize) + x as usize) * 4;
             match stroke.tool {
                 BrushTool::Brush => blend(&mut pixels[index..index + 4], stroke.color, coverage),
@@ -301,6 +317,80 @@ fn erase(target: &mut [u8], coverage: f32) {
     if target[3] == 0 {
         target.fill(0);
     }
+}
+
+/// Cubic smoothstep falloff centered on `radius`, ramping from full coverage
+/// at `radius - band` to none at `radius + band`.
+fn edge_coverage(distance: f32, radius: f32, band: f32) -> f32 {
+    let band = band.max(1e-3);
+    let t = ((radius + band - distance) / (2.0 * band)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// Resamples a raw pointer-sampled polyline as a centripetal Catmull-Rom
+/// spline, so freehand strokes read as smooth curves instead of a chain of
+/// straight segments between sparse samples. Every original point is still
+/// hit exactly (they are the spline's knots), so this only removes kinks
+/// *between* samples, never the drawn shape itself.
+pub fn smooth_points(points: &[CanvasPoint]) -> Vec<CanvasPoint> {
+    if points.len() < 3 {
+        return points.to_vec();
+    }
+
+    let mut padded = Vec::with_capacity(points.len() + 2);
+    padded.push(points[0]);
+    padded.extend_from_slice(points);
+    padded.push(*points.last().expect("checked len >= 3 above"));
+
+    const SAMPLES_PER_SEGMENT: usize = 8;
+    let mut smoothed = Vec::with_capacity(points.len() * SAMPLES_PER_SEGMENT);
+    smoothed.push(points[0]);
+    for window in padded.windows(4) {
+        let (p0, p1, p2, p3) = (window[0], window[1], window[2], window[3]);
+        for step in 1..=SAMPLES_PER_SEGMENT {
+            let t = step as f32 / SAMPLES_PER_SEGMENT as f32;
+            smoothed.push(catmull_rom_point(p0, p1, p2, p3, t));
+        }
+    }
+    smoothed
+}
+
+/// Centripetal (alpha = 0.5) Catmull-Rom interpolation between `p1` and `p2`,
+/// using `p0`/`p3` as tangent-defining neighbors. Centripetal parameterization
+/// avoids the loops/overshoot a uniform Catmull-Rom produces on the unevenly
+/// spaced samples a mouse or trackpad actually produces.
+fn catmull_rom_point(
+    p0: CanvasPoint,
+    p1: CanvasPoint,
+    p2: CanvasPoint,
+    p3: CanvasPoint,
+    t: f32,
+) -> CanvasPoint {
+    fn knot(previous: f32, a: CanvasPoint, b: CanvasPoint) -> f32 {
+        let dx = b[0] - a[0];
+        let dy = b[1] - a[1];
+        previous + (dx * dx + dy * dy).sqrt().sqrt().max(1e-4)
+    }
+    fn lerp(a: CanvasPoint, b: CanvasPoint, ta: f32, tb: f32, t: f32) -> CanvasPoint {
+        if (tb - ta).abs() < 1e-6 {
+            return a;
+        }
+        let w = (t - ta) / (tb - ta);
+        [a[0] + (b[0] - a[0]) * w, a[1] + (b[1] - a[1]) * w]
+    }
+
+    let t0 = 0.0_f32;
+    let t1 = knot(t0, p0, p1);
+    let t2 = knot(t1, p1, p2);
+    let t3 = knot(t2, p2, p3);
+    let tt = t1 + t * (t2 - t1);
+
+    let a1 = lerp(p0, p1, t0, t1, tt);
+    let a2 = lerp(p1, p2, t1, t2, tt);
+    let a3 = lerp(p2, p3, t2, t3, tt);
+    let b1 = lerp(a1, a2, t0, t2, tt);
+    let b2 = lerp(a2, a3, t1, t3, tt);
+    lerp(b1, b2, t1, t2, tt)
 }
 
 fn distance_to_segment(point: [f32; 2], a: [f32; 2], b: [f32; 2]) -> f32 {
@@ -438,6 +528,52 @@ mod tests {
         canvas.extend_stroke([-3.0, 7.5]);
         canvas.end_stroke();
         assert_eq!(canvas.strokes()[0].points[0], [0.0, 1.0]);
+    }
+
+    #[test]
+    fn smoothing_preserves_stroke_endpoints() {
+        let raw = vec![[0.1, 0.1], [0.3, 0.5], [0.2, 0.8], [0.6, 0.6], [0.9, 0.9]];
+        let smoothed = smooth_points(&raw);
+        assert_eq!(smoothed.first(), raw.first());
+        assert_eq!(smoothed.last(), raw.last());
+        assert!(
+            smoothed.len() > raw.len(),
+            "smoothing resamples between knots"
+        );
+    }
+
+    #[test]
+    fn smoothing_is_a_no_op_below_three_points() {
+        let raw = vec![[0.1, 0.1], [0.5, 0.5]];
+        assert_eq!(smooth_points(&raw), raw);
+    }
+
+    #[test]
+    fn smoothing_reduces_sharp_direction_changes_in_a_zig_zag() {
+        let zig_zag = vec![[0.1, 0.1], [0.2, 0.9], [0.3, 0.1], [0.4, 0.9], [0.5, 0.1]];
+        let smoothed = smooth_points(&zig_zag);
+
+        let turning_angle = |points: &[CanvasPoint]| -> f32 {
+            points
+                .windows(3)
+                .map(|w| {
+                    let (ax, ay) = (w[1][0] - w[0][0], w[1][1] - w[0][1]);
+                    let (bx, by) = (w[2][0] - w[1][0], w[2][1] - w[1][1]);
+                    let dot = ax * bx + ay * by;
+                    let mags = (ax * ax + ay * ay).sqrt() * (bx * bx + by * by).sqrt();
+                    if mags <= f32::EPSILON {
+                        0.0
+                    } else {
+                        (dot / mags).clamp(-1.0, 1.0).acos()
+                    }
+                })
+                .fold(0.0_f32, f32::max)
+        };
+
+        assert!(
+            turning_angle(&smoothed) < turning_angle(&zig_zag),
+            "a spline through the same knots must not turn more sharply than the raw polyline"
+        );
     }
 
     #[test]
