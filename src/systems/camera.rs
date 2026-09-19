@@ -1,4 +1,5 @@
 use crate::entities::Ball;
+use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::prelude::*;
 
 #[derive(Component)]
@@ -25,6 +26,10 @@ pub fn setup_camera(mut commands: Commands) {
                 fov: 42.0_f32.to_radians(),
                 ..default()
             }),
+            // The default filmic curve (TonyMcMapface) desaturates and rolls off
+            // highlights for photographic realism. A flat cartoon palette wants
+            // its authored chroma delivered intact, so the transform is skipped.
+            tonemapping: Tonemapping::None,
             ..default()
         },
         bevy::pbr::FogSettings {

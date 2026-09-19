@@ -44,9 +44,22 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front: bool) -> FragmentOut
         let base = max(p.material.base_color.rgb, vec3<f32>(0.025));
         let illumination = dot(lit.rgb / base, vec3<f32>(0.2126, 0.7152, 0.0722));
         // Quantize illumination, not RGB: keeps the expanded palette intact.
-        let bands = floor(illumination * 3.5 + 0.5) / 3.5;
-        let stepped = mix(illumination, bands, 0.72);
-        out.color = vec4<f32>(lit.rgb * stepped / max(illumination, 0.001), lit.a);
+        // Fewer, harder steps than a soft ramp: the target look is poster-flat.
+        let bands = floor(illumination * 3.0 + 0.5) / 3.0;
+        let stepped = mix(illumination, bands, 0.88);
+        var shaded = lit.rgb * stepped / max(illumination, 0.001);
+        // settings.y marks an actor surface: players, the ball, anything that has
+        // to read as a figure against the field. Actors carry their own near-black
+        // contour and a near-white hotspot, which is what separates subject from
+        // ground in this style -- the ground itself never contains either.
+        if settings.y > 0.5 {
+            let facing = max(dot(p.N, p.V), 0.0);
+            let rim = pow(1.0 - facing, 2.2);
+            shaded = shaded * (1.0 - rim * 0.88);
+            let hot = pow(facing, 7.0) * 0.30;
+            shaded = shaded + vec3<f32>(hot);
+        }
+        out.color = vec4<f32>(shaded, lit.a);
     }
     return FragmentOutput(main_pass_post_lighting_processing(p, out.color));
 }

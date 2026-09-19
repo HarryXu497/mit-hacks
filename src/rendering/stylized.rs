@@ -29,6 +29,12 @@ impl MaterialExtension for JungleSurface {
 }
 pub type JungleMaterial = ExtendedMaterial<StandardMaterial, JungleSurface>;
 
+/// Marks a surface that belongs to a figure rather than to the ground: players,
+/// the ball, anything the eye must find first. The shader gives these a dark
+/// contour and a specular hotspot; nothing else in the scene gets either.
+#[derive(Component)]
+pub struct ActorSurface;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -63,20 +69,24 @@ pub fn stylize(
     source: Res<Assets<StandardMaterial>>,
     mut target: ResMut<Assets<JungleMaterial>>,
     surfaces: Query<
-        (Entity, &Handle<StandardMaterial>),
+        (Entity, &Handle<StandardMaterial>, Option<&ActorSurface>),
         Without<crate::systems::display::DigitSegment>,
     >,
 ) {
     let mut cache = HashMap::new();
-    for (entity, handle) in &surfaces {
+    for (entity, handle, actor) in &surfaces {
         let Some(base) = source.get(handle) else {
             continue;
         };
         if base.unlit || base.emissive != Color::BLACK {
             continue;
         }
+        let is_actor = actor.is_some();
+        // Actors and props share source materials (a monkey and a banner are both
+        // team orange), so the cache key carries the actor flag too -- otherwise
+        // whichever converted first would decide the other's shading.
         let converted = cache
-            .entry(handle.id())
+            .entry((handle.id(), is_actor))
             .or_insert_with(|| {
                 target.add(JungleMaterial {
                     base: base.clone(),
@@ -87,7 +97,7 @@ pub fn stylize(
                             } else {
                                 0.
                             },
-                            0.,
+                            if is_actor { 1. } else { 0. },
                             0.,
                             0.,
                         ),

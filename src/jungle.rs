@@ -195,6 +195,8 @@ fn monkey(c: &mut Commands, k: &Kit, parent: Entity, team: Team) {
     ];
     for (p, s, m) in parts {
         let e = block(c, k, m, p, s);
+        c.entity(e)
+            .insert(crate::rendering::stylized::ActorSurface);
         c.entity(parent).add_child(e);
     }
 }
@@ -574,6 +576,8 @@ pub fn build_jungle(
         monkey(&mut c, &k, e, p.team);
     }
     for ball in &balls {
+        c.entity(ball)
+            .insert(crate::rendering::stylized::ActorSurface);
         for direction in [
             Vec3::X,
             Vec3::NEG_X,
@@ -583,14 +587,17 @@ pub fn build_jungle(
             Vec3::NEG_Z,
         ] {
             let patch = c
-                .spawn(PbrBundle {
-                    mesh: k.stone.clone(),
-                    material: k.dark.clone(),
-                    transform: Transform::from_translation(direction * (BALL_RADIUS - 0.015))
-                        .with_rotation(Quat::from_rotation_arc(Vec3::Y, direction))
-                        .with_scale(Vec3::new(0.18, 0.035, 0.18)),
-                    ..default()
-                })
+                .spawn((
+                    PbrBundle {
+                        mesh: k.stone.clone(),
+                        material: k.dark.clone(),
+                        transform: Transform::from_translation(direction * (BALL_RADIUS - 0.015))
+                            .with_rotation(Quat::from_rotation_arc(Vec3::Y, direction))
+                            .with_scale(Vec3::new(0.18, 0.035, 0.18)),
+                        ..default()
+                    },
+                    crate::rendering::stylized::ActorSurface,
+                ))
                 .id();
             c.entity(ball).add_child(patch);
         }
