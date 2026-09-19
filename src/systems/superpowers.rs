@@ -17,6 +17,16 @@ impl SuperpowerKind {
             SuperpowerKind::Slow => SLOW_COOLDOWN,
         }
     }
+
+    /// One-hot index for the observation: blast=0, freeze=1, boost=2, slow=3.
+    pub fn onehot_index(self) -> usize {
+        match self {
+            SuperpowerKind::BeamBlast => 0,
+            SuperpowerKind::FreezeRay => 1,
+            SuperpowerKind::Boost => 2,
+            SuperpowerKind::Slow => 3,
+        }
+    }
 }
 
 /// Optional component: a cube that has a power. Attach to give a power.
@@ -198,6 +208,14 @@ mod tests {
     fn ready_fraction_full_when_off_cooldown() {
         let sp = Superpower::new(SuperpowerKind::BeamBlast);
         assert!((sp.ready_fraction() - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn onehot_index_maps_kinds() {
+        assert_eq!(SuperpowerKind::BeamBlast.onehot_index(), 0);
+        assert_eq!(SuperpowerKind::FreezeRay.onehot_index(), 1);
+        assert_eq!(SuperpowerKind::Boost.onehot_index(), 2);
+        assert_eq!(SuperpowerKind::Slow.onehot_index(), 3);
     }
 
     use bevy::time::TimePlugin;

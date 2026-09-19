@@ -15,6 +15,7 @@ pub struct AgentView<'a> {
     pub transform: &'a Transform,
     pub velocity: &'a Velocity,
     pub cooldown_ready: f32,
+    pub power_onehot: [f32; 4],
 }
 
 /// Build the per-agent observation vector for a single observer.
@@ -92,14 +93,18 @@ fn extract_one(
     // match state
     out[i] = game_state.score_diff(observer.team) as f32 / 10.0;
     out[i + 1] = game_state.time_remaining / MATCH_DURATION_SECS;
-
-    // superpower cooldown-ready fraction (1.0 = ready / no power)
     out[i + 2] = observer.cooldown_ready;
 
+    // own superpower one-hot [blast, freeze, boost, slow]; all-zero = none
+    out[i + 3] = observer.power_onehot[0];
+    out[i + 4] = observer.power_onehot[1];
+    out[i + 5] = observer.power_onehot[2];
+    out[i + 6] = observer.power_onehot[3];
+
     // possession flags [self, teammate, opponent]  (kept last-3)
-    out[i + 3] = poss_flags[0];
-    out[i + 4] = poss_flags[1];
-    out[i + 5] = poss_flags[2];
+    out[i + 7] = poss_flags[0];
+    out[i + 8] = poss_flags[1];
+    out[i + 9] = poss_flags[2];
 
     out
 }
@@ -159,12 +164,19 @@ pub fn get_observations(
 ) -> Option<Vec<[f32; OBSERVATION_SIZE]>> {
     let agents: Vec<AgentView> = player_query
         .iter()
-        .map(|(_, transform, velocity, player, power)| AgentView {
-            team: player.team,
-            index: player.index,
-            transform,
-            velocity,
-            cooldown_ready: power.map(|p| p.ready_fraction()).unwrap_or(1.0),
+        .map(|(_, transform, velocity, player, power)| {
+            let mut oh = [0.0f32; 4];
+            if let Some(p) = power {
+                oh[p.kind.onehot_index()] = 1.0;
+            }
+            AgentView {
+                team: player.team,
+                index: player.index,
+                transform,
+                velocity,
+                cooldown_ready: power.map(|p| p.ready_fraction()).unwrap_or(1.0),
+                power_onehot: oh,
+            }
         })
         .collect();
 
@@ -201,7 +213,7 @@ mod tests {
             .map(|i| {
                 let team = if i < PLAYERS_PER_TEAM { Team::Orange } else { Team::Blue };
                 let index = i % PLAYERS_PER_TEAM;
-                AgentView { team, index, transform: &transforms[i], velocity: &vels[i], cooldown_ready: 1.0 }
+                AgentView { team, index, transform: &transforms[i], velocity: &vels[i], cooldown_ready: 1.0, power_onehot: [0.0; 4] }
             })
             .collect();
 
@@ -225,7 +237,7 @@ mod tests {
         let agents: Vec<AgentView> = (0..NUM_AGENTS)
             .map(|i| {
                 let team = if i < PLAYERS_PER_TEAM { Team::Orange } else { Team::Blue };
-                AgentView { team, index: i % PLAYERS_PER_TEAM, transform: &transforms[i], velocity: &vels[i], cooldown_ready: 1.0 }
+                AgentView { team, index: i % PLAYERS_PER_TEAM, transform: &transforms[i], velocity: &vels[i], cooldown_ready: 1.0, power_onehot: [0.0; 4] }
             })
             .collect();
         let ball_t = t(0.0, 1.0, 0.0);
@@ -241,7 +253,7 @@ mod tests {
     fn wrong_agent_count_returns_none() {
         let tr = t(0.0, 1.0, 0.0);
         let ve = v(0.0, 0.0, 0.0);
-        let agents = vec![AgentView { team: Team::Orange, index: 0, transform: &tr, velocity: &ve, cooldown_ready: 1.0 }];
+        let agents = vec![AgentView { team: Team::Orange, index: 0, transform: &tr, velocity: &ve, cooldown_ready: 1.0, power_onehot: [0.0; 4] }];
         let ball_t = t(0.0, 1.0, 0.0);
         let ball_v = v(0.0, 0.0, 0.0);
         let gs = crate::game::GameState::default();
@@ -257,7 +269,7 @@ mod tests {
         let agents: Vec<AgentView> = (0..NUM_AGENTS)
             .map(|i| {
                 let team = if i < PLAYERS_PER_TEAM { Team::Orange } else { Team::Blue };
-                AgentView { team, index: i % PLAYERS_PER_TEAM, transform: &transforms[i], velocity: &vels[i], cooldown_ready: 1.0 }
+                AgentView { team, index: i % PLAYERS_PER_TEAM, transform: &transforms[i], velocity: &vels[i], cooldown_ready: 1.0, power_onehot: [0.0; 4] }
             })
             .collect();
         let ball_t = t(0.0, 1.0, 0.0);
@@ -284,7 +296,7 @@ mod tests {
         let agents: Vec<AgentView> = (0..NUM_AGENTS)
             .map(|i| {
                 let team = if i < PLAYERS_PER_TEAM { Team::Orange } else { Team::Blue };
-                AgentView { team, index: i % PLAYERS_PER_TEAM, transform: &transforms[i], velocity: &vels[i], cooldown_ready: 1.0 }
+                AgentView { team, index: i % PLAYERS_PER_TEAM, transform: &transforms[i], velocity: &vels[i], cooldown_ready: 1.0, power_onehot: [0.0; 4] }
             })
             .collect();
         let ball_t = t(0.0, 1.0, 0.0);
@@ -298,9 +310,11 @@ mod tests {
     }
 
     #[test]
-    fn cooldown_feature_is_just_before_possession_flags() {
+    fn cooldown_and_power_onehot_placement() {
         let transforms: Vec<Transform> = (0..NUM_AGENTS).map(|i| t(i as f32, 1.0, 0.0)).collect();
         let vels: Vec<Velocity> = (0..NUM_AGENTS).map(|_| v(0.0, 0.0, 0.0)).collect();
+        let mut oh = [0.0f32; 4];
+        oh[2] = 1.0; // Boost slot
         let agents: Vec<AgentView> = (0..NUM_AGENTS)
             .map(|i| AgentView {
                 team: if i < PLAYERS_PER_TEAM { Team::Orange } else { Team::Blue },
@@ -308,12 +322,18 @@ mod tests {
                 transform: &transforms[i],
                 velocity: &vels[i],
                 cooldown_ready: 0.25,
+                power_onehot: oh,
             })
             .collect();
         let ball_t = t(0.0, 1.0, 0.0);
         let ball_v = v(0.0, 0.0, 0.0);
         let gs = crate::game::GameState::default();
         let obs = compute_observations(&agents, &ball_t, &ball_v, &gs, None).unwrap();
-        assert!((obs[0][OBSERVATION_SIZE - 4] - 0.25).abs() < 1e-6, "cooldown sits at size-4 (just before the 3 possession flags)");
+        assert!((obs[0][OBSERVATION_SIZE - 8] - 0.25).abs() < 1e-6, "cooldown at size-8");
+        assert_eq!(
+            [obs[0][OBSERVATION_SIZE - 7], obs[0][OBSERVATION_SIZE - 6], obs[0][OBSERVATION_SIZE - 5], obs[0][OBSERVATION_SIZE - 4]],
+            [0.0, 0.0, 1.0, 0.0],
+            "power one-hot (Boost) at size-7..size-4"
+        );
     }
 }

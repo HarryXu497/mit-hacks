@@ -83,9 +83,10 @@ pub const NUM_AGENTS: usize = 2 * PLAYERS_PER_TEAM;
 /// Layout: self pos+vel (6) + teammates (6*(N-1)) + opponents (6*N)
 ///         + ball pos+vel (6) + goal dists (2) + score_diff + time (2)
 ///         + superpower cooldown-ready fraction (1)
+///         + own superpower one-hot [blast, freeze, boost, slow] (4)
 ///         + possession flags (3: self/teammate/opponent has ball)
-///       = 14 + 12*N.
-pub const OBSERVATION_SIZE: usize = 14 + 12 * PLAYERS_PER_TEAM;
+///       = 18 + 12*N.
+pub const OBSERVATION_SIZE: usize = 18 + 12 * PLAYERS_PER_TEAM;
 /// Per-agent action length (move_x, move_z, jump, fire).
 pub const ACTION_SIZE: usize = 4;
 
@@ -190,7 +191,7 @@ mod tests {
 
     #[test]
     fn observation_size_includes_possession_flags() {
-        assert_eq!(OBSERVATION_SIZE, 14 + 12 * PLAYERS_PER_TEAM);
+        assert_eq!(OBSERVATION_SIZE, 18 + 12 * PLAYERS_PER_TEAM);
     }
 
     #[test]
