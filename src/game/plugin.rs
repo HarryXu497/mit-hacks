@@ -10,7 +10,7 @@ use crate::systems::{
     physics::configure_physics,
     scoring::{detect_goals, handle_goal_scored, update_timers},
     reset::{reset_after_goal, reset_after_round, check_reset_timer, ResetTimer},
-    possession::{Possession, tick_cooldowns, update_possession, shoot_ball, dribble_ball, clear_possession},
+    possession::{Possession, tick_cooldowns, update_possession, clear_possession},
     effects::animate_fragments,
     display::update_wall_scoreboard,
     eyes::animate_googly_eyes,
@@ -64,12 +64,7 @@ impl Plugin for CubeSoccerPlugin {
             .add_systems(Update, (
                 keyboard_input_system,
                 apply_player_movement,
-                (
-                    tick_cooldowns,
-                    update_possession,
-                    shoot_ball,
-                    dribble_ball,
-                ).chain(),
+                (tick_cooldowns, update_possession).chain(),
                 detect_goals,
                 handle_goal_scored,
                 update_timers,

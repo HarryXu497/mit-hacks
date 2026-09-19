@@ -266,7 +266,7 @@ mod tests {
         let obs0 = env.reset(Some(1));
         let mut actions = vec![0.0f32; TOTAL_ACTION_SIZE];
         for a in 0..NUM_AGENTS {
-            actions[a * 4] = 1.0;
+            actions[a * ACTION_SIZE] = 1.0;
         }
         let result = env.step(&actions);
         assert_eq!(result.observations.len(), NUM_AGENTS * OBSERVATION_SIZE);

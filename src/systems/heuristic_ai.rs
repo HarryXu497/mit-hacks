@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 use std::collections::HashMap;
 use crate::entities::{Ball, CubePlayer, PlayerInput};
-use crate::game::{Team, FIELD_WIDTH, TOUCH_RANGE};
+use crate::game::{Team, FIELD_WIDTH};
 
 /// Marker: cubes with this component are driven by the built-in heuristic AI.
 #[derive(Component)]
@@ -278,28 +278,6 @@ pub fn assign_team_movements(
     (out, handler_index)
 }
 
-/// If this cube is on the ball and in the attacking half, return an aim vector
-/// (toward the opponent goal) to shoot; otherwise `None`.
-pub fn shoot_aim(team: Team, player_pos: Vec3, ball_pos: Vec3) -> Option<Vec2> {
-    let on_ball = player_pos.distance(ball_pos) <= TOUCH_RANGE;
-    if !on_ball {
-        return None;
-    }
-    let goal_x = match team {
-        Team::Orange => FIELD_WIDTH / 2.0,
-        Team::Blue => -FIELD_WIDTH / 2.0,
-    };
-    let in_attacking_half = match team {
-        Team::Orange => player_pos.x > 0.0,
-        Team::Blue => player_pos.x < 0.0,
-    };
-    if !in_attacking_half {
-        return None;
-    }
-    let aim = Vec2::new(goal_x - player_pos.x, -player_pos.z);
-    Some(aim.normalize_or_zero())
-}
-
 /// System: drive every `AiControlled` cube using team-aware role assignment.
 /// The current ball-handler for each team is remembered in a `Local` so the role
 /// is sticky (hysteresis) rather than recomputed from scratch each frame.
@@ -335,16 +313,10 @@ pub fn apply_heuristic_ai(
         }
     }
 
-    for (mut input, transform, player) in player_query.iter_mut() {
+    for (mut input, _transform, player) in player_query.iter_mut() {
         if let Some((movement, jump)) = result.get(&(player.team, player.index)) {
             input.movement = *movement;
             input.jump = *jump;
-        }
-        if let Some(aim) = shoot_aim(player.team, transform.translation, ball_pos) {
-            input.movement = aim;
-            input.shoot = 1.0;
-        } else {
-            input.shoot = 0.0;
         }
     }
 }
@@ -425,19 +397,6 @@ mod tests {
         let ball = Vec3::new(0.0, 1.0, 0.0);
         let (_, handler) = assign_team_movements(Team::Orange, &players, ball, Vec3::ZERO, Some(0), &TeamDirective::uniform(Tactic::Balanced.params()));
         assert_eq!(handler, 1, "handler should hand off when a teammate is clearly closer");
-    }
-
-    #[test]
-    fn shoots_toward_goal_when_on_ball_near_attacking_third() {
-        let aim = shoot_aim(Team::Orange, Vec3::new(8.0, 1.0, 0.0), Vec3::new(8.2, 1.0, 0.0));
-        let a = aim.expect("should shoot when on the ball in the attacking third");
-        assert!(a.x > 0.0, "orange should shoot toward +x goal");
-    }
-
-    #[test]
-    fn does_not_shoot_when_far_from_ball() {
-        let aim = shoot_aim(Team::Orange, Vec3::new(8.0, 1.0, 0.0), Vec3::new(0.0, 1.0, 0.0));
-        assert!(aim.is_none(), "should not shoot when not near the ball");
     }
 
     #[test]

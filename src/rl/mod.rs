@@ -21,8 +21,8 @@
 //!
 //! # Action Space
 //!
-//! Each agent has 4 continuous actions [-1, 1] (move_x, move_z, jump, reserved).
-//! The environment takes `NUM_AGENTS * 4` actions total, ordered Orange[0..N]
+//! Each agent has 3 continuous actions [-1, 1] (move_x, move_z, jump).
+//! The environment takes `NUM_AGENTS * 3` actions total, ordered Orange[0..N]
 //! then Blue[0..N].
 //!
 //! # Rewards

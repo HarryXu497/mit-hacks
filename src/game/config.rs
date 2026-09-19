@@ -81,8 +81,8 @@ pub const NUM_AGENTS: usize = 2 * PLAYERS_PER_TEAM;
 ///         + possession flags (3: self/teammate/opponent has ball)
 ///       = 13 + 12*N.
 pub const OBSERVATION_SIZE: usize = 13 + 12 * PLAYERS_PER_TEAM;
-/// Per-agent action length (move_x, move_z, jump, reserved).
-pub const ACTION_SIZE: usize = 4;
+/// Per-agent action length (move_x, move_z, jump).
+pub const ACTION_SIZE: usize = 3;
 
 /// Physics ticks advanced per env.step() (action repeat / frame-skip).
 /// 2 ticks at 30Hz = ~15 decisions/sec (same control rate as the old 4@60Hz)
@@ -93,23 +93,13 @@ pub const RESET_POS_JITTER: f32 = 1.0;
 /// Max seeded XZ offset (meters) applied to the ball spawn on reset.
 pub const RESET_BALL_JITTER: f32 = 2.0;
 
-// === DRIBBLING / POSSESSION / SHOOTING ===
+// === POSSESSION / SHOOTING ===
 /// Distance at which a player can gain or steal the ball (matches the touch-reward distance).
 pub const TOUCH_RANGE: f32 = CUBE_SIZE / 2.0 + BALL_RADIUS + 0.5;
-/// How far ahead of the holder the ball is carried while dribbling.
-/// Must exceed the cube+ball contact distance (CUBE_SIZE/2 + BALL_RADIUS = 1.35)
-/// so the carry point sits just outside the body instead of inside it.
-pub const DRIBBLE_OFFSET: f32 = 1.6;
-/// Lerp factor steering the ball toward the carry point each frame.
-pub const DRIBBLE_FOLLOW_GAIN: f32 = 0.3;
-/// Cap on ball horizontal speed while being dribbled.
-pub const DRIBBLE_MAX_SPEED: f32 = CUBE_MAX_SPEED * 1.1;
-/// Reserved-slot value above which a shot fires.
-pub const SHOOT_THRESHOLD: f32 = 0.5;
-/// Shot impulse at threshold input (soft pass).
-pub const SHOOT_POWER_MIN: f32 = 12.0;
-/// Shot impulse at full input 1.0 (hard shot).
-pub const SHOOT_POWER_MAX: f32 = 25.0;
+/// If the ball rolls farther than this from its holder, possession is released
+/// (loose ball). Larger than `TOUCH_RANGE` so the possessed<->loose edge has a
+/// hysteresis band and does not flicker.
+pub const CONTROL_RADIUS: f32 = 2.5;
 /// After losing possession, how long before the same player can re-grab.
 pub const STEAL_COOLDOWN_SECS: f32 = 0.5;
 /// How long an opponent must stay in range of a held ball before the steal
@@ -179,14 +169,6 @@ mod tests {
     #[test]
     fn observation_size_includes_possession_flags() {
         assert_eq!(OBSERVATION_SIZE, 13 + 12 * PLAYERS_PER_TEAM);
-    }
-
-    #[test]
-    fn shoot_power_range_is_ordered() {
-        assert!(SHOOT_POWER_MIN < SHOOT_POWER_MAX);
-        assert!(SHOOT_THRESHOLD > 0.0 && SHOOT_THRESHOLD < 1.0);
-        assert!(TOUCH_RANGE > 0.0);
-        assert!(DRIBBLE_OFFSET > 0.0);
     }
 
     #[test]

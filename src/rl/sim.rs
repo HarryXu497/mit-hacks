@@ -15,7 +15,7 @@ use crate::entities::{spawn_arena, spawn_field, spawn_goals, spawn_players, spaw
 use crate::input::{AIActions, apply_ai_actions};
 use crate::game::{GameState, GoalScoredEvent, BallTouchedEvent};
 use crate::systems::movement::apply_player_movement;
-use crate::systems::possession::{tick_cooldowns, update_possession, shoot_ball, dribble_ball, Possession};
+use crate::systems::possession::{tick_cooldowns, update_possession, Possession};
 use crate::systems::scoring::detect_goals;
 use crate::systems::heuristic_ai::{apply_heuristic_ai, AiControlled, TeamTactics};
 use crate::game::Team;
@@ -181,7 +181,7 @@ pub fn build_headless_app() -> App {
             apply_ai_actions,      // Orange gets RL actions; Blue's slice is ignored...
             apply_heuristic_ai,    // ...then the heuristic overrides Blue's inputs.
             apply_player_movement,
-            (tick_cooldowns, update_possession, shoot_ball, dribble_ball).chain(),
+            (tick_cooldowns, update_possession).chain(),
             detect_goals,
             handle_goal_headless,
             compute_step_rewards,
@@ -234,7 +234,7 @@ mod tests {
 
         let mut actions = vec![0.0f32; TOTAL_ACTION_SIZE];
         for a in 0..crate::game::NUM_AGENTS {
-            actions[a * 4] = 1.0; // move_x = +1 for every agent
+            actions[a * crate::game::ACTION_SIZE] = 1.0; // move_x = +1 for every agent
         }
         *app.world.resource_mut::<AIActions>() = AIActions::from_slice(&actions);
 

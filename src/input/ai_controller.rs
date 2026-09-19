@@ -1,13 +1,12 @@
 use bevy::prelude::*;
 use crate::entities::{CubePlayer, PlayerInput};
 
-/// Structure for AI actions (4 continuous values per player)
+/// Structure for AI actions (3 continuous values per player)
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PlayerAction {
     pub move_x: f32,    // [-1, 1] Left/Right
     pub move_z: f32,    // [-1, 1] Forward/Backward
     pub jump: f32,      // [-1, 1] > 0.5 = jump
-    pub shoot: f32,     // reserved slot: shot strength; > SHOOT_THRESHOLD fires
 }
 
 impl PlayerAction {
@@ -16,12 +15,11 @@ impl PlayerAction {
             move_x: slice.get(0).copied().unwrap_or(0.0).clamp(-1.0, 1.0),
             move_z: slice.get(1).copied().unwrap_or(0.0).clamp(-1.0, 1.0),
             jump: slice.get(2).copied().unwrap_or(0.0).clamp(-1.0, 1.0),
-            shoot: slice.get(3).copied().unwrap_or(0.0),
         }
     }
 
-    pub fn to_array(&self) -> [f32; 4] {
-        [self.move_x, self.move_z, self.jump, self.shoot]
+    pub fn to_array(&self) -> [f32; 3] {
+        [self.move_x, self.move_z, self.jump]
     }
 }
 
@@ -56,7 +54,6 @@ pub fn apply_ai_actions(
         if let Some(action) = ai_actions.actions.get(idx) {
             input.movement = Vec2::new(action.move_x, action.move_z);
             input.jump = action.jump > 0.5;
-            input.shoot = action.shoot.clamp(0.0, 1.0);
         }
     }
 }
@@ -66,14 +63,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn from_slice_reads_shoot_from_reserved_slot() {
-        let a = PlayerAction::from_slice(&[0.1, 0.2, 0.9, 0.7]);
-        assert!((a.shoot - 0.7).abs() < 1e-6);
+    fn from_slice_reads_move_and_jump() {
+        let a = PlayerAction::from_slice(&[0.1, 0.2, 0.9]);
+        assert!((a.move_x - 0.1).abs() < 1e-6);
+        assert!((a.move_z - 0.2).abs() < 1e-6);
+        assert!((a.jump - 0.9).abs() < 1e-6);
     }
 
     #[test]
-    fn to_array_roundtrips_shoot() {
-        let a = PlayerAction::from_slice(&[0.0, 0.0, 0.0, 0.8]);
-        assert!((a.to_array()[3] - 0.8).abs() < 1e-6);
+    fn to_array_roundtrips_three_fields() {
+        let a = PlayerAction::from_slice(&[0.3, -0.4, 0.6]);
+        assert_eq!(a.to_array(), [0.3, -0.4, 0.6]);
     }
 }

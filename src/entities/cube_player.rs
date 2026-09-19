@@ -27,7 +27,6 @@ pub struct GooglyPupil {
 pub struct PlayerInput {
     pub movement: Vec2,  // X, Z
     pub jump: bool,
-    pub shoot: f32,      // shot strength [0,1]; > SHOOT_THRESHOLD fires a shot
 }
 
 #[derive(Bundle)]

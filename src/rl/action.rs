@@ -3,7 +3,7 @@ use crate::game::{agent_flat_index, Team, ACTION_SIZE, NUM_AGENTS};
 
 /// Action space definition
 /// Total action space: Box([-1, 1], shape=(NUM_AGENTS * ACTION_SIZE,))
-/// 4 actions per agent: move_x, move_z, jump, reserved.
+/// 3 actions per agent: move_x, move_z, jump.
 pub const ACTION_SIZE_PER_PLAYER: usize = ACTION_SIZE;
 pub const TOTAL_ACTION_SIZE: usize = NUM_AGENTS * ACTION_SIZE;
 
