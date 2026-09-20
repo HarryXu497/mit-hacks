@@ -25,8 +25,17 @@ pub const CANOPY: egui::Color32 = egui::Color32::from_rgb(31, 46, 36);
 pub const TURF: egui::Color32 = egui::Color32::from_rgb(58, 92, 60);
 /// Turf with the sun on it, for the one under the cursor.
 pub const TURF_LIT: egui::Color32 = egui::Color32::from_rgb(82, 126, 78);
-/// Carved timber, for a panel's frame.
+/// Carved timber, for a panel's frame and the face of a flat wood panel.
 pub const TIMBER: egui::Color32 = egui::Color32::from_rgb(74, 52, 36);
+/// Timber in shadow, for the bars that band the screen's top and bottom so they
+/// sit behind the lighter panel between them.
+pub const TIMBER_DARK: egui::Color32 = egui::Color32::from_rgb(54, 38, 26);
+/// A sunlit plank, for the face of a flat panel. This is the lightest a warm
+/// wood can go while cloth text over it still clears the contrast the tests
+/// enforce; going lighter would mean switching the text to dark ink instead.
+pub const PLANK: egui::Color32 = egui::Color32::from_rgb(132, 98, 63);
+/// The same plank, a shade cooler, for the top and bottom bars.
+pub const PLANK_DARK: egui::Color32 = egui::Color32::from_rgb(112, 83, 54);
 /// Tribal gold: the leading edge, and anything chosen.
 pub const GOLD: egui::Color32 = egui::Color32::from_rgb(226, 170, 64);
 /// Bleached cloth, for text on dark.
@@ -168,6 +177,58 @@ pub fn slab_inline(ui: &mut egui::Ui, label: &str, tone: Tone) -> egui::Response
     slab(ui, label, tone, false)
 }
 
+/// Overlays a plank-and-grain pattern on a wood panel's face.
+///
+/// Painted over the flat base fill and behind the panel's content, so the wood
+/// looks planked rather than poured. It is drawn, not sampled from a photo, to
+/// stay with the flat-shaded world — horizontal seams like a timber wall, then a
+/// scatter of faint grain streaks. Every offset comes from the line's index, so
+/// the pattern is identical every frame and never shimmers.
+pub fn wood_grain(painter: &egui::Painter, rect: egui::Rect) {
+    if rect.width() < 4.0 || rect.height() < 4.0 {
+        return;
+    }
+    // Translucent, so one pair of colours works on any plank shade.
+    let groove = egui::Color32::from_rgba_unmultiplied(20, 14, 8, 96);
+    let lit = egui::Color32::from_rgba_unmultiplied(255, 236, 200, 30);
+    let grain = egui::Color32::from_rgba_unmultiplied(26, 16, 9, 34);
+
+    // Horizontal plank seams: a dark groove with a lit edge just beneath it.
+    let plank_h = 58.0_f32;
+    let mut y = rect.top() + plank_h;
+    while y < rect.bottom() - 2.0 {
+        painter.line_segment(
+            [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
+            egui::Stroke::new(1.8, groove),
+        );
+        painter.line_segment(
+            [egui::pos2(rect.left(), y + 1.8), egui::pos2(rect.right(), y + 1.8)],
+            egui::Stroke::new(1.0, lit),
+        );
+        y += plank_h;
+    }
+
+    // Grain: faint streaks running along the planks, at index-derived heights so
+    // they stay put between frames.
+    let count = (rect.height() / 13.0) as i32;
+    for i in 0..count {
+        let t = i as f32;
+        let gy = rect.top() + t * 13.0 + (t * 1.9).sin() * 4.0 + 6.0;
+        if gy <= rect.top() || gy >= rect.bottom() {
+            continue;
+        }
+        // Streaks stop short of the edges by a little, varied by index.
+        let inset = 10.0 + (t * 2.3).cos().abs() * 40.0;
+        let (x0, x1) = (rect.left() + inset, rect.right() - inset * 0.6);
+        if x1 > x0 {
+            painter.line_segment(
+                [egui::pos2(x0, gy), egui::pos2(x1, gy)],
+                egui::Stroke::new(1.0, grain),
+            );
+        }
+    }
+}
+
 /// The frame a panel of controls sits in: carved timber on canopy shadow.
 pub fn panel_frame() -> egui::Frame {
     egui::Frame::none()
@@ -175,6 +236,22 @@ pub fn panel_frame() -> egui::Frame {
         .stroke(egui::Stroke::new(2.0_f32, TIMBER))
         .rounding(egui::Rounding::same(3.0_f32))
         .inner_margin(egui::Margin::symmetric(18.0, 14.0))
+}
+
+/// A panel's heading: the display face in gold, so the coaching panels wear the
+/// same type as the app's other screens rather than egui's default heading font.
+pub fn panel_title(ui: &mut egui::Ui, text: &str, size: f32) -> egui::Response {
+    ui.label(egui::RichText::new(text).font(display_font(size)).color(GOLD))
+}
+
+/// A section label within a panel: dim-cloth on the app's other screens is gold
+/// and shouted, so match that.
+pub fn section_label(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    ui.label(
+        egui::RichText::new(text.to_uppercase())
+            .font(display_font(13.0))
+            .color(GOLD),
+    )
 }
 
 /// A screen's title, with the rule under it the world's signs use.
@@ -273,6 +350,81 @@ pub fn apply(ctx: &egui::Context) {
 }
 
 
+    fn rect() -> egui::Rect {
+        egui::Rect::from_min_size(egui::pos2(100.0, 200.0), egui::vec2(320.0, SLAB_HEIGHT))
+    }
+
+    #[test]
+    fn a_slab_leans_without_leaving_the_space_it_was_given() {
+        let r = rect();
+        for corner in slab_corners(r, 0.0) {
+            assert!(corner.x >= r.left() - 0.01, "{corner:?} is left of the widget");
+            assert!(corner.x <= r.right() + 0.01, "{corner:?} is right of the widget");
+            assert!(corner.y >= r.top() - 0.01 && corner.y <= r.bottom() + 0.01);
+        }
+    }
+
+    #[test]
+    fn the_lean_is_visible_but_not_a_wedge() {
+        let corners = slab_corners(rect(), 0.0);
+        let lean = corners[0].x - corners[3].x;
+        assert!(lean > 6.0, "the angle should read at a glance, got {lean}");
+        // A lean approaching the slab's own width would make it a triangle rather than a slab.
+        assert!(lean < rect().width() * 0.25, "too steep to hold a label: {lean}");
+    }
+
+    #[test]
+    fn the_ink_shell_surrounds_the_face_on_every_side() {
+        let face = slab_corners(rect(), 0.0);
+        let ink = slab_corners(rect(), SLAB_INK);
+        // Top-right and bottom-left are the two corners that are not shifted by the lean, so
+        // they are where an off-by-one in `expand` would show up first.
+        assert!(ink[1].x > face[1].x && ink[1].y < face[1].y);
+        assert!(ink[3].x < face[3].x && ink[3].y > face[3].y);
+    }
+
+    #[test]
+    fn a_hovered_slab_is_lighter_than_one_at_rest() {
+        // The only thing distinguishing the row you are on, so it has to actually differ.
+        for tone in [Tone::Primary, Tone::Plain, Tone::Danger] {
+            let (rest, lit) = (tone.face(false), tone.face(true));
+            assert_ne!(rest, lit, "{tone:?} does not react to the cursor");
+            let brightness = |c: egui::Color32| c.r() as u32 + c.g() as u32 + c.b() as u32;
+            assert!(brightness(lit) > brightness(rest), "{tone:?} darkens on hover");
+        }
+    }
+
+    #[test]
+    fn text_on_the_jungle_palette_stays_readable() {
+        // Rough relative-luminance contrast. Not a full WCAG check, but enough to catch cloth
+        // text being put on a colour it disappears into.
+        fn luminance(c: egui::Color32) -> f32 {
+            let channel = |v: u8| {
+                let v = v as f32 / 255.0;
+                if v <= 0.03928 {
+                    v / 12.92
+                } else {
+                    ((v + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            0.2126 * channel(c.r()) + 0.7152 * channel(c.g()) + 0.0722 * channel(c.b())
+        }
+        fn ratio(a: egui::Color32, b: egui::Color32) -> f32 {
+            let (x, y) = (luminance(a), luminance(b));
+            let (hi, lo) = if x > y { (x, y) } else { (y, x) };
+            (hi + 0.05) / (lo + 0.05)
+        }
+
+        for background in [CANOPY, TURF, TIMBER, PLANK, PLANK_DARK, INK] {
+            assert!(
+                ratio(CLOTH, background) >= 4.5,
+                "cloth on {background:?} is only {:.1}:1",
+                ratio(CLOTH, background)
+            );
+        }
+        assert!(ratio(INK, GOLD) >= 4.5, "ink on gold must stay legible");
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Type

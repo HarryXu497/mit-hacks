@@ -62,6 +62,7 @@ pub fn build_table(
     mut meshes: ResMut<Assets<Mesh>>,
     mut mats: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
+    sign_visible: Res<super::SignVisible>,
 ) {
     let k = crate::jungle::build_kit(&mut meshes, &mut mats);
     let quad = meshes.add(Rectangle::new(1., 1.));
@@ -128,7 +129,9 @@ pub fn build_table(
         token(&mut c, &k, &mut mats, &quad, &digits, plane, entity, at);
     }
 
-    sign_timber(&mut c, &k, &mut mats, &quad);
+    if sign_visible.0 {
+        sign_timber(&mut c, &k, &mut mats, &quad);
+    }
 }
 
 /// The stone plinth the board stands on.

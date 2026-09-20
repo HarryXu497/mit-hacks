@@ -58,7 +58,7 @@ use cube_soccer::systems::camera::{CameraRig, MainCamera};
 use cube_soccer::systems::physics::configure_physics;
 use cube_soccer::tactics::{
     Interpretation as TableInterpretation, RequestInterpretation as TableInterpretRequest,
-    Session as TableSession, TableState, TacticsPlugin,
+    Session as TableSession, SignVisible, TableState, TacticsPlugin,
 };
 
 /// Builds the world, runs the in-world screens, and couples their state to `AppPhase`.
@@ -76,6 +76,9 @@ impl Plugin for WorldPlugin {
 
         app.add_plugins(CreationPlugin)
             .add_plugins(TacticsPlugin)
+            // The coaching panel already shows the transcript, timeline and JSON,
+            // so the standing sign beside the table is a redundant second copy.
+            .insert_resource(SignVisible(false))
             // Two samples, not four: once the static props are batched the frame is fill bound,
             // and the goal netting's sub-pixel beams sparkle with no coverage sampling at all.
             .insert_resource(Msaa::Sample2)

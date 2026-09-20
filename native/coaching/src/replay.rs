@@ -46,7 +46,12 @@ pub fn find_undo_target(events: &[RawSessionEvent]) -> Option<&RawSessionEvent> 
 
 pub fn replay_session(events: &[RawSessionEvent], until_ms: Option<u64>) -> ReplayState {
     let mut board = BoardState::default();
-    let mut transcripts = HashMap::<String, TranscriptSegment>::new();
+    // Kept in insertion order, not a HashMap: manual notes jotted before the
+    // clock starts all share start_ms = 0, and a HashMap's iteration order
+    // reshuffled them every frame, so the tiles flickered. The index lets edits
+    // still find a segment in O(1).
+    let mut transcripts = Vec::<TranscriptSegment>::new();
+    let mut transcript_index = HashMap::<String, usize>::new();
     let scoped = events
         .iter()
         .filter(|event| until_ms.is_none_or(|limit| event.timestamp_ms() <= limit))
@@ -73,20 +78,26 @@ pub fn replay_session(events: &[RawSessionEvent], until_ms: Option<u64>) -> Repl
                     .retain(|annotation| annotation.id != *annotation_id);
             }
             RawSessionEvent::TranscriptAdded { segment, .. } => {
-                transcripts.insert(segment.id.clone(), segment.clone());
+                if let Some(&index) = transcript_index.get(&segment.id) {
+                    transcripts[index] = segment.clone();
+                } else {
+                    transcript_index.insert(segment.id.clone(), transcripts.len());
+                    transcripts.push(segment.clone());
+                }
             }
             RawSessionEvent::TranscriptEdited {
                 segment_id, text, ..
             } => {
-                if let Some(segment) = transcripts.get_mut(segment_id) {
-                    segment.text.clone_from(text);
+                if let Some(&index) = transcript_index.get(segment_id) {
+                    transcripts[index].text.clone_from(text);
                 }
             }
             _ => {}
         }
     }
 
-    let mut transcripts = transcripts.into_values().collect::<Vec<_>>();
+    // Stable sort: notes that tie on start_ms (all the pre-recording ones do)
+    // keep the order they were added, so nothing jumps around between frames.
     transcripts.sort_by_key(|segment| segment.start_ms);
     ReplayState {
         board,
