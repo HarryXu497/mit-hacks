@@ -106,15 +106,17 @@ fn canonical_tactic(label: &str) -> Result<Tactic> {
 impl CoachedTeam {
     /// Parses and grounds a tactical output for a specific expected team
     /// (`expected_side`). Rejects output coached for the other team.
-    pub fn from_output_for_team(
-        output: &Value,
-        session_id: &str,
-        expected_side: TeamSide,
-    ) -> Result<Self> {
-        ensure!(
-            output["session"]["id"].as_str() == Some(session_id),
-            "Interpretation belongs to another session"
-        );
+    ///
+    /// The session id is read *from* the payload rather than supplied by the
+    /// caller: in LAN play each machine coaches its own session, so the two
+    /// halves of a match legitimately carry two different session UUIDs. What
+    /// must hold is that each payload is internally self-consistent.
+    pub fn from_output_for_team(output: &Value, expected_side: TeamSide) -> Result<Self> {
+        let session_id = output["session"]["id"]
+            .as_str()
+            .context("Missing session id in tactical output")?
+            .to_owned();
+        let session_id = session_id.as_str();
         let selection: Selection = serde_json::from_value(output["rlSelection"].clone())
             .context("Invalid tactical selection")?;
         ensure!(
@@ -198,6 +200,23 @@ impl CoachedTeam {
         })
     }
 
+    /// Single-machine variant: additionally requires the output to belong to
+    /// *this* process's live session, which catches a stale result left over
+    /// after a reset. Networked play must not use this — the two sides have
+    /// different session ids by design.
+    pub fn from_local_session(
+        output: &Value,
+        session_id: &str,
+        expected_side: TeamSide,
+    ) -> Result<Self> {
+        let team = Self::from_output_for_team(output, expected_side)?;
+        ensure!(
+            team.session_id == session_id,
+            "Interpretation belongs to another session"
+        );
+        Ok(team)
+    }
+
     /// A team that was never coached — drives the controller with a neutral default.
     pub fn balanced_default(session_id: &str, team_id: TeamSide) -> Self {
         Self {
@@ -231,8 +250,13 @@ impl CoachedTeam {
 }
 
 /// Both teams' coached directives, merged and ready to drive `apply_heuristic_ai`.
+///
+/// `red` and `yellow` each carry their own `session_id` — in LAN play they come
+/// from two different machines — so `match_id` is the only thing correlating
+/// the pair.
 #[derive(Resource, Clone, Debug)]
 pub struct MatchHandoff {
+    pub match_id: String,
     pub red: CoachedTeam,
     pub yellow: CoachedTeam,
 }
@@ -248,7 +272,12 @@ impl MatchHandoff {
     }
 
     pub fn summary(&self) -> String {
-        format!("{}\n{}", self.red.summary_line(), self.yellow.summary_line())
+        format!(
+            "Match {}\n{}\n{}",
+            self.match_id.chars().take(14).collect::<String>(),
+            self.red.summary_line(),
+            self.yellow.summary_line()
+        )
     }
 }
 
@@ -278,9 +307,10 @@ mod tests {
             "alloutattack",
         ] {
             let red =
-                CoachedTeam::from_output_for_team(&output("red", label, "s"), "s", TeamSide::Red)
+                CoachedTeam::from_output_for_team(&output("red", label, "s"), TeamSide::Red)
                     .unwrap();
             let handoff = MatchHandoff {
+                match_id: "match-test".into(),
                 red,
                 yellow: CoachedTeam::balanced_default("s", TeamSide::Yellow),
             };
@@ -297,13 +327,11 @@ mod tests {
 
     #[test]
     fn yellow_team_reaches_the_blue_controller() {
-        let yellow = CoachedTeam::from_output_for_team(
-            &output("yellow", "lowblock", "s"),
-            "s",
-            TeamSide::Yellow,
-        )
-        .unwrap();
+        let yellow =
+            CoachedTeam::from_output_for_team(&output("yellow", "lowblock", "s"), TeamSide::Yellow)
+                .unwrap();
         let handoff = MatchHandoff {
+            match_id: "match-test".into(),
             red: CoachedTeam::balanced_default("s", TeamSide::Red),
             yellow,
         };
@@ -319,17 +347,9 @@ mod tests {
 
     #[test]
     fn rejects_output_for_the_wrong_team() {
-        assert!(CoachedTeam::from_output_for_team(
-            &output("yellow", "balanced", "s"),
-            "s",
-            TeamSide::Red
-        )
+        assert!(CoachedTeam::from_output_for_team(&output("yellow", "balanced", "s"), TeamSide::Red)
         .is_err());
-        assert!(CoachedTeam::from_output_for_team(
-            &output("red", "balanced", "s"),
-            "s",
-            TeamSide::Yellow
-        )
+        assert!(CoachedTeam::from_output_for_team(&output("red", "balanced", "s"), TeamSide::Yellow)
         .is_err());
     }
 
@@ -350,24 +370,24 @@ mod tests {
     fn overrides_apply_only_to_the_selected_player() {
         let mut payload = output("red", "highpress", "s");
         payload["rlSelection"]["playerOverrides"] = json!([{"playerId":2,"tactic":"lowblock","evidence":{"eventIds":["e"],"transcriptSegmentIds":[]}}]);
-        let red = CoachedTeam::from_output_for_team(&payload, "s", TeamSide::Red).unwrap();
+        let red = CoachedTeam::from_output_for_team(&payload, TeamSide::Red).unwrap();
         let directive = red.directive();
         assert_eq!(directive.params_for(1), Tactic::LowBlock.params());
         assert_eq!(directive.params_for(0), Tactic::HighPress.params());
         payload["rlSelection"]["playerOverrides"][0]["playerId"] = json!(6);
-        assert!(CoachedTeam::from_output_for_team(&payload, "s", TeamSide::Red).is_err());
+        assert!(CoachedTeam::from_output_for_team(&payload, TeamSide::Red).is_err());
     }
 
     #[test]
     fn yellow_overrides_apply_only_to_yellow_roster() {
         let mut payload = output("yellow", "highpress", "s");
         payload["rlSelection"]["playerOverrides"] = json!([{"playerId":7,"tactic":"lowblock","evidence":{"eventIds":["e"],"transcriptSegmentIds":[]}}]);
-        let yellow = CoachedTeam::from_output_for_team(&payload, "s", TeamSide::Yellow).unwrap();
+        let yellow = CoachedTeam::from_output_for_team(&payload, TeamSide::Yellow).unwrap();
         let directive = yellow.directive();
         assert_eq!(directive.params_for(1), Tactic::LowBlock.params());
         assert_eq!(directive.params_for(0), Tactic::HighPress.params());
         payload["rlSelection"]["playerOverrides"][0]["playerId"] = json!(2);
-        assert!(CoachedTeam::from_output_for_team(&payload, "s", TeamSide::Yellow).is_err());
+        assert!(CoachedTeam::from_output_for_team(&payload, TeamSide::Yellow).is_err());
     }
 
     #[test]
@@ -379,7 +399,7 @@ mod tests {
         payload["rlSelection"]["taxonomyVersion"] = json!("tactics-v1");
         payload["rlSelection"]["downstreamValue"] = json!("Wide");
         assert_eq!(
-            CoachedTeam::from_output_for_team(&payload, "s", TeamSide::Red)
+            CoachedTeam::from_output_for_team(&payload, TeamSide::Red)
                 .unwrap()
                 .tactic,
             Tactic::WingPlay
@@ -394,25 +414,57 @@ mod tests {
         payload["rlSelection"]["schemaVersion"] = json!("1.0");
         payload["rlSelection"]["taxonomyVersion"] = json!("tactics-v1");
         payload["rlSelection"]["downstreamValue"] = json!("Wide");
-        assert!(CoachedTeam::from_output_for_team(&payload, "s", TeamSide::Yellow).is_err());
+        assert!(CoachedTeam::from_output_for_team(&payload, TeamSide::Yellow).is_err());
     }
 
     #[test]
-    fn rejects_wrong_session_unknown_label_and_version() {
-        assert!(CoachedTeam::from_output_for_team(
-            &output("red", "balanced", "s"),
-            "another",
-            TeamSide::Red
-        )
-        .is_err());
-        assert!(CoachedTeam::from_output_for_team(
-            &output("red", "invented", "s"),
-            "s",
-            TeamSide::Red
-        )
-        .is_err());
+    fn rejects_unknown_label_and_version() {
+        assert!(
+            CoachedTeam::from_output_for_team(&output("red", "invented", "s"), TeamSide::Red)
+                .is_err()
+        );
         let mut payload = output("red", "balanced", "s");
         payload["schemaVersion"] = json!("99");
-        assert!(CoachedTeam::from_output_for_team(&payload, "s", TeamSide::Red).is_err());
+        assert!(CoachedTeam::from_output_for_team(&payload, TeamSide::Red).is_err());
+    }
+
+    /// The regression that broke LAN play: the two machines in a match each
+    /// coach their own session, so the merge must NOT require a shared id.
+    #[test]
+    fn merges_two_independently_sessioned_teams() {
+        let red =
+            CoachedTeam::from_output_for_team(&output("red", "highpress", "host-session"), TeamSide::Red)
+                .unwrap();
+        let yellow = CoachedTeam::from_output_for_team(
+            &output("yellow", "lowblock", "joiner-session"),
+            TeamSide::Yellow,
+        )
+        .unwrap();
+        assert_ne!(red.session_id, yellow.session_id);
+
+        let handoff = MatchHandoff {
+            match_id: "match-test".into(),
+            red,
+            yellow,
+        };
+        let tactics = handoff.team_tactics();
+        assert_eq!(tactics.orange.base_params(), Tactic::HighPress.params());
+        assert_eq!(tactics.blue.base_params(), Tactic::LowBlock.params());
+    }
+
+    #[test]
+    fn rejects_a_payload_whose_selection_disagrees_with_its_own_session() {
+        let mut payload = output("red", "balanced", "s");
+        payload["rlSelection"]["sessionId"] = json!("a-different-session");
+        assert!(CoachedTeam::from_output_for_team(&payload, TeamSide::Red).is_err());
+    }
+
+    /// The single-machine guard still rejects a result left over from an
+    /// earlier session on this same process.
+    #[test]
+    fn local_session_guard_rejects_a_stale_result() {
+        let payload = output("red", "balanced", "s");
+        assert!(CoachedTeam::from_local_session(&payload, "s", TeamSide::Red).is_ok());
+        assert!(CoachedTeam::from_local_session(&payload, "another", TeamSide::Red).is_err());
     }
 }

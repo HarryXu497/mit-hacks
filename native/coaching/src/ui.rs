@@ -1,6 +1,7 @@
 use crate::board::{append_undo, BoardInteraction, BoardViewport, BOARD_ASPECT};
 use crate::interpretation::{InterpretationState, RequestInterpretation, TacticalResult};
-use crate::network::MatchReady;
+use crate::game_handoff::TeamSide;
+use crate::network::{MatchReady, NetworkRole};
 use crate::model::{create_id, RawSessionEvent, SessionStatus, Tool, TranscriptSource};
 use crate::persistence::{export_tactical_json, PersistenceStatus};
 use crate::replay::{find_undo_target, replay_session};
@@ -50,6 +51,7 @@ pub fn coaching_ui(
     mut ui_state: ResMut<CoachingUiState>,
     mut interpretation_requests: EventWriter<RequestInterpretation>,
     mut match_ready: EventWriter<MatchReady>,
+    role: Res<NetworkRole>,
 ) {
     let context = contexts.ctx_mut();
 
@@ -64,6 +66,7 @@ pub fn coaching_ui(
         &mut ui_state,
         &mut interpretation_requests,
         &mut match_ready,
+        role.coached_side(),
     );
     board_panel(context, &mut session, &mut interaction, &mut viewport);
 
@@ -216,6 +219,7 @@ fn transcript_panel(
     ui_state: &mut CoachingUiState,
     requests: &mut EventWriter<RequestInterpretation>,
     match_ready: &mut EventWriter<MatchReady>,
+    coached_side: TeamSide,
 ) {
     egui::SidePanel::right("transcript-panel")
         .resizable(true)
@@ -243,7 +247,7 @@ fn transcript_panel(
             ui.separator();
 
             if result.output.is_some() {
-                result_view(ui, session, result, match_ready);
+                result_view(ui, session, result, match_ready, coached_side);
             } else {
                 transcript_view(ui, session, speech, persistence, ui_state, requests, result);
             }
@@ -414,6 +418,7 @@ fn result_view(
     session: &mut CoachingSession,
     result: &mut TacticalResult,
     match_ready: &mut EventWriter<MatchReady>,
+    coached_side: TeamSide,
 ) {
     let Some(output) = result.output.clone() else {
         return;
@@ -426,12 +431,12 @@ fn result_view(
     if let Some(notice) = &result.notice {
         ui.colored_label(egui::Color32::from_rgb(220, 201, 141), notice);
     }
-    if let Ok(red) = crate::game_handoff::CoachedTeam::from_output_for_team(
-        &output,
-        &session.session.id,
-        crate::game_handoff::TeamSide::Red,
-    ) {
-        ui.label(red.summary_line());
+    // Must use the team THIS machine coached: hardcoding red left the
+    // joiner's own results screen with no summary at all.
+    if let Ok(team) =
+        crate::game_handoff::CoachedTeam::from_output_for_team(&output, coached_side)
+    {
+        ui.label(team.summary_line());
     }
     let pretty = serde_json::to_string_pretty(&output).unwrap_or_else(|_| "{}".into());
     ui.horizontal(|ui| {

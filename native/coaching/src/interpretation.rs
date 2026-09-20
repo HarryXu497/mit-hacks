@@ -190,7 +190,7 @@ fn decode_interpretation_response(
     if output["rlSelection"]["selectionReason"].as_str() != Some("best_match") {
         return Err("NON_BEST_MATCH_SELECTION: The server did not return a supported best-match interpretation. Restart the updated API server and retry.".into());
     }
-    crate::game_handoff::CoachedTeam::from_output_for_team(&output, session_id, team_side)
+    crate::game_handoff::CoachedTeam::from_local_session(&output, session_id, team_side)
         .map_err(|error| format!("INVALID_TACTICAL_PAYLOAD: {error:#}"))?;
     Ok(output)
 }
@@ -547,7 +547,7 @@ mod tests {
         let output = deterministic_interpretation(&session, "deterministic-preview", "red");
         assert_eq!(output["steps"][0]["movements"][0]["entityId"], "ball");
         assert_eq!(output["schemaVersion"], "2.0");
-        let handoff = crate::game_handoff::CoachedTeam::from_output_for_team(
+        let handoff = crate::game_handoff::CoachedTeam::from_local_session(
             &output,
             &session.id,
             crate::game_handoff::TeamSide::Red,

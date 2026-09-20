@@ -22,9 +22,10 @@ fn main() {
                 "evidence": { "eventIds": [], "transcriptSegmentIds": ["synthetic-instruction"] } }]
         }
     });
-    let red = CoachedTeam::from_output_for_team(&output, "synthetic-render-smoke", TeamSide::Red)
+    let red = CoachedTeam::from_output_for_team(&output, TeamSide::Red)
         .expect("Pass one of the ten canonical tactic labels");
     let handoff = MatchHandoff {
+        match_id: "synthetic-render-smoke".into(),
         red,
         yellow: CoachedTeam::balanced_default("synthetic-render-smoke", TeamSide::Yellow),
     };

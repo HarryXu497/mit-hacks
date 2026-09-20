@@ -23,7 +23,7 @@ use interpretation::{
     RequestInterpretation, TacticalResult,
 };
 use network::{MatchReady, NetworkEndpoint, NetworkRole};
-use persistence::{autosave_session, load_recovery, AutosaveTracker, PersistenceStatus};
+use persistence::{AutosaveTracker, PersistenceStatus};
 use phase::AppPhase;
 use session::{tick_session, CoachingSession};
 use speech::{receive_speech, SpeechRuntime};
@@ -50,10 +50,13 @@ pub struct EnterGame;
 
 impl Plugin for CoachingPlugin {
     fn build(&self, app: &mut App) {
-        let restored = load_recovery()
-            .map(CoachingSession::from_session)
-            .unwrap_or_default();
-        app.insert_resource(restored)
+        // Deliberately never loads native/coaching/src/persistence.rs's
+        // crash-recovery file: that file lives at one fixed OS path shared
+        // by every process on the machine, so two multiplayer processes
+        // (host + joiner) on the same Mac would otherwise load each
+        // other's in-progress session at startup. Every process starts
+        // blank instead; see AGENT-README.md's "4a. Multiplayer" section.
+        app.insert_resource(CoachingSession::default())
             .init_resource::<CoachingLifecycle>()
             .init_resource::<BoardViewport>()
             .init_resource::<BoardInteraction>()
@@ -84,7 +87,6 @@ impl Plugin for CoachingPlugin {
                     request_interpretation,
                     receive_interpretation,
                     invalidate_stale_result,
-                    autosave_session,
                 )
                     .chain()
                     .run_if(coaching_is_active)
@@ -146,18 +148,23 @@ fn handle_enter_game(
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Missing interpretation"))
             .and_then(|output| {
-                let red = game_handoff::CoachedTeam::from_output_for_team(
+                // Solo only: the output must belong to this process's own live
+                // session. Networked play goes through `network.rs` instead,
+                // where the two sides legitimately have different session ids.
+                let red = game_handoff::CoachedTeam::from_local_session(
                     output,
                     &session.session.id,
                     game_handoff::TeamSide::Red,
                 )?;
-                // Yellow is not yet coached over the network (Phase B); default it
-                // until a real second-machine tactical output is merged in.
                 let yellow = game_handoff::CoachedTeam::balanced_default(
                     &session.session.id,
                     game_handoff::TeamSide::Yellow,
                 );
-                Ok::<_, anyhow::Error>(game_handoff::MatchHandoff { red, yellow })
+                Ok::<_, anyhow::Error>(game_handoff::MatchHandoff {
+                    match_id: format!("solo-{}", session.session.id),
+                    red,
+                    yellow,
+                })
             });
         match handoff {
             Ok(handoff) => {
@@ -184,6 +191,65 @@ mod integration_tests {
     use cube_soccer::game::{GameState, GoalScoredEvent, MatchState, Team};
     use cube_soccer::systems::{AiControlled, Tactic, TeamTactics};
     use std::time::Duration;
+
+    /// Backs up whatever is at `persistence::recovery_path()` (if anything)
+    /// and restores it on drop, so this test never permanently clobbers a
+    /// real in-progress session on the machine it runs on.
+    struct RecoveryFileGuard {
+        path: std::path::PathBuf,
+        original: Option<Vec<u8>>,
+    }
+
+    impl RecoveryFileGuard {
+        fn new() -> Self {
+            let path = persistence::recovery_path();
+            let original = std::fs::read(&path).ok();
+            Self { path, original }
+        }
+
+        fn write_stale_session(&self) {
+            let mut stale = model::Session::default();
+            stale.title = "stale session from another process".into();
+            stale.events.push(model::RawSessionEvent::RecordingStarted {
+                id: "stale-event".into(),
+                timestamp_ms: 0,
+            });
+            std::fs::create_dir_all(self.path.parent().unwrap()).unwrap();
+            std::fs::write(&self.path, serde_json::to_vec(&stale).unwrap()).unwrap();
+        }
+    }
+
+    impl Drop for RecoveryFileGuard {
+        fn drop(&mut self) {
+            match &self.original {
+                Some(bytes) => {
+                    let _ = std::fs::write(&self.path, bytes);
+                }
+                None => {
+                    let _ = std::fs::remove_file(&self.path);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn coaching_plugin_never_loads_a_pre_existing_recovery_file() {
+        // Regression test for the multiplayer bug where two `native-coaching`
+        // processes on the same machine (host + joiner) both read/wrote the
+        // same fixed OS-level recovery file, so a fresh process would load
+        // whatever the other process had already recorded. CoachingPlugin
+        // must always start with a blank session, independent of anything
+        // left on disk by a previous run or a different process.
+        let guard = RecoveryFileGuard::new();
+        guard.write_stale_session();
+
+        let mut app = App::new();
+        app.add_plugins(CoachingPlugin);
+
+        let session = app.world.resource::<CoachingSession>();
+        assert!(session.session.events.is_empty());
+        assert_ne!(session.session.title, "stale session from another process");
+    }
 
     fn handoff_app() -> App {
         let mut app = App::new();
