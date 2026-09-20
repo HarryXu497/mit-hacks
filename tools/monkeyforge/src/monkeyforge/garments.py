@@ -176,6 +176,22 @@ CONFORMING_EXTRAS: dict[str, str] = {
 }
 
 
+
+def _with_colour(subject: str, colour: str) -> str:
+    """Put the colour after the article, not in front of it.
+
+    The subject phrases read as "a business suit jacket ...", so prepending naively gives
+    "dark charcoal grey a business suit jacket" -- which is what the model was being asked for.
+    Moving the colour inside the article keeps the phrase grammatical, and a diffusion model
+    attends to a well-formed noun phrase more reliably than to a mangled one.
+    """
+    if not colour:
+        return subject
+    for article in ("a ", "an "):
+        if subject.startswith(article):
+            return f"{article}{colour} {subject[len(article):]}"
+    return f"{colour} {subject}".strip()
+
 def garment_prompt(spec: dict) -> str:
     """Build the SDXL subject phrase for the garment a drawing described.
 
@@ -188,7 +204,7 @@ def garment_prompt(spec: dict) -> str:
     subject, default_colour = GARMENT_PROMPTS.get(key, (raw or "a t-shirt", ""))
 
     colour = str(spec.get("colours") or "").strip() or default_colour
-    parts = [f"{colour} {subject}".strip() if colour else subject]
+    parts = [_with_colour(subject, colour)]
 
     for item in spec.get("accessories", []):
         word = str(item).strip().lower()

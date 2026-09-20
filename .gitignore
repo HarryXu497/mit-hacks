@@ -29,3 +29,7 @@ docs/
 models/
 *.pem
 
+
+# Characters forged at runtime from a player drawing, one per team per match. Generated, not
+# authored: the committed base.glb and the pre-forged models are the tracked ones.
+assets/characters/forged-*.glb

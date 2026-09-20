@@ -5,6 +5,7 @@ import { ZodError } from "zod";
 import { interpretationRequestSchema } from "../src/domain/schemas";
 import type { Session } from "../src/domain/types";
 import { forgeRouter } from "./forge";
+import { forgeCharacterRouter } from "./forgeCharacter";
 import { lobbyRouter } from "./lobby";
 import { GroundingError } from "./normalize";
 import {
@@ -29,6 +30,8 @@ export function createApp(interpreter: Interpreter = interpretSessionWithOpenAI)
   // Turns a drawn superpower into one of the game's four. Shells out to MonkeyForge, so a
   // joining machine gets the host's Python toolchain by redirecting here.
   app.use(forgeRouter());
+  // The slow half: a job, never a blocking request. See server/forgeCharacter.ts.
+  app.use(forgeCharacterRouter());
 
   app.get("/api/health", (_request, response) => {
     response.json({ ok: true, openaiConfigured: Boolean(process.env.OPENAI_API_KEY && process.env.OPENAI_MODEL) });
