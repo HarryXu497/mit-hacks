@@ -14,8 +14,10 @@ pub mod hud;
 pub mod powers;
 pub mod scoreboard;
 pub mod timer;
+pub mod versus;
 
 pub use hud::*;
 pub use powers::*;
 pub use scoreboard::*;
 pub use timer::*;
+pub use versus::*;

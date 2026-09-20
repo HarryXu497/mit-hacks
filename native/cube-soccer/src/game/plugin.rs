@@ -26,6 +26,7 @@ use crate::rendering::lighting::setup_lighting;
 use crate::ui::hud::setup_ui;
 use crate::ui::powers::{fill_power_rail, setup_power_hud, update_power_hud, PowerHudSide};
 use crate::ui::scoreboard::update_ui;
+use crate::ui::versus::VersusPlugin;
 
 pub struct CubeSoccerPlugin;
 
@@ -55,6 +56,9 @@ impl Plugin for CubeSoccerPlugin {
 
             // States
             .insert_state(MatchState::Playing)
+
+            // The intro: a skippable wait on the forge, then the VS screen.
+            .add_plugins(VersusPlugin)
 
             // Resources
             .init_resource::<GameState>()

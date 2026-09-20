@@ -96,6 +96,34 @@ export interface ForgeJob {
 
 const jobs = new Map<string, ForgeJob>();
 
+/**
+ * Where the game reads forge progress from.
+ *
+ * The game has no HTTP client, and giving it one for this would mean an async runtime inside a
+ * Bevy schedule for a file that changes a handful of times a match. It already runs with the repo
+ * root as its working directory, so the cheapest correct channel is a file in the asset root that
+ * the intro screen reads with `std::fs`.
+ */
+const STATUS_FILE = path.join(repoRoot, "assets", "characters", "forge-status.json");
+
+/** Latest state of each team's job, for the loading screen that gates the VS screen. */
+async function publish(): Promise<void> {
+  const latest: Record<string, unknown> = {};
+  for (const team of TEAMS) {
+    // The newest job for that team: a second drawing supersedes the first.
+    const job = [...jobs.values()].filter((candidate) => candidate.team === team).sort((a, b) => b.startedAt - a.startedAt)[0];
+    if (job) latest[team] = view(job);
+  }
+  try {
+    await mkdir(path.dirname(STATUS_FILE), { recursive: true });
+    await writeFile(STATUS_FILE, JSON.stringify({ updatedAt: Date.now(), teams: latest }, null, 2));
+  } catch (error) {
+    // Losing the status file costs the loading screen its labels, not the match: the game falls
+    // back to waiting on the GLB itself. Never worth failing a job over.
+    console.warn(JSON.stringify({ event: "forge_status_unwritable", message: String(error) }));
+  }
+}
+
 /** Jobs are small, but a long session should not accumulate them forever. */
 const MAX_JOBS = 64;
 
@@ -180,6 +208,7 @@ async function forge(job: ForgeJob, drawing: Buffer, seed: number): Promise<void
   try {
     job.status = "reading";
     job.label = "Looking at your drawing";
+    await publish();
     const spec = await daemon("/read", { sketch: drawing.toString("base64") }, READ_TIMEOUT_MS);
 
     const specPath = path.join(scratch, "spec.json");
@@ -194,6 +223,7 @@ async function forge(job: ForgeJob, drawing: Buffer, seed: number): Promise<void
     job.summary = planned.summary ?? null;
     job.status = "generating";
     job.label = planned.summary ? `Drawing the ${planned.summary}` : "Drawing the outfit";
+    await publish();
 
     const generated = await daemon("/sprites", { jobs: planned.jobs }, SPRITES_TIMEOUT_MS);
 
@@ -207,6 +237,7 @@ async function forge(job: ForgeJob, drawing: Buffer, seed: number): Promise<void
 
     job.status = "assembling";
     job.label = "Fitting it to the monkey";
+    await publish();
 
     const outDir = path.join(scratch, "build");
     const args = [
@@ -235,12 +266,14 @@ async function forge(job: ForgeJob, drawing: Buffer, seed: number): Promise<void
     job.status = "ready";
     job.label = "Ready";
     job.finishedAt = Date.now();
+    await publish();
     console.log(JSON.stringify({ event: "forge_character_ready", team: job.team, seconds: (job.finishedAt - job.startedAt) / 1000 }));
   } catch (error) {
     job.status = "failed";
     job.error = error instanceof Error ? error.message : String(error);
     job.label = "Using the default monkey";
     job.finishedAt = Date.now();
+    await publish();
     // Deliberately a warning: an unreachable GPU box is an expected state, not a server fault.
     console.warn(JSON.stringify({ event: "forge_character_failed", team: job.team, message: job.error }));
   } finally {
@@ -302,6 +335,7 @@ export function forgeCharacterRouter(): Router {
         skipped: false,
       };
       remember(job);
+      void publish();
 
       // Deliberately not awaited: the caller gets its job id now and the team plays meanwhile.
       void forge(job, png, body.seed ?? 11);
@@ -340,6 +374,7 @@ export function forgeCharacterRouter(): Router {
       return;
     }
     job.skipped = true;
+    void publish();
     console.log(JSON.stringify({ event: "forge_character_skipped", team: job.team, status: job.status }));
     response.json(view(job));
   });
