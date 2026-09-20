@@ -73,10 +73,27 @@ impl PlayerCreationPlugin {
     }
 }
 
+/// Lets the host app suspend the creation screens entirely — the combined app
+/// turns this on only while it is actually in its creation phase, so the
+/// drawing toolbar stops rendering over the lobby menu.
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CreationEnabled(pub bool);
+
+impl Default for CreationEnabled {
+    fn default() -> Self {
+        // Standalone use has no outer phase to gate on.
+        Self(true)
+    }
+}
+
 /// False once creation has handed off and the plugin was asked to yield, so the
 /// two screens never draw over each other.
-fn creation_ui_should_run(handoff: Res<HandoffBehavior>, flow: Res<State<CreationFlow>>) -> bool {
-    !(*handoff == HandoffBehavior::Yield && *flow.get() == CreationFlow::ContinueToCoaching)
+fn creation_ui_should_run(
+    enabled: Res<CreationEnabled>,
+    handoff: Res<HandoffBehavior>,
+    flow: Res<State<CreationFlow>>,
+) -> bool {
+    enabled.0 && !(*handoff == HandoffBehavior::Yield && *flow.get() == CreationFlow::ContinueToCoaching)
 }
 
 impl Plugin for PlayerCreationPlugin {
@@ -85,6 +102,7 @@ impl Plugin for PlayerCreationPlugin {
 
         app.insert_resource(store)
             .insert_resource(self.handoff)
+            .init_resource::<CreationEnabled>()
             .init_state::<CreationFlow>()
             .init_resource::<PlayerCreationSession>()
             .init_resource::<input::ToolSettings>()

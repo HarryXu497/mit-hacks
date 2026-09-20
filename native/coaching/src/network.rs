@@ -4,7 +4,8 @@
 use crate::game_handoff::{CoachedTeam, MatchHandoff, TeamSide};
 use crate::interpretation::TacticalResult;
 use crate::phase::AppPhase;
-use crate::{CoachingLifecycle, EnterGame, SetCoachingActive};
+use crate::session::CoachingSession;
+use crate::{EnterGame, SetCoachingActive};
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 use crossbeam_channel::{unbounded, Receiver, Sender};
@@ -86,6 +87,83 @@ impl NetworkEndpoint {
 #[derive(Event, Clone, Copy, Debug)]
 pub struct MatchReady;
 
+/// What the player-creation phase produced, captured from `ContinueToCoaching`
+/// (which the app previously discarded). Needed so the coaching side knows
+/// which drawings belong to this session and can ship them to the host.
+#[derive(Resource, Clone, Debug, Default)]
+pub struct CreationArtifacts {
+    pub session_id: Option<String>,
+    pub directory: Option<std::path::PathBuf>,
+}
+
+/// One player's complete contribution to a match: the tactical output plus
+/// everything needed to reproduce and learn from the session later.
+#[derive(Clone, Debug)]
+pub struct MatchEntry {
+    pub role: NetworkRole,
+    pub match_id: String,
+    pub tactical_output: Value,
+    pub coaching_session_id: String,
+    pub creation_session_id: Option<String>,
+    pub creation_dir: Option<std::path::PathBuf>,
+    pub session_json_path: Option<std::path::PathBuf>,
+}
+
+impl MatchEntry {
+    /// Reads the on-disk artifacts and builds the upload payload. All file IO
+    /// happens on the worker thread, never in a Bevy system.
+    fn read_bundle(&self, role_label: &str, team_label: &str) -> Result<Value, String> {
+        use base64::Engine;
+
+        let session = match &self.session_json_path {
+            Some(path) => std::fs::read(path)
+                .map_err(|error| format!("Cannot read {}: {error}", path.display()))
+                .and_then(|bytes| {
+                    serde_json::from_slice::<Value>(&bytes)
+                        .map_err(|error| format!("{} is not valid JSON: {error}", path.display()))
+                })?,
+            None => return Err("No saved session.json to upload.".into()),
+        };
+
+        let encode = |name: &str| -> Option<String> {
+            let path = self.creation_dir.as_ref()?.join(name);
+            let bytes = std::fs::read(path).ok()?;
+            Some(base64::engine::general_purpose::STANDARD.encode(bytes))
+        };
+        let manifest = self
+            .creation_dir
+            .as_ref()
+            .and_then(|dir| std::fs::read(dir.join("manifest.json")).ok())
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
+
+        let mut bundle = json!({
+            "matchId": self.match_id,
+            "role": role_label,
+            "teamId": team_label,
+            "coachingSessionId": self.coaching_session_id,
+            "session": session,
+            "tacticalOutput": self.tactical_output,
+        });
+        if let Some(id) = &self.creation_session_id {
+            bundle["creationSessionId"] = json!(id);
+        }
+        if let Some(manifest) = manifest {
+            bundle["manifest"] = manifest;
+        }
+        let mut drawings = json!({});
+        if let Some(data) = encode("appearance.png") {
+            drawings["appearance"] = json!(data);
+        }
+        if let Some(data) = encode("superpower.png") {
+            drawings["superpower"] = json!(data);
+        }
+        if drawings.as_object().is_some_and(|map| !map.is_empty()) {
+            bundle["drawings"] = drawings;
+        }
+        Ok(bundle)
+    }
+}
+
 #[derive(Resource, Default)]
 pub struct LobbyUiState {
     pub screen: LobbyScreen,
@@ -94,7 +172,21 @@ pub struct LobbyUiState {
     pub error: Option<String>,
     pub discovered: Vec<DiscoveredHost>,
     pub connecting: bool,
-    pub waiting_for_match: bool,
+    pub match_id: Option<String>,
+    pub wait: WaitStage,
+    pub my_tactic_summary: Option<String>,
+    pub opponent_ready: bool,
+}
+
+/// How far this machine has got through handing its match entry to the host.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WaitStage {
+    #[default]
+    Idle,
+    /// Bundle is being written to the host.
+    Uploading,
+    /// Host has our artifacts and our tactic; waiting on the other player.
+    Submitted,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -111,16 +203,59 @@ pub struct DiscoveredHost {
     pub addr: String,
 }
 
-#[derive(Debug)]
-enum LobbyEvent {
-    Connected { host_addr: String },
-    ConnectFailed(String),
-    Status {
-        host_connected: bool,
-        joiner_connected: bool,
+/// Everything the lobby worker threads report back to the Bevy systems.
+#[derive(Debug, Clone)]
+pub enum LobbyEvent {
+    Connected {
+        host_addr: String,
+        match_id: Option<String>,
     },
-    MatchStart { red: Value, yellow: Value },
+    ConnectFailed(String),
+    Status(LobbyStatus),
+    /// This machine's artifact bundle is safely on the host's disk.
+    ArtifactsStored,
+    MatchStart {
+        match_id: String,
+        red: Value,
+        yellow: Value,
+    },
     Error(String),
+}
+
+/// Mirrors the server's `statusPayload()`.
+#[derive(Debug, Clone, Default)]
+pub struct LobbyStatus {
+    pub match_id: String,
+    pub host_connected: bool,
+    pub joiner_connected: bool,
+    pub host_ready: bool,
+    pub joiner_ready: bool,
+    pub host_artifacts: bool,
+    pub joiner_artifacts: bool,
+}
+
+impl LobbyStatus {
+    fn from_json(value: &Value) -> Self {
+        let flag = |key: &str| value[key].as_bool().unwrap_or(false);
+        Self {
+            match_id: value["matchId"].as_str().unwrap_or_default().to_owned(),
+            host_connected: flag("hostConnected"),
+            joiner_connected: flag("joinerConnected"),
+            host_ready: flag("hostReady"),
+            joiner_ready: flag("joinerReady"),
+            host_artifacts: flag("hostArtifacts"),
+            joiner_artifacts: flag("joinerArtifacts"),
+        }
+    }
+
+    /// Ready state of the side this process is NOT playing.
+    pub fn opponent_ready(&self, role: NetworkRole) -> bool {
+        if role.is_joiner() {
+            self.host_ready
+        } else {
+            self.joiner_ready
+        }
+    }
 }
 
 /// Background networking for the lobby: transient blocking HTTP calls for
@@ -151,8 +286,11 @@ impl LobbyRuntime {
         let addr = host_addr.clone();
         std::thread::spawn(move || {
             match post_json(&addr, "/api/lobby/join", &json!({ "role": "joiner" })) {
-                Ok(_) => {
-                    let _ = sender.send(LobbyEvent::Connected { host_addr: addr });
+                Ok(status) => {
+                    let _ = sender.send(LobbyEvent::Connected {
+                        host_addr: addr,
+                        match_id: status["matchId"].as_str().map(str::to_owned),
+                    });
                 }
                 Err(message) => {
                     let _ = sender.send(LobbyEvent::ConnectFailed(message));
@@ -166,8 +304,11 @@ impl LobbyRuntime {
         let sender = self.sender.clone();
         std::thread::spawn(move || {
             match post_json(&host_addr, "/api/lobby/join", &json!({ "role": "host" })) {
-                Ok(_) => {
-                    let _ = sender.send(LobbyEvent::Connected { host_addr });
+                Ok(status) => {
+                    let _ = sender.send(LobbyEvent::Connected {
+                        host_addr,
+                        match_id: status["matchId"].as_str().map(str::to_owned),
+                    });
                 }
                 Err(message) => {
                     let _ = sender.send(LobbyEvent::ConnectFailed(message));
@@ -176,16 +317,41 @@ impl LobbyRuntime {
         });
     }
 
-    /// Submit this machine's finished tactical output for its coached team.
-    pub fn submit_ready(&self, host_addr: String, role: NetworkRole, output: Value) {
+    /// Uploads this machine's full artifact bundle and, only once the host has
+    /// it on disk, posts the tactical output that makes this side ready. The
+    /// server refuses `ready` without artifacts, so this ordering is what
+    /// guarantees no player's data is lost before a match begins.
+    pub fn submit_match_entry(&self, host_addr: String, entry: MatchEntry) {
         let sender = self.sender.clone();
         std::thread::spawn(move || {
-            let role_label = if role.is_joiner() { "joiner" } else { "host" };
-            let team_label = match role.coached_side() {
+            let role_label = if entry.role.is_joiner() {
+                "joiner"
+            } else {
+                "host"
+            };
+            let team_label = match entry.role.coached_side() {
                 TeamSide::Red => "red",
                 TeamSide::Yellow => "yellow",
             };
-            let body = json!({ "role": role_label, "teamId": team_label, "tacticalOutput": output });
+
+            let bundle = match entry.read_bundle(role_label, team_label) {
+                Ok(bundle) => bundle,
+                Err(message) => {
+                    let _ = sender.send(LobbyEvent::Error(message));
+                    return;
+                }
+            };
+            if let Err(message) = post_json(&host_addr, "/api/lobby/artifacts", &bundle) {
+                let _ = sender.send(LobbyEvent::Error(format!("Artifact upload failed: {message}")));
+                return;
+            }
+            let _ = sender.send(LobbyEvent::ArtifactsStored);
+
+            let body = json!({
+                "role": role_label,
+                "teamId": team_label,
+                "tacticalOutput": entry.tactical_output,
+            });
             if let Err(message) = post_json(&host_addr, "/api/lobby/ready", &body) {
                 let _ = sender.send(LobbyEvent::Error(message));
             }
@@ -206,40 +372,9 @@ impl LobbyRuntime {
             .expect("lobby ws thread");
     }
 
-    pub fn poll(&self) -> Vec<LobbyEventPublic> {
-        let mut out = Vec::new();
-        while let Ok(event) = self.events.try_recv() {
-            out.push(match event {
-                LobbyEvent::Connected { host_addr } => LobbyEventPublic::Connected { host_addr },
-                LobbyEvent::ConnectFailed(message) => LobbyEventPublic::ConnectFailed(message),
-                LobbyEvent::Status {
-                    host_connected,
-                    joiner_connected,
-                } => LobbyEventPublic::Status {
-                    host_connected,
-                    joiner_connected,
-                },
-                LobbyEvent::MatchStart { red, yellow } => {
-                    LobbyEventPublic::MatchStart { red, yellow }
-                }
-                LobbyEvent::Error(message) => LobbyEventPublic::Error(message),
-            });
-        }
-        out
+    pub fn poll(&self) -> Vec<LobbyEvent> {
+        self.events.try_iter().collect()
     }
-}
-
-/// Public mirror of `LobbyEvent`; kept separate so other modules don't need
-/// to depend on the private worker-thread message type directly.
-pub enum LobbyEventPublic {
-    Connected { host_addr: String },
-    ConnectFailed(String),
-    Status {
-        host_connected: bool,
-        joiner_connected: bool,
-    },
-    MatchStart { red: Value, yellow: Value },
-    Error(String),
 }
 
 fn post_json(host_addr: &str, path: &str, body: &Value) -> Result<Value, String> {
@@ -288,13 +423,15 @@ fn lobby_ws_worker(host_addr: String, sender: Sender<LobbyEvent>) {
                         };
                         match value["type"].as_str() {
                             Some("status") => {
-                                let _ = sender.send(LobbyEvent::Status {
-                                    host_connected: value["hostConnected"].as_bool().unwrap_or(false),
-                                    joiner_connected: value["joinerConnected"].as_bool().unwrap_or(false),
-                                });
+                                let _ =
+                                    sender.send(LobbyEvent::Status(LobbyStatus::from_json(&value)));
                             }
                             Some("start") => {
                                 let _ = sender.send(LobbyEvent::MatchStart {
+                                    match_id: value["matchId"]
+                                        .as_str()
+                                        .unwrap_or_default()
+                                        .to_owned(),
                                     red: value["red"].clone(),
                                     yellow: value["yellow"].clone(),
                                 });
@@ -386,6 +523,8 @@ impl Plugin for LobbyPlugin {
             .init_resource::<LobbyUiState>()
             .init_resource::<LobbyRuntime>()
             .init_resource::<MdnsState>()
+            .init_resource::<CreationArtifacts>()
+            .init_resource::<PendingMatchEntry>()
             .add_event::<MatchReady>()
             .add_systems(
                 Update,
@@ -394,6 +533,10 @@ impl Plugin for LobbyPlugin {
             .add_systems(
                 Update,
                 poll_mdns_discoveries.run_if(in_state(AppPhase::Lobby)),
+            )
+            .add_systems(
+                Update,
+                waiting_screen_ui.run_if(in_state(AppPhase::Waiting)),
             )
             .add_systems(Update, (receive_lobby_events, handle_match_ready));
     }
@@ -513,22 +656,26 @@ fn poll_mdns_discoveries(mdns: Res<MdnsState>, mut ui_state: ResMut<LobbyUiState
 }
 
 /// Runs in every phase: the match-start push can arrive at any point after
-/// the lobby connects (typically during Coaching, once both sides finish).
+/// the lobby connects (typically during Waiting, once both sides finish).
 fn receive_lobby_events(
     mut commands: Commands,
     mut runtime: ResMut<LobbyRuntime>,
     mut ui_state: ResMut<LobbyUiState>,
     role: Res<NetworkRole>,
     mut endpoint: ResMut<NetworkEndpoint>,
-    mut lifecycle: ResMut<CoachingLifecycle>,
+    mut set_active: EventWriter<SetCoachingActive>,
     mut next_phase: ResMut<NextState<AppPhase>>,
     phase: Res<State<AppPhase>>,
 ) {
     for event in runtime.poll() {
         match event {
-            LobbyEventPublic::Connected { host_addr } => {
+            LobbyEvent::Connected {
+                host_addr,
+                match_id,
+            } => {
                 ui_state.connecting = false;
                 ui_state.error = None;
+                ui_state.match_id = match_id;
                 endpoint.host_addr = host_addr.clone();
                 runtime.ensure_listening(host_addr.clone());
                 if *role == NetworkRole::Joiner {
@@ -536,52 +683,65 @@ fn receive_lobby_events(
                     next_phase.set(AppPhase::Creation);
                 }
             }
-            LobbyEventPublic::ConnectFailed(message) => {
+            LobbyEvent::ConnectFailed(message) => {
                 ui_state.connecting = false;
                 ui_state.error = Some(message);
             }
-            LobbyEventPublic::Status {
-                host_connected,
-                joiner_connected,
-            } => {
+            LobbyEvent::Status(status) => {
+                if !status.match_id.is_empty() {
+                    ui_state.match_id = Some(status.match_id.clone());
+                }
+                // Both roles need this: it drives the waiting screen's
+                // "opponent still coaching" line, not just the host's lobby.
+                ui_state.opponent_ready = status.opponent_ready(*role);
                 if *role == NetworkRole::Host {
-                    ui_state.status = Some(if joiner_connected {
+                    ui_state.status = Some(if status.joiner_connected {
                         "Player connected!".into()
                     } else {
                         "Waiting for a player to join…".into()
                     });
-                    if host_connected && joiner_connected && *phase.get() == AppPhase::Lobby {
+                    if status.host_connected
+                        && status.joiner_connected
+                        && *phase.get() == AppPhase::Lobby
+                    {
                         next_phase.set(AppPhase::Creation);
                     }
                 }
             }
-            LobbyEventPublic::MatchStart { red, yellow } => {
-                ui_state.waiting_for_match = false;
-                match build_match_handoff(&red, &yellow) {
-                    Ok(handoff) => {
-                        commands.insert_resource(handoff.team_tactics());
-                        commands.insert_resource(handoff);
-                        lifecycle.active = false;
-                        next_phase.set(AppPhase::Game);
-                    }
-                    Err(error) => {
-                        ui_state.error = Some(format!("Cannot start match: {error:#}"));
-                    }
-                }
+            LobbyEvent::ArtifactsStored => {
+                ui_state.wait = WaitStage::Submitted;
+                ui_state.error = None;
             }
-            LobbyEventPublic::Error(message) => {
+            LobbyEvent::MatchStart {
+                match_id,
+                red,
+                yellow,
+            } => match build_match_handoff(&match_id, &red, &yellow) {
+                Ok(handoff) => {
+                    commands.insert_resource(handoff.team_tactics());
+                    commands.insert_resource(handoff);
+                    // Via the event, so `update_lifecycle`'s equality guard
+                    // can't swallow the despawn.
+                    set_active.send(SetCoachingActive(false));
+                    next_phase.set(AppPhase::Game);
+                }
+                Err(error) => {
+                    ui_state.error = Some(format!("Cannot start match: {error:#}"));
+                }
+            },
+            LobbyEvent::Error(message) => {
                 ui_state.error = Some(message);
             }
         }
     }
 }
 
-/// Consumes the "ready to enter the game" signal from the results screen
-/// (the "Next"/"Continue anyway" button). Solo just enters the game
-/// directly, exactly like before multiplayer existed. Networked play
-/// submits this machine's finished tactical output to the lobby instead —
-/// the actual game entry happens later, once `receive_lobby_events` sees
-/// the server's merged `MatchStart` push.
+/// Consumes the "ready to enter the game" signal from the results screen (the
+/// "Next"/"Continue anyway" button). Solo enters the game directly, exactly as
+/// before multiplayer existed. Networked play uploads this machine's artifact
+/// bundle and tactic, then waits on the `Waiting` screen for the host's merged
+/// `MatchStart`.
+#[allow(clippy::too_many_arguments)]
 fn handle_match_ready(
     mut events: EventReader<MatchReady>,
     role: Res<NetworkRole>,
@@ -589,8 +749,12 @@ fn handle_match_ready(
     runtime: Res<LobbyRuntime>,
     mut ui_state: ResMut<LobbyUiState>,
     result: Res<TacticalResult>,
+    session: Res<CoachingSession>,
+    creation: Res<CreationArtifacts>,
+    mut pending: ResMut<PendingMatchEntry>,
     mut enter_game: EventWriter<EnterGame>,
     mut set_active: EventWriter<SetCoachingActive>,
+    mut next_phase: ResMut<NextState<AppPhase>>,
 ) {
     if events.read().next().is_none() {
         return;
@@ -602,19 +766,117 @@ fn handle_match_ready(
     let Some(output) = result.output.clone() else {
         return;
     };
-    ui_state.waiting_for_match = true;
-    ui_state.status = Some("Submitting your tactic — waiting for the other player…".into());
+
+    ui_state.my_tactic_summary = CoachedTeam::from_output_for_team(&output, role.coached_side())
+        .ok()
+        .map(|team| team.summary_line());
+
+    let entry = MatchEntry {
+        role: *role,
+        match_id: ui_state.match_id.clone().unwrap_or_default(),
+        tactical_output: output,
+        coaching_session_id: session.session.id.clone(),
+        creation_session_id: creation.session_id.clone(),
+        creation_dir: creation.directory.clone(),
+        session_json_path: result.session_path.clone(),
+    };
+    pending.0 = Some(entry.clone());
+
+    ui_state.wait = WaitStage::Uploading;
+    ui_state.error = None;
     set_active.send(SetCoachingActive(false));
-    runtime.submit_ready(endpoint.host_addr.clone(), *role, output);
+    next_phase.set(AppPhase::Waiting);
+    runtime.submit_match_entry(endpoint.host_addr.clone(), entry);
 }
 
-fn build_match_handoff(red: &Value, yellow: &Value) -> anyhow::Result<MatchHandoff> {
-    let session_id = red["session"]["id"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("Missing session id in red output"))?;
-    let red_team = CoachedTeam::from_output_for_team(red, session_id, TeamSide::Red)?;
-    let yellow_team = CoachedTeam::from_output_for_team(yellow, session_id, TeamSide::Yellow)?;
+/// Keeps the last submitted entry so the waiting screen can retry an upload
+/// without forcing the user back through coaching.
+#[derive(Resource, Default)]
+pub struct PendingMatchEntry(pub Option<MatchEntry>);
+
+/// The screen that used to be a black void: shows upload progress, both
+/// players' readiness, and — critically — any error that would otherwise be
+/// swallowed while no other UI is running.
+fn waiting_screen_ui(
+    mut contexts: EguiContexts,
+    mut ui_state: ResMut<LobbyUiState>,
+    role: Res<NetworkRole>,
+    endpoint: Res<NetworkEndpoint>,
+    runtime: Res<LobbyRuntime>,
+    pending: Res<PendingMatchEntry>,
+    mut set_active: EventWriter<SetCoachingActive>,
+    mut next_phase: ResMut<NextState<AppPhase>>,
+) {
+    let ctx = contexts.ctx_mut();
+    egui::CentralPanel::default().show(ctx, |ui| {
+        ui.add_space(64.0);
+        ui.vertical_centered(|ui| {
+            ui.set_max_width(420.0);
+            ui.heading("Waiting for the other coach");
+            ui.add_space(12.0);
+
+            if let Some(summary) = &ui_state.my_tactic_summary {
+                ui.label(summary.clone());
+                ui.add_space(12.0);
+            }
+
+            let uploaded = ui_state.wait == WaitStage::Submitted;
+            ui.label(if uploaded {
+                "You .............. Ready ✓"
+            } else {
+                "You .............. Uploading your session…"
+            });
+            ui.label(if ui_state.opponent_ready {
+                "Opponent ......... Ready ✓"
+            } else {
+                "Opponent ......... still coaching…"
+            });
+
+            ui.add_space(16.0);
+            if ui_state.error.is_none() {
+                ui.spinner();
+            }
+
+            if let Some(error) = ui_state.error.clone() {
+                ui.colored_label(egui::Color32::from_rgb(220, 100, 100), error);
+                ui.add_space(12.0);
+                if ui.button("Retry upload").clicked() {
+                    if let Some(entry) = pending.0.clone() {
+                        ui_state.error = None;
+                        ui_state.wait = WaitStage::Uploading;
+                        runtime.submit_match_entry(endpoint.host_addr.clone(), entry);
+                    }
+                }
+                // Only offered on failure: going back after a successful
+                // submit would desync from the ready state the host recorded.
+                if ui.button("Back to coaching").clicked() {
+                    ui_state.wait = WaitStage::Idle;
+                    ui_state.error = None;
+                    set_active.send(SetCoachingActive(true));
+                    next_phase.set(AppPhase::Coaching);
+                }
+            }
+
+            ui.add_space(16.0);
+            if let Some(match_id) = &ui_state.match_id {
+                ui.label(
+                    egui::RichText::new(format!(
+                        "Match {}  ·  you are {}",
+                        match_id.chars().take(14).collect::<String>(),
+                        if role.is_joiner() { "yellow" } else { "red" }
+                    ))
+                    .small(),
+                );
+            }
+        });
+    });
+}
+
+fn build_match_handoff(match_id: &str, red: &Value, yellow: &Value) -> anyhow::Result<MatchHandoff> {
+    let red_team = CoachedTeam::from_output_for_team(red, TeamSide::Red)?;
+    let yellow_team = CoachedTeam::from_output_for_team(yellow, TeamSide::Yellow)?;
     Ok(MatchHandoff {
+        match_id: match_id.to_owned(),
         red: red_team,
         yellow: yellow_team,
     })
@@ -637,6 +899,99 @@ fn big_button(ui: &mut egui::Ui, label: &str) -> bool {
 }
 
 #[cfg(test)]
+mod waiting_phase_tests {
+    //! Guards the black screen: after submitting, a networked player must land
+    //! on a phase that actually renders something, and a failed merge must
+    //! leave a visible error instead of a silent void.
+    use super::*;
+    use crate::interpretation::InterpretationState;
+
+    fn app_with_ready_result(role: NetworkRole) -> App {
+        let mut app = App::new();
+        let session = CoachingSession::default();
+        let mut result = TacticalResult::default();
+        result.state = InterpretationState::Ready;
+        result.output = Some(json!({
+            "schemaVersion": "2.0", "taxonomyVersion": "tactics-v2",
+            "session": { "id": session.session.id },
+            "rlSelection": {
+                "schemaVersion": "2.0", "taxonomyVersion": "tactics-v2",
+                "sessionId": session.session.id, "teamId": "red",
+                "primaryTactic": "highpress", "downstreamValue": "highpress",
+                "playerOverrides": []
+            }
+        }));
+        app.add_plugins(MinimalPlugins)
+            .init_state::<AppPhase>()
+            .insert_resource(role)
+            .insert_resource(session)
+            .insert_resource(result)
+            .init_resource::<NetworkEndpoint>()
+            .init_resource::<LobbyUiState>()
+            .init_resource::<LobbyRuntime>()
+            .init_resource::<CreationArtifacts>()
+            .init_resource::<PendingMatchEntry>()
+            .add_event::<MatchReady>()
+            .add_event::<EnterGame>()
+            .add_event::<SetCoachingActive>()
+            .add_systems(Update, handle_match_ready);
+        app
+    }
+
+    #[test]
+    fn submitting_a_networked_tactic_enters_the_waiting_phase() {
+        let mut app = app_with_ready_result(NetworkRole::Host);
+        app.world.send_event(MatchReady);
+        app.update();
+        app.update();
+
+        assert_eq!(
+            *app.world.resource::<State<AppPhase>>().get(),
+            AppPhase::Waiting,
+            "a networked submit must land on a phase that renders a waiting screen"
+        );
+        assert_eq!(app.world.resource::<LobbyUiState>().wait, WaitStage::Uploading);
+        // Retryable without forcing the user back through coaching.
+        assert!(app.world.resource::<PendingMatchEntry>().0.is_some());
+    }
+
+    #[test]
+    fn solo_still_enters_the_game_directly() {
+        let mut app = app_with_ready_result(NetworkRole::Solo);
+        app.world.send_event(MatchReady);
+        app.update();
+
+        assert!(!app.world.resource::<Events<EnterGame>>().is_empty());
+        assert_eq!(
+            *app.world.resource::<State<AppPhase>>().get(),
+            AppPhase::Lobby,
+            "solo must not use the networked waiting path"
+        );
+    }
+
+    #[test]
+    fn a_failed_merge_surfaces_an_error_instead_of_a_silent_black_screen() {
+        // Yellow payload is malformed, so the merge must fail.
+        let error = build_match_handoff(
+            "match-test",
+            &json!({
+                "schemaVersion": "2.0", "taxonomyVersion": "tactics-v2",
+                "session": { "id": "host-session" },
+                "rlSelection": {
+                    "schemaVersion": "2.0", "taxonomyVersion": "tactics-v2",
+                    "sessionId": "host-session", "teamId": "red",
+                    "primaryTactic": "highpress", "downstreamValue": "highpress",
+                    "playerOverrides": []
+                }
+            }),
+            &json!({ "session": { "id": "joiner-session" } }),
+        )
+        .unwrap_err();
+        assert!(!error.to_string().is_empty());
+    }
+}
+
+#[cfg(test)]
 mod lan_simulation_tests {
     //! End-to-end simulation of a real host machine and a real joiner
     //! machine talking to a real Node lobby server over real sockets: an
@@ -646,6 +1001,7 @@ mod lan_simulation_tests {
     //! code path as a genuine LAN host/join, just addressed at 127.0.0.1
     //! instead of a routed wifi address.
     use super::*;
+    use std::path::PathBuf;
     use std::process::{Child, Command, Stdio};
     use std::time::{Duration, Instant};
 
@@ -664,11 +1020,13 @@ mod lan_simulation_tests {
             .expect("repo root")
     }
 
-    fn spawn_server(port: u16) -> ServerGuard {
+    fn spawn_server(port: u16, output_dir: &std::path::Path) -> ServerGuard {
         let child = Command::new("npx")
             .args(["tsx", "server/index.ts"])
             .current_dir(repo_root())
             .env("API_PORT", port.to_string())
+            // Keep artifact writes inside the test's tempdir.
+            .env("TACTIC_LAB_OUTPUT_DIR", output_dir)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -720,9 +1078,9 @@ mod lan_simulation_tests {
         })
     }
 
-    fn drain_until<F>(runtime: &LobbyRuntime, timeout: Duration, mut found: F) -> Vec<LobbyEventPublic>
+    fn drain_until<F>(runtime: &LobbyRuntime, timeout: Duration, mut found: F) -> Vec<LobbyEvent>
     where
-        F: FnMut(&LobbyEventPublic) -> bool,
+        F: FnMut(&LobbyEvent) -> bool,
     {
         let deadline = Instant::now() + timeout;
         let mut all = Vec::new();
@@ -735,85 +1093,276 @@ mod lan_simulation_tests {
                 }
             }
             if Instant::now() > deadline {
-                panic!("timed out waiting for expected lobby event; saw {} events", all.len());
+                panic!(
+                    "timed out waiting for expected lobby event; saw {} events",
+                    all.len()
+                );
             }
             std::thread::sleep(Duration::from_millis(50));
         }
     }
 
-    #[test]
-    fn host_and_joiner_reach_match_start_over_real_sockets() {
-        let port = 21_000 + (std::process::id() % 4000) as u16;
-        let _server = spawn_server(port);
-        wait_for_health(port);
+    /// A real 1x1 PNG, so the server's magic-byte check is meaningful and a
+    /// byte-for-byte comparison catches base64 corruption.
+    const TINY_PNG: &[u8] = &[
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f,
+        0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00,
+        0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49,
+        0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+    ];
 
-        let addr = format!("127.0.0.1:{port}");
-        let session_id = "lan-sim-session";
+    /// Lays out one player's on-disk artifacts the way the real app does.
+    fn stage_player_files(root: &std::path::Path, session_id: &str) -> (PathBuf, PathBuf) {
+        let creation_dir = root.join("player-creations").join(session_id);
+        std::fs::create_dir_all(&creation_dir).unwrap();
+        std::fs::write(creation_dir.join("appearance.png"), TINY_PNG).unwrap();
+        std::fs::write(creation_dir.join("superpower.png"), TINY_PNG).unwrap();
+        std::fs::write(
+            creation_dir.join("manifest.json"),
+            json!({ "schemaVersion": 1, "sessionId": session_id }).to_string(),
+        )
+        .unwrap();
 
+        let session_dir = root.join("sessions").join(session_id);
+        std::fs::create_dir_all(&session_dir).unwrap();
+        let session_path = session_dir.join("session.json");
+        std::fs::write(
+            &session_path,
+            json!({ "schemaVersion": 1, "id": session_id, "events": [] }).to_string(),
+        )
+        .unwrap();
+        (creation_dir, session_path)
+    }
+
+    fn entry_for(
+        role: NetworkRole,
+        match_id: &str,
+        coaching_session: &str,
+        creation_session: &str,
+        staging: &std::path::Path,
+        team: &str,
+    ) -> MatchEntry {
+        let (creation_dir, session_path) = stage_player_files(staging, creation_session);
+        MatchEntry {
+            role,
+            match_id: match_id.to_owned(),
+            tactical_output: fixture_output(coaching_session, team),
+            coaching_session_id: coaching_session.to_owned(),
+            creation_session_id: Some(creation_session.to_owned()),
+            creation_dir: Some(creation_dir),
+            session_json_path: Some(session_path),
+        }
+    }
+
+    fn connect_both(addr: &str) -> (LobbyRuntime, LobbyRuntime, String) {
         let mut host_runtime = LobbyRuntime::default();
         let mut joiner_runtime = LobbyRuntime::default();
 
-        // Both machines "connect" to the lobby, exactly like the Lobby UI does.
-        host_runtime.announce_host(addr.clone());
-        drain_until(&host_runtime, Duration::from_secs(10), |event| {
-            matches!(event, LobbyEventPublic::Connected { .. })
+        host_runtime.announce_host(addr.to_owned());
+        let host_events = drain_until(&host_runtime, Duration::from_secs(10), |event| {
+            matches!(event, LobbyEvent::Connected { .. })
         });
-        joiner_runtime.join(addr.clone());
+        joiner_runtime.join(addr.to_owned());
         drain_until(&joiner_runtime, Duration::from_secs(10), |event| {
-            matches!(event, LobbyEventPublic::Connected { .. })
+            matches!(event, LobbyEvent::Connected { .. })
         });
 
-        // Each opens its persistent WS listener, as `receive_lobby_events`
-        // would upon seeing `Connected` — this is how both sides learn the
-        // other has joined, and later receive the merged `MatchStart` push.
-        host_runtime.ensure_listening(addr.clone());
-        joiner_runtime.ensure_listening(addr.clone());
+        let match_id = host_events
+            .into_iter()
+            .find_map(|event| match event {
+                LobbyEvent::Connected { match_id, .. } => match_id,
+                _ => None,
+            })
+            .expect("the server must hand back a match id on join");
 
+        host_runtime.ensure_listening(addr.to_owned());
+        joiner_runtime.ensure_listening(addr.to_owned());
         drain_until(&host_runtime, Duration::from_secs(10), |event| {
             matches!(
                 event,
-                LobbyEventPublic::Status { host_connected: true, joiner_connected: true }
+                LobbyEvent::Status(status)
+                    if status.host_connected && status.joiner_connected
             )
         });
+        (host_runtime, joiner_runtime, match_id)
+    }
 
-        // Each side submits the tactical output it actually produced from
-        // its own coaching session, exactly as `handle_match_ready` does.
-        host_runtime.submit_ready(
+    /// The regression that mattered: the host and joiner each coach their own
+    /// session, so the two halves of a match carry DIFFERENT session ids. The
+    /// previous version of this test used one shared id and could never have
+    /// caught the bug that made every real LAN match fail to start.
+    #[test]
+    fn host_and_joiner_reach_match_start_with_separate_sessions() {
+        let port = 21_000 + (std::process::id() % 4000) as u16;
+        let output_dir = tempfile::tempdir().unwrap();
+        let staging = tempfile::tempdir().unwrap();
+        let _server = spawn_server(port, output_dir.path());
+        wait_for_health(port);
+
+        let addr = format!("127.0.0.1:{port}");
+        let (host_runtime, joiner_runtime, match_id) = connect_both(&addr);
+
+        let host_session = "lan-sim-host-session";
+        let joiner_session = "lan-sim-joiner-session";
+
+        host_runtime.submit_match_entry(
             addr.clone(),
-            NetworkRole::Host,
-            fixture_output(session_id, "red"),
+            entry_for(
+                NetworkRole::Host,
+                &match_id,
+                host_session,
+                "creation-host",
+                staging.path(),
+                "red",
+            ),
         );
-        joiner_runtime.submit_ready(
+        joiner_runtime.submit_match_entry(
             addr.clone(),
-            NetworkRole::Joiner,
-            fixture_output(session_id, "yellow"),
+            entry_for(
+                NetworkRole::Joiner,
+                &match_id,
+                joiner_session,
+                "creation-joiner",
+                staging.path(),
+                "yellow",
+            ),
         );
 
-        let host_events = drain_until(&host_runtime, Duration::from_secs(10), |event| {
-            matches!(event, LobbyEventPublic::MatchStart { .. })
-        });
-        let joiner_events = drain_until(&joiner_runtime, Duration::from_secs(10), |event| {
-            matches!(event, LobbyEventPublic::MatchStart { .. })
-        });
-
-        for events in [host_events, joiner_events] {
-            let Some(LobbyEventPublic::MatchStart { red, yellow }) = events
+        for runtime in [&host_runtime, &joiner_runtime] {
+            let events = drain_until(runtime, Duration::from_secs(15), |event| {
+                matches!(event, LobbyEvent::MatchStart { .. })
+            });
+            let Some(LobbyEvent::MatchStart {
+                match_id: started,
+                red,
+                yellow,
+            }) = events
                 .into_iter()
-                .find(|event| matches!(event, LobbyEventPublic::MatchStart { .. }))
+                .find(|event| matches!(event, LobbyEvent::MatchStart { .. }))
             else {
                 panic!("expected a MatchStart event");
             };
-            assert_eq!(red["rlSelection"]["teamId"], "red");
-            assert_eq!(yellow["rlSelection"]["teamId"], "yellow");
-            assert_eq!(red["session"]["id"], session_id);
-            assert_eq!(yellow["session"]["id"], session_id);
 
-            let handoff = build_match_handoff(&red, &yellow)
-                .expect("merged red+yellow output should build a valid MatchHandoff");
-            let tactics = handoff.team_tactics();
+            assert_eq!(started, match_id);
+            assert_eq!(red["session"]["id"], host_session);
+            assert_eq!(yellow["session"]["id"], joiner_session);
+            assert_ne!(red["session"]["id"], yellow["session"]["id"]);
+
+            let handoff = build_match_handoff(&started, &red, &yellow)
+                .expect("two independently-sessioned outputs must merge");
+            assert_eq!(handoff.red.session_id, host_session);
+            assert_eq!(handoff.yellow.session_id, joiner_session);
             let highpress = cube_soccer::systems::Tactic::HighPress.params();
-            assert_eq!(tactics.orange.base_params(), highpress);
-            assert_eq!(tactics.blue.base_params(), highpress);
+            assert_eq!(handoff.team_tactics().orange.base_params(), highpress);
+            assert_eq!(handoff.team_tactics().blue.base_params(), highpress);
         }
+    }
+
+    /// Both players' data must be on the host's disk before the match starts —
+    /// that is the whole point of blocking on the upload.
+    #[test]
+    fn artifact_bundles_land_on_the_host_before_the_match_starts() {
+        let port = 25_000 + (std::process::id() % 4000) as u16;
+        let output_dir = tempfile::tempdir().unwrap();
+        let staging = tempfile::tempdir().unwrap();
+        let _server = spawn_server(port, output_dir.path());
+        wait_for_health(port);
+
+        let addr = format!("127.0.0.1:{port}");
+        let (host_runtime, joiner_runtime, match_id) = connect_both(&addr);
+
+        host_runtime.submit_match_entry(
+            addr.clone(),
+            entry_for(
+                NetworkRole::Host,
+                &match_id,
+                "host-session",
+                "creation-host",
+                staging.path(),
+                "red",
+            ),
+        );
+        joiner_runtime.submit_match_entry(
+            addr.clone(),
+            entry_for(
+                NetworkRole::Joiner,
+                &match_id,
+                "joiner-session",
+                "creation-joiner",
+                staging.path(),
+                "yellow",
+            ),
+        );
+
+        drain_until(&host_runtime, Duration::from_secs(15), |event| {
+            matches!(event, LobbyEvent::MatchStart { .. })
+        });
+
+        let match_dir = output_dir.path().join("matches").join(&match_id);
+        assert!(
+            match_dir.join("match.json").is_file(),
+            "match index missing at {}",
+            match_dir.display()
+        );
+        for role in ["host", "joiner"] {
+            let dir = match_dir.join(role);
+            for file in [
+                "session.json",
+                "tactical-output.json",
+                "manifest.json",
+                "appearance.png",
+                "superpower.png",
+            ] {
+                assert!(
+                    dir.join(file).is_file(),
+                    "{role}/{file} was not written to the host"
+                );
+            }
+            // Byte-for-byte: catches base64 corruption in the upload path.
+            assert_eq!(std::fs::read(dir.join("appearance.png")).unwrap(), TINY_PNG);
+        }
+
+        let index: Value =
+            serde_json::from_slice(&std::fs::read(match_dir.join("match.json")).unwrap()).unwrap();
+        assert_eq!(index["players"]["host"]["coachingSessionId"], "host-session");
+        assert_eq!(
+            index["players"]["joiner"]["coachingSessionId"],
+            "joiner-session"
+        );
+    }
+
+    /// Posting `ready` without artifacts must never start a match.
+    #[test]
+    fn ready_without_artifacts_never_starts_the_match() {
+        let port = 29_000 + (std::process::id() % 3000) as u16;
+        let output_dir = tempfile::tempdir().unwrap();
+        let _server = spawn_server(port, output_dir.path());
+        wait_for_health(port);
+
+        let addr = format!("127.0.0.1:{port}");
+        let (host_runtime, _joiner_runtime, _match_id) = connect_both(&addr);
+
+        for (role, team, session) in [("host", "red", "a"), ("joiner", "yellow", "b")] {
+            let body = json!({
+                "role": role,
+                "teamId": team,
+                "tacticalOutput": fixture_output(session, team),
+            });
+            let outcome = post_json(&addr, "/api/lobby/ready", &body);
+            assert!(
+                outcome.is_err(),
+                "ready without an artifact bundle must be rejected"
+            );
+        }
+
+        std::thread::sleep(Duration::from_secs(2));
+        assert!(
+            !host_runtime
+                .poll()
+                .iter()
+                .any(|event| matches!(event, LobbyEvent::MatchStart { .. })),
+            "the match must not start until both artifact bundles are stored"
+        );
     }
 }
