@@ -29,10 +29,7 @@ export function attachTranscriptionWebSocket(server: Server): void {
 
   server.on("upgrade", (request, socket, head) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
-    if (url.pathname !== "/api/transcribe") {
-      socket.destroy();
-      return;
-    }
+    if (url.pathname !== "/api/transcribe") return;
     socketServer.handleUpgrade(request, socket, head, (client) => {
       socketServer.emit("connection", client, request);
     });
