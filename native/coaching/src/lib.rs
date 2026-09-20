@@ -15,11 +15,9 @@ pub mod ui;
 pub mod world;
 
 use bevy::prelude::*;
-use bevy::sprite::ColorMaterial;
-use board::{
-    draw_pitch_and_annotations, handle_board_input, spawn_board, spawn_board_entities, sync_tokens,
-    update_board_camera, BoardInteraction, BoardViewport,
-};
+// Only the shared board state survives here; the drawing and input systems belong to the stone
+// table in the world now. See the note on `CoachingPlugin::build`.
+use board::{BoardInteraction, BoardViewport};
 use interpretation::{
     invalidate_stale_result, receive_interpretation, request_interpretation, InterpretationRuntime,
     RequestInterpretation, TacticalResult,
@@ -27,8 +25,8 @@ use interpretation::{
 use network::{MatchReady, NetworkEndpoint, NetworkRole};
 use persistence::{AutosaveTracker, PersistenceStatus};
 use phase::AppPhase;
-use session::{tick_session, CoachingSession};
-use speech::{receive_speech, SpeechRuntime};
+use session::CoachingSession;
+use speech::SpeechRuntime;
 use ui::{coaching_ui, configure_egui, CoachingUiState};
 
 pub struct CoachingPlugin;
@@ -75,17 +73,25 @@ impl Plugin for CoachingPlugin {
             .add_event::<EnterGame>()
             .add_event::<MatchReady>()
             .add_systems(Startup, configure_egui)
-            .add_systems(OnEnter(AppPhase::Coaching), spawn_board)
+            // The board is the stone table on the clearing's island now, not a 2D scene drawn
+            // over a blank window, so five systems and a second camera are gone from here:
+            // `spawn_board`, `update_board_camera`, `handle_board_input`, `sync_tokens` and
+            // `draw_pitch_and_annotations`. `cube_soccer::tactics` draws and drives the board in
+            // the world, and `world::mirror_the_table_into_the_session` folds what it records
+            // into the session below. The 2D board's code stays in `board.rs` -- it is what the
+            // whole session model was designed against, and it is still the reference for the
+            // coordinate convention both boards share.
+            //
+            // `receive_speech` is gone for the same reason: the table has its own microphone now,
+            // streaming to the very same `/api/transcribe` websocket this crate's `speech.rs`
+            // used. Two clients on one microphone would fight over the device.
+            //
+            // `tick_session` is gone because the table keeps the clock: its own tick only
+            // advances while recording, which is the behaviour this had.
             .add_systems(
                 Update,
                 (
-                    tick_session,
                     coaching_ui,
-                    update_board_camera,
-                    handle_board_input,
-                    sync_tokens,
-                    draw_pitch_and_annotations,
-                    receive_speech,
                     request_interpretation,
                     receive_interpretation,
                     invalidate_stale_result,
@@ -102,29 +108,24 @@ fn coaching_is_active(lifecycle: Res<CoachingLifecycle>) -> bool {
     lifecycle.active
 }
 
+/// Turning coaching on and off.
+///
+/// This used to spawn and tear down the 2D board's entities and stop its microphone. The board is
+/// now a permanent fixture of the world and the microphone belongs to it, so all that is left is
+/// the flag the panel's systems run on and stopping the clock -- which the table follows, through
+/// `world::the_panel_drives_the_clock`.
 fn update_lifecycle(
-    mut commands: Commands,
     mut events: EventReader<SetCoachingActive>,
     mut lifecycle: ResMut<CoachingLifecycle>,
     mut session: ResMut<CoachingSession>,
-    mut speech: ResMut<SpeechRuntime>,
-    owned: Query<Entity, With<board::CoachingOwned>>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
     for event in events.read() {
         if lifecycle.active == event.0 {
             continue;
         }
         lifecycle.active = event.0;
-        if event.0 {
-            spawn_board_entities(&mut commands, &mut meshes, &mut materials);
-        } else {
-            speech.stop();
+        if !event.0 {
             session.stop();
-            for entity in &owned {
-                commands.entity(entity).despawn_recursive();
-            }
         }
     }
 }

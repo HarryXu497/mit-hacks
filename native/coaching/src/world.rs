@@ -35,6 +35,8 @@ use bevy::prelude::*;
 
 use crate::network::{CreationArtifacts, NetworkRole};
 use crate::phase::AppPhase;
+use crate::interpretation::{InterpretationState, RequestInterpretation, TacticalResult};
+use crate::model::SessionStatus;
 use crate::session::CoachingSession;
 use crate::tactics_bridge;
 
@@ -49,7 +51,10 @@ use cube_soccer::rendering::setup_lighting;
 use cube_soccer::rendering::stylized::{is_rendering, register_shader, stylize, JungleMaterial};
 use cube_soccer::systems::camera::{CameraRig, MainCamera};
 use cube_soccer::systems::physics::configure_physics;
-use cube_soccer::tactics::{Session as TableSession, TableState, TacticsPlugin};
+use cube_soccer::tactics::{
+    Interpretation as TableInterpretation, RequestInterpretation as TableInterpretRequest,
+    Session as TableSession, TableState, TacticsPlugin,
+};
 
 /// Builds the world, runs the in-world screens, and couples their state to `AppPhase`.
 pub struct WorldPlugin;
@@ -113,8 +118,20 @@ impl Plugin for WorldPlugin {
             .add_systems(OnEnter(MatchState::RoundOver), back_to_the_table)
             .add_systems(
                 Update,
-                mirror_the_table_into_the_session.run_if(in_state(AppPhase::Coaching)),
-            );
+                (
+                    the_panel_drives_the_clock,
+                    mirror_the_table_into_the_session,
+                    the_table_asks_for_an_interpretation,
+                    tell_the_sign_what_came_back,
+                )
+                    .chain()
+                    .run_if(in_state(AppPhase::Coaching)),
+            )
+            // ...and the table's own keyboard, if that is what the coach reached for, drives the
+            // panel back. `OnEnter` fires only on a real transition, and the pusher above only
+            // pushes on a change, so the two converge instead of fighting for the clock.
+            .add_systems(OnEnter(TableState::Recording), the_table_starts_the_clock)
+            .add_systems(OnEnter(TableState::Stopped), the_table_stops_the_clock);
     }
 }
 
@@ -224,6 +241,50 @@ fn back_to_the_table(
     next_phase.set(AppPhase::Coaching);
 }
 
+/// Start and stop are the panel's to give: push them to the table when they change.
+///
+/// Two clocks would be one too many. The table keeps the time — its `tick` only advances while it
+/// is recording, so the timestamps on the log are time spent coaching rather than time spent
+/// sitting in front of the board — and the panel's Record button says when that starts. Tracked
+/// through a `Local` so this pushes on a change rather than every frame, which is what stops it
+/// from overriding the table's own keyboard the instant the coach uses it.
+fn the_panel_drives_the_clock(
+    mut last: Local<Option<SessionStatus>>,
+    session: Res<CoachingSession>,
+    state: Res<State<TableState>>,
+    mut next: ResMut<NextState<TableState>>,
+) {
+    let status = session.session.status;
+    if *last == Some(status) {
+        return;
+    }
+    *last = Some(status);
+
+    let wanted = match status {
+        SessionStatus::Ready => TableState::Setup,
+        SessionStatus::Recording => TableState::Recording,
+        // Review and Interpreted are both "stopped, with something to look at".
+        SessionStatus::Review | SessionStatus::Interpreted => TableState::Stopped,
+    };
+    if *state.get() != wanted {
+        next.set(wanted);
+    }
+}
+
+/// The coach started the clock at the table rather than in the panel.
+fn the_table_starts_the_clock(mut session: ResMut<CoachingSession>) {
+    if session.session.status != SessionStatus::Recording {
+        session.start_or_resume();
+    }
+}
+
+/// The coach stopped the clock at the table rather than in the panel.
+fn the_table_stops_the_clock(mut session: ResMut<CoachingSession>) {
+    if session.session.status == SessionStatus::Recording {
+        session.stop();
+    }
+}
+
 /// Keep the canonical session in step with what the table has recorded.
 ///
 /// The table logs to its own flat event list; everything downstream -- `replay_session`,
@@ -238,6 +299,69 @@ fn mirror_the_table_into_the_session(
         return;
     }
     tactics_bridge::sync_into(&table, &mut session.session);
+}
+
+/// The coach asked the table for tactical JSON: pass that on to the service that can do it.
+///
+/// The table fires its own `RequestInterpretation` and then waits, by design — turning a session
+/// into tactical JSON is a model call behind a local service, which the table deliberately knows
+/// nothing about. This is the host answering.
+fn the_table_asks_for_an_interpretation(
+    mut asked: EventReader<TableInterpretRequest>,
+    mut requests: EventWriter<RequestInterpretation>,
+) {
+    if asked.read().next().is_some() {
+        requests.send(RequestInterpretation::Generate);
+    }
+}
+
+/// Report the interpretation back onto the table's timber sign.
+///
+/// The sign is the only readout the coach has while they are out on the island, so it has to say
+/// what happened — including when it failed, which the table cannot discover for itself.
+fn tell_the_sign_what_came_back(
+    result: Res<TacticalResult>,
+    mut sign: ResMut<TableInterpretation>,
+) {
+    if !result.is_changed() {
+        return;
+    }
+
+    sign.requested = matches!(result.state, InterpretationState::Generating);
+    match result.state {
+        InterpretationState::Ready => {
+            let selection = result
+                .output
+                .as_ref()
+                .and_then(|output| output.get("rlSelection"));
+            sign.tactic = selection
+                .and_then(|s| s.get("primaryTactic"))
+                .and_then(|t| t.as_str())
+                .map(str::to_owned);
+            sign.summary = result
+                .output
+                .as_ref()
+                .and_then(|output| output.get("summary"))
+                .and_then(|s| s.get("objective"))
+                .and_then(|o| o.as_str())
+                .map(str::to_owned);
+            sign.error = None;
+        }
+        InterpretationState::Failed => {
+            sign.tactic = None;
+            sign.summary = None;
+            // The panel's own notice carries the provider detail; the sign gets the short form.
+            sign.error = Some(
+                result
+                    .notice
+                    .clone()
+                    .unwrap_or_else(|| "Interpretation failed.".to_owned()),
+            );
+        }
+        InterpretationState::Idle | InterpretationState::Generating => {
+            sign.error = None;
+        }
+    }
 }
 
 #[cfg(test)]

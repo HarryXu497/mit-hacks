@@ -132,7 +132,12 @@ pub fn events_from_table(table: &tactics::Session) -> Vec<RawSessionEvent> {
 }
 
 /// What the table's log says the session's status is.
-fn status_of(table: &tactics::Session) -> SessionStatus {
+///
+/// Not applied by [`sync_into`]: the coaching panel's own Record/Stop button owns `status`, and
+/// the interpretation flow moves it on to `Interpreted`, which `handle_enter_game` requires
+/// before it will start a match. Overwriting it from the table would undo both. Kept public
+/// because it is the honest answer to "what does the log say happened".
+pub fn status_of(table: &tactics::Session) -> SessionStatus {
     let started = table
         .events
         .iter()
@@ -152,11 +157,11 @@ fn status_of(table: &tactics::Session) -> SessionStatus {
 ///
 /// The session's `id`, `title` and `created_at` are deliberately untouched: `rlSelection.sessionId`
 /// has to equal `session.id` for the handoff to ground, and the lobby correlates a machine's
-/// upload by that same id. Only what the coach did is replaced.
+/// upload by that same id. `status` is left alone too — see [`status_of`]. Only what the coach did
+/// on the board is replaced.
 pub fn sync_into(table: &tactics::Session, session: &mut Session) {
     session.events = events_from_table(table);
     session.elapsed_ms = table.elapsed_ms;
-    session.status = status_of(table);
 }
 
 #[cfg(test)]
@@ -175,10 +180,11 @@ mod tests {
 
     #[test]
     fn an_empty_table_is_a_ready_session_that_still_validates() {
+        let table = table_with(vec![], 0);
         let mut session = Session::default();
-        sync_into(&table_with(vec![], 0), &mut session);
+        sync_into(&table, &mut session);
         assert!(session.events.is_empty());
-        assert_eq!(session.status, SessionStatus::Ready);
+        assert_eq!(status_of(&table), SessionStatus::Ready);
         session.validate_contract().expect("an empty session is legal");
     }
 
@@ -217,7 +223,26 @@ mod tests {
             .expect("the table's own convention is already the session's");
         assert_eq!(session.events.len(), 5);
         assert_eq!(session.elapsed_ms, 2000);
-        assert_eq!(session.status, SessionStatus::Review);
+        assert_eq!(status_of(&table), SessionStatus::Review);
+    }
+
+    #[test]
+    fn a_sync_never_touches_the_status_the_panel_owns() {
+        let mut session = Session::default();
+        session.status = SessionStatus::Interpreted;
+        // A stopped table would report `Review`; the session must stay `Interpreted`, because
+        // that is what `handle_enter_game` requires before it will start a match.
+        sync_into(
+            &table_with(
+                vec![
+                    RawEvent::RecordingStarted { at_ms: 0 },
+                    RawEvent::RecordingStopped { at_ms: 5 },
+                ],
+                5,
+            ),
+            &mut session,
+        );
+        assert_eq!(session.status, SessionStatus::Interpreted);
     }
 
     #[test]
