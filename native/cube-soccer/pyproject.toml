@@ -1,0 +1,29 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "cube_soccer"
+version = "0.1.0"
+description = "3D Cube Soccer environment for Reinforcement Learning"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+keywords = ["reinforcement-learning", "gym", "gymnasium", "game", "3d", "soccer"]
+
+[project.optional-dependencies]
+train = [
+    "stable-baselines3>=2.0",
+    "wandb",
+    "tensorboard",
+]
+
+[tool.maturin]
+features = ["python"]
+# Native-extension-only build: maturin compiles the `cube_soccer` module (with
+# PyCubeSoccerEnv). The pure-Python helpers (env.py, train_ppo.py) live in
+# `python/` and are run from there, importing the compiled extension.
