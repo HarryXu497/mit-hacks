@@ -281,6 +281,10 @@ def main():
     if args.resume:
         print(f"Resuming from checkpoint: {args.resume}")
         model = PPO.load(args.resume, env=env, tensorboard_log=f"./runs/{run_id}")
+        # Override the entropy coefficient on resume (the checkpoint restores the old
+        # one). Lets us dial exploration down once scoring is found, to stop std runaway.
+        model.ent_coef = args.ent_coef
+        print(f"Overriding ent_coef -> {args.ent_coef}")
 
     # Train. On resume, keep the global step counter (so TB logs + the shaping
     # anneal schedule continue) instead of restarting at 0.
