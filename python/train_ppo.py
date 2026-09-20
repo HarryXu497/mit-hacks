@@ -100,6 +100,38 @@ class RosterCurriculumCallback(BaseCallback):
         return True
 
 
+class GoalWidthCurriculumCallback(BaseCallback):
+    """Narrow the scorable goal half-width from `start_hw` (wide, easy to score) to
+    `end_hw` (regulation) over the first `curriculum_frac` of training. A wide goal
+    lets crude/off-center pushes score early so the policy sees +30 and anchors,
+    then the target shrinks back to the real net."""
+    def __init__(self, total_timesteps, start_hw, end_hw, curriculum_frac=0.5):
+        super().__init__()
+        self.total = max(1, int(total_timesteps))
+        self.start_hw = float(start_hw)
+        self.end_hw = float(end_hw)
+        self.frac = max(1e-6, float(curriculum_frac))
+
+    def _hw(self):
+        prog = min(1.0, (self.num_timesteps / self.total) / self.frac)
+        return self.start_hw + (self.end_hw - self.start_hw) * prog
+
+    def _set(self, hw):
+        try:
+            self.training_env.env_method("set_goal_half_width", float(hw))
+        except Exception:
+            pass
+
+    def _on_training_start(self) -> None:
+        self._set(self.start_hw)
+
+    def _on_rollout_start(self) -> None:
+        self._set(self._hw())
+
+    def _on_step(self) -> bool:
+        return True
+
+
 try:
     import wandb
     from wandb.integration.sb3 import WandbCallback
@@ -138,6 +170,14 @@ def main():
                              "1v1 -> full NvN (both teams). Set >=1 to hold at full roster.")
     parser.add_argument("--roster-start-full", action="store_true",
                         help="disable the roster curriculum and train full NvN from the start")
+    parser.add_argument("--goal-width-start", type=float, default=11.0,
+                        help="starting scorable goal half-width in Z (wide, easy to score). "
+                             "Clamped in-engine to <= half the field depth.")
+    parser.add_argument("--goal-width-end", type=float, default=2.8,
+                        help="final scorable goal half-width (regulation ~2.8).")
+    parser.add_argument("--goal-width-curriculum-frac", type=float, default=0.5,
+                        help="fraction of training over which the goal narrows start->end. "
+                             "Set --goal-width-start == --goal-width-end to disable.")
     parser.add_argument("--ent-coef", type=float, default=0.005,
                         help="PPO entropy coefficient (lower = less exploration pressure; "
                              "prevents action-std runaway once the reward signal is findable)")
@@ -171,9 +211,10 @@ def main():
     eval_env = CubeSoccerTeamEnv(render_mode=eval_render_mode)
     try:
         eval_env.set_shaping_weight(0.0)
-        # Eval always measures true performance: full-strength, full-roster opponent.
+        # Eval always measures true performance: full-strength, full-roster, regulation goal.
         eval_env.set_opponent_difficulty(1.0)
         eval_env.set_active_roster(eval_env.players_per_team)
+        eval_env.set_goal_half_width(args.goal_width_end)
     except Exception:
         pass
 
@@ -184,6 +225,9 @@ def main():
     )
     roster_cb = RosterCurriculumCallback(
         args.timesteps, eval_env.players_per_team, args.roster_curriculum_frac,
+    )
+    goal_width_cb = GoalWidthCurriculumCallback(
+        args.timesteps, args.goal_width_start, args.goal_width_end, args.goal_width_curriculum_frac,
     )
     callbacks = [
         EvalCallback(
@@ -204,6 +248,9 @@ def main():
     # Player-count curriculum (1v1 -> full NvN). Omit to train full roster from start.
     if not args.roster_start_full:
         callbacks.append(roster_cb)
+    # Goal-size curriculum (wide -> regulation). Skip when start == end.
+    if abs(args.goal_width_start - args.goal_width_end) > 1e-6:
+        callbacks.append(goal_width_cb)
 
     if use_wandb:
         callbacks.append(WandbCallback(

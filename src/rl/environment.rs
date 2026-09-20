@@ -11,6 +11,7 @@ use crate::entities::{Ball, CubePlayer, get_spawn_position, get_ball_spawn_posit
 use crate::input::AIActions;
 use crate::systems::possession::Possession;
 use crate::systems::heuristic_ai::{TeamTactics, TacticParams, Tactic, HeuristicDifficulty, ActiveRoster};
+use crate::systems::scoring::GoalHalfWidth;
 use crate::systems::superpowers::{Superpower, SuperpowerKind};
 use crate::systems::status_effects::StatusEffects;
 use crate::rl::reward::RewardCalculator;
@@ -237,6 +238,14 @@ impl CubeSoccerEnv {
         self.app.world.resource_mut::<ActiveRoster>().0 = clamped;
     }
 
+    /// Set the scorable goal half-width in Z (goal-size curriculum). Clamped to
+    /// [regulation, half the field depth]. The curriculum starts wide (easy to
+    /// score) and narrows to regulation. Persists across `reset()`.
+    pub fn set_goal_half_width(&mut self, hw: f32) {
+        let clamped = hw.clamp(GoalHalfWidth::regulation(), crate::game::FIELD_DEPTH / 2.0);
+        self.app.world.resource_mut::<GoalHalfWidth>().0 = clamped;
+    }
+
     pub fn get_observation_space(&self) -> (Vec<f32>, Vec<f32>, Vec<usize>) {
         let n = NUM_AGENTS * OBSERVATION_SIZE;
         (vec![f32::NEG_INFINITY; n], vec![f32::INFINITY; n], vec![NUM_AGENTS, OBSERVATION_SIZE])
@@ -456,6 +465,29 @@ mod tests {
         // The active orange player (index 0) actually moves.
         let active_moved = speeds.iter().any(|(t, i, s)| *t == Team::Orange && *i == 0 && *s > 0.1);
         assert!(active_moved, "active orange #0 should be moving");
+    }
+
+    #[test]
+    fn wide_goal_scores_shots_a_narrow_goal_would_miss() {
+        use crate::entities::Ball;
+        // Place the ball just past Blue's goal line but wide in Z (outside regulation).
+        fn score_with_width(hw: f32) -> u32 {
+            let mut env = CubeSoccerEnv::new(EnvConfig::default());
+            env.reset(Some(0));
+            env.set_goal_half_width(hw);
+            {
+                let world = &mut env.app.world;
+                let mut q = world.query_filtered::<&mut Transform, With<Ball>>();
+                let mut t = q.single_mut(world);
+                t.translation = Vec3::new(crate::game::FIELD_WIDTH / 2.0 + 0.1, crate::game::FIELD_HEIGHT + 0.5, 6.0);
+            }
+            let zero = vec![0.0f32; NUM_AGENTS * crate::game::ACTION_SIZE];
+            let r = env.step(&zero);
+            r.info.score[0] // Orange goals
+        }
+        // z=6 is outside the regulation mouth (~2.8) but inside a wide goal.
+        assert_eq!(score_with_width(GoalHalfWidth::regulation()), 0, "narrow goal: wide ball is no goal");
+        assert_eq!(score_with_width(8.0), 1, "wide goal: the same wide ball scores");
     }
 
     #[test]

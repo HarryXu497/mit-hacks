@@ -3,7 +3,7 @@ use bevy_rapier3d::prelude::*;
 use crate::game::{
     GoalScoredEvent, Team, FIELD_WIDTH,
     REWARD_GOAL, REWARD_GOAL_AGAINST, REWARD_BALL_PROGRESS, REWARD_WIN, REWARD_LOSE,
-    NEAR_GOAL_RADIUS, NEAR_GOAL_BONUS,
+    NEAR_GOAL_RADIUS, NEAR_GOAL_BONUS, GOAL_DEPTH,
     CROWD_RADIUS, REWARD_TEAMMATE_CROWD,
 };
 
@@ -89,10 +89,18 @@ impl RewardCalculator {
         }
 
         let goal_x = if team == Team::Orange { FIELD_WIDTH / 2.0 } else { -FIELD_WIDTH / 2.0 };
-        let prev = self.prev_ball_pos;
-        let curr = ball_transform.translation;
-        let prev_dist = ((prev.x - goal_x).powi(2) + prev.z.powi(2)).sqrt();
-        let curr_dist = ((curr.x - goal_x).powi(2) + curr.z.powi(2)).sqrt();
+        let half_mouth = GOAL_DEPTH / 2.0;
+        // Distance to the nearest point of the goal *mouth* (the scorable segment at
+        // x = goal_x, z in [-half_mouth, half_mouth]) — NOT the goal center. A ball
+        // pushed wide of the posts accrues lateral distance, so cornering it no longer
+        // registers as progress; only advancing toward the scorable gap does.
+        let dist_to_mouth = |p: Vec3| -> f32 {
+            let dx = p.x - goal_x;
+            let dz = (p.z.abs() - half_mouth).max(0.0);
+            (dx * dx + dz * dz).sqrt()
+        };
+        let prev_dist = dist_to_mouth(self.prev_ball_pos);
+        let curr_dist = dist_to_mouth(ball_transform.translation);
         reward += self.shaping_weight * self.config.ball_progress * (prev_dist - curr_dist);
 
         // Finishing pull: a ramp potential that grows as the ball nears the goal mouth
@@ -234,6 +242,26 @@ mod tests {
         let goal = GoalScoredEvent { scoring_team: Team::Orange };
         let r = calc.team_shared(Team::Orange, &advanced, Some(&goal), false, None);
         assert!((r - 30.0).abs() < 1e-4, "goal unaffected by shaping_weight, got {r}");
+    }
+
+    #[test]
+    fn shaping_rewards_the_mouth_not_the_corner() {
+        let goal_x = FIELD_WIDTH / 2.0; // Orange attacks +x
+        let start = tf(0.0, 1.0, 0.0);
+        // Same x advance; one stays central (in the mouth), one is shoved wide in z.
+        let central = tf(goal_x - 4.0, 1.0, 0.0);
+        let wide = tf(goal_x - 4.0, 1.0, 10.0); // far outside the mouth (|z| >> GOAL_DEPTH/2)
+
+        let mut c1 = RewardCalculator::default();
+        c1.update_state(&start);
+        let r_central = c1.team_shared(Team::Orange, &central, None, false, None);
+
+        let mut c2 = RewardCalculator::default();
+        c2.update_state(&start);
+        let r_wide = c2.team_shared(Team::Orange, &wide, None, false, None);
+
+        assert!(r_central > r_wide,
+            "advancing through the mouth should out-reward the same x-advance shoved wide: {r_central} vs {r_wide}");
     }
 
     #[test]

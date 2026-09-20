@@ -172,6 +172,13 @@ impl PyCubeSoccerEnv {
         self.env.set_active_roster(n);
         Ok(())
     }
+
+    /// Set the scorable goal half-width in Z (goal-size curriculum). Clamped to
+    /// [regulation, half the field]. Start wide, narrow to regulation.
+    fn set_goal_half_width(&mut self, half_width: f32) -> PyResult<()> {
+        self.env.set_goal_half_width(half_width);
+        Ok(())
+    }
 }
 
 #[cfg(feature = "python")]

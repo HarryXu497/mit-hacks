@@ -90,6 +90,9 @@ class CubeSoccerEnv(gym.Env):
     def set_active_roster(self, n):
         self._env.set_active_roster(int(n))
 
+    def set_goal_half_width(self, hw):
+        self._env.set_goal_half_width(float(hw))
+
     def close(self):
         pass
 
@@ -194,6 +197,9 @@ class CubeSoccerTeamEnv(gym.Env):
 
     def set_active_roster(self, n):
         self._env.set_active_roster(int(n))
+
+    def set_goal_half_width(self, hw):
+        self._env.set_goal_half_width(float(hw))
 
     def render(self):
         if self.render_mode == "human":
