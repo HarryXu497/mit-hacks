@@ -81,6 +81,9 @@ class CubeSoccerEnv(gym.Env):
             self._env.render()
         return None
 
+    def set_shaping_weight(self, w):
+        self._env.set_shaping_weight(float(w))
+
     def close(self):
         pass
 
@@ -176,6 +179,9 @@ class CubeSoccerTeamEnv(gym.Env):
         obs, rewards, done, truncated, info = self._env.step(full)
         team_reward = float(np.sum(rewards[: self.players_per_team]))
         return self._orange_obs(obs), team_reward, done, truncated, info
+
+    def set_shaping_weight(self, w):
+        self._env.set_shaping_weight(float(w))
 
     def render(self):
         if self.render_mode == "human":

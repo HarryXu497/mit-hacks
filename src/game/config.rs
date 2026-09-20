@@ -75,7 +75,7 @@ pub const RESET_DELAY_SECS: f32 = 1.0;  // 1 second pause after goal
 pub const MAX_EPISODE_STEPS: u32 = 1000;
 
 /// Number of players on each team (both teams equal). Compile-time constant.
-pub const PLAYERS_PER_TEAM: usize = 1;
+pub const PLAYERS_PER_TEAM: usize = 5;
 /// Total number of agents across both teams.
 pub const NUM_AGENTS: usize = 2 * PLAYERS_PER_TEAM;
 
@@ -130,10 +130,14 @@ pub const STEAL_COOLDOWN_SECS: f32 = 0.5;
 pub const STEAL_CONTACT_SECS: f32 = 0.4;
 
 // === REWARDS ===
-pub const REWARD_GOAL: f32 = 10.0;
-pub const REWARD_GOAL_AGAINST: f32 = -10.0;
-pub const REWARD_BALL_TO_GOAL: f32 = 0.01;      // Per step if ball approaches
-pub const REWARD_TOUCH_BALL: f32 = 0.1;
+pub const REWARD_GOAL: f32 = 30.0;
+pub const REWARD_GOAL_AGAINST: f32 = -30.0;
+pub const REWARD_BALL_PROGRESS: f32 = 0.5;  // reward per meter the ball nears the opp goal (potential-based)
+/// Extra potential-based "finishing pull": a ramp that grows as the ball nears the
+/// opp goal center (peaks at the mouth). Potential-based (telescopes), so camping in
+/// the attacking third earns 0 — only approaching the net is rewarded.
+pub const NEAR_GOAL_RADIUS: f32 = 6.0;
+pub const NEAR_GOAL_BONUS: f32 = 4.0;
 pub const REWARD_WIN: f32 = 5.0;
 pub const REWARD_LOSE: f32 = -5.0;
 
@@ -142,9 +146,6 @@ pub const REWARD_LOSE: f32 = -5.0;
 pub const CROWD_RADIUS: f32 = 3.0;
 /// Per-step penalty per crowding teammate (individual) — pushes cubes to spread.
 pub const REWARD_TEAMMATE_CROWD: f32 = -0.02;
-/// Per-step reward while a teammate holds the ball (shared) — rewards keeping
-/// possession, which with spacing encourages passing/support play.
-pub const REWARD_POSSESSION: f32 = 0.02;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Default)]
 pub enum Team {

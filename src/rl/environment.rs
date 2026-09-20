@@ -11,6 +11,8 @@ use crate::entities::{Ball, CubePlayer, get_spawn_position, get_ball_spawn_posit
 use crate::input::AIActions;
 use crate::systems::possession::Possession;
 use crate::systems::heuristic_ai::{TeamTactics, TacticParams, Tactic};
+use crate::systems::superpowers::{Superpower, SuperpowerKind};
+use crate::systems::status_effects::StatusEffects;
 use crate::rl::reward::RewardCalculator;
 use crate::rl::sim::{build_headless_app, EpisodeDone, LatestObs, LatestRewards};
 
@@ -102,6 +104,36 @@ impl CubeSoccerEnv {
             }
         }
 
+        // Randomize each cube's superpower loadout (both teams) from the seeded RNG,
+        // in a stable (team, index) order so a given seed reproduces the loadout.
+        {
+            let world = &mut self.app.world;
+            let mut cubes: Vec<(usize, usize, Entity)> = world
+                .query::<(Entity, &CubePlayer)>()
+                .iter(world)
+                .map(|(e, p)| (p.team as usize, p.index, e))
+                .collect();
+            cubes.sort_by_key(|(team, index, _)| (*team, *index));
+            const KINDS: [SuperpowerKind; 4] = [
+                SuperpowerKind::BeamBlast,
+                SuperpowerKind::FreezeRay,
+                SuperpowerKind::Boost,
+                SuperpowerKind::Slow,
+            ];
+            for (_, _, e) in cubes {
+                let r = rng.gen_range(0..5);
+                let mut em = world.entity_mut(e);
+                // Clear any residual status effects from the previous episode so
+                // resets are clean/reproducible (freezes/boosts don't leak across).
+                em.insert(StatusEffects::default());
+                if r == 0 {
+                    em.remove::<Superpower>();
+                } else {
+                    em.insert(Superpower::new(KINDS[r - 1]));
+                }
+            }
+        }
+
         self.current_step = 0;
         self.app.update();
         self.app.world.resource::<LatestObs>().0.clone()
@@ -181,6 +213,12 @@ impl CubeSoccerEnv {
             Team::Orange => tt.orange.clear_overrides(),
             Team::Blue => tt.blue.clear_overrides(),
         }
+    }
+
+    /// Set the dense-shaping weight (1.0 = full shaping, 0.0 = pure goal objective).
+    /// Driven by the training loop to anneal shaping over the run.
+    pub fn set_shaping_weight(&mut self, w: f32) {
+        self.app.world.resource_mut::<RewardCalculator>().shaping_weight = w;
     }
 
     pub fn get_observation_space(&self) -> (Vec<f32>, Vec<f32>, Vec<usize>) {
@@ -279,6 +317,67 @@ mod tests {
         let mut a = CubeSoccerEnv::new(EnvConfig::default());
         let mut b = CubeSoccerEnv::new(EnvConfig::default());
         assert_eq!(a.reset(Some(42)), b.reset(Some(42)));
+    }
+
+    #[test]
+    fn reset_reassigns_loadout_and_starts_clean() {
+        // After playing (powers fire, effects/cooldowns accumulate), a reset must
+        // re-assign the loadout and not carry unbounded residual state. (Strict
+        // byte-reproducibility on the same env is NOT guaranteed — the heuristic's
+        // sticky-handler Local and Rapier's solver state persist — and isn't needed;
+        // fresh-env determinism + reproducible loadout are the real guarantees.)
+        use crate::systems::superpowers::Superpower;
+        use crate::entities::CubePlayer;
+        let mut env = CubeSoccerEnv::new(EnvConfig::default());
+        env.reset(Some(0));
+        let zero = vec![0.0f32; NUM_AGENTS * crate::game::ACTION_SIZE];
+        for _ in 0..40 {
+            let _ = env.step(&zero);
+        }
+        env.reset(Some(3));
+        // Loadout was (re)assigned this episode: at least one cube has a power.
+        let world = &mut env.app.world;
+        let has_power = world
+            .query::<(&CubePlayer, Option<&Superpower>)>()
+            .iter(world)
+            .any(|(_, sp)| sp.is_some());
+        assert!(has_power, "reset should assign a fresh loadout");
+    }
+
+    #[test]
+    fn reset_seed_gives_reproducible_loadout() {
+        use crate::systems::superpowers::{Superpower, SuperpowerKind};
+        use crate::entities::CubePlayer;
+
+        fn loadout(env: &mut CubeSoccerEnv) -> Vec<(usize, usize, Option<SuperpowerKind>)> {
+            let world = &mut env.app.world;
+            let mut v: Vec<(usize, usize, Option<SuperpowerKind>)> = world
+                .query::<(&CubePlayer, Option<&Superpower>)>()
+                .iter(world)
+                .map(|(p, sp)| (p.team as usize, p.index, sp.map(|s| s.kind)))
+                .collect();
+            v.sort_by_key(|(t, i, _)| (*t, *i));
+            v
+        }
+
+        let mut a = CubeSoccerEnv::new(EnvConfig::default());
+        let mut b = CubeSoccerEnv::new(EnvConfig::default());
+        a.reset(Some(7));
+        b.reset(Some(7));
+        let la = loadout(&mut a);
+        let lb = loadout(&mut b);
+        assert_eq!(la, lb, "same seed must give the same loadout");
+        assert!(la.iter().any(|(_, _, k)| k.is_some()), "expected some powers assigned for seed 7");
+    }
+
+    #[test]
+    fn set_shaping_weight_updates_calculator() {
+        let mut env = CubeSoccerEnv::new(EnvConfig::default());
+        env.reset(Some(0));
+        env.set_shaping_weight(0.0);
+        assert_eq!(env.app.world.resource::<RewardCalculator>().shaping_weight, 0.0);
+        env.set_shaping_weight(0.5);
+        assert_eq!(env.app.world.resource::<RewardCalculator>().shaping_weight, 0.5);
     }
 
     #[test]

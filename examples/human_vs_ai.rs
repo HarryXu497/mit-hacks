@@ -5,7 +5,7 @@
 //! - Superpowers (fire from the human cube, aimed by its facing / movement dir):
 //!     1 = Beam blast (knock back opponents in front)
 //!     2 = Freeze ray (freeze the nearest opponent in front)
-//!     3 = Boost (2x speed/accel on self)
+//!     3 = Boost (1.5x speed/accel on self)
 //!     4 = Slow (slow the nearest opponent)
 //! - All Blue players and Orange teammates: built-in heuristic AI
 //!

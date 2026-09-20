@@ -317,6 +317,12 @@ mod tests {
         use crate::game::Team;
         use crate::systems::heuristic_ai::{TeamDirective, TeamTactics, Tactic};
 
+        // Tactics only reparametrize SUPPORT players; with <2 per team the lone cube
+        // is always the ball-handler, so tactics are inert and this test is void.
+        if crate::game::PLAYERS_PER_TEAM < 2 {
+            return;
+        }
+
         // Blue positions (sorted x) after N ticks under a given Blue directive.
         fn blue_xs(dir: TeamDirective) -> Vec<f32> {
             let mut app = build_headless_app();

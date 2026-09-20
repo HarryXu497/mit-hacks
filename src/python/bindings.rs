@@ -152,6 +152,12 @@ impl PyCubeSoccerEnv {
         self.env.clear_player_overrides(parse_team(team)?);
         Ok(())
     }
+
+    /// Set the dense-shaping weight (1.0 = full, 0.0 = pure goal objective).
+    fn set_shaping_weight(&mut self, weight: f32) -> PyResult<()> {
+        self.env.set_shaping_weight(weight);
+        Ok(())
+    }
 }
 
 #[cfg(feature = "python")]

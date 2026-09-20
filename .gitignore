@@ -69,3 +69,4 @@ wandb/
 .cache/
 
 docs/
+*.pem
