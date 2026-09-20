@@ -1,5 +1,6 @@
 pub mod board;
 pub mod game;
+pub mod game_handoff;
 pub mod interpretation;
 pub mod model;
 pub mod persistence;
@@ -20,9 +21,9 @@ use interpretation::{
     RequestInterpretation, TacticalResult,
 };
 use persistence::{autosave_session, load_recovery, AutosaveTracker, PersistenceStatus};
+use phase::AppPhase;
 use session::{tick_session, CoachingSession};
 use speech::{receive_speech, SpeechRuntime};
-use phase::AppPhase;
 use ui::{coaching_ui, configure_egui, CoachingUiState};
 
 pub struct CoachingPlugin;
@@ -120,11 +121,178 @@ fn update_lifecycle(
 
 fn handle_enter_game(
     mut enter_game: EventReader<EnterGame>,
+    mut commands: Commands,
+    session: Res<CoachingSession>,
+    mut result: ResMut<TacticalResult>,
     mut set_active: EventWriter<SetCoachingActive>,
     mut next_phase: ResMut<NextState<AppPhase>>,
 ) {
     if enter_game.read().next().is_some() {
+        if result.state != interpretation::InterpretationState::Ready
+            || session.session.status != model::SessionStatus::Interpreted
+        {
+            result.notice =
+                Some("Generate a current interpretation before starting the game.".into());
+            return;
+        }
+        let handoff = result
+            .output
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Missing interpretation"))
+            .and_then(|output| game_handoff::GameHandoff::from_output(output, &session.session.id));
+        match handoff {
+            Ok(handoff) => {
+                commands.insert_resource(handoff.team_tactics());
+                commands.insert_resource(handoff);
+            }
+            Err(error) => {
+                result.notice = Some(format!("Cannot start game: {error:#}"));
+                return;
+            }
+        }
         set_active.send(SetCoachingActive(false));
         next_phase.set(AppPhase::Game);
+    }
+}
+
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+    use bevy::asset::AssetPlugin;
+    use bevy::scene::ScenePlugin;
+    use bevy::time::TimeUpdateStrategy;
+    use cube_soccer::entities::{Ball, CubePlayer};
+    use cube_soccer::game::{GameState, GoalScoredEvent, MatchState, Team};
+    use cube_soccer::systems::{AiControlled, Tactic, TeamTactics};
+    use std::time::Duration;
+
+    fn handoff_app() -> App {
+        let mut app = App::new();
+        let mut session = CoachingSession::default();
+        session.session.status = model::SessionStatus::Interpreted;
+        let mut result = TacticalResult::default();
+        result.state = interpretation::InterpretationState::Ready;
+        result.output = Some(interpretation::deterministic_interpretation(
+            &session.session,
+            "deterministic-fallback",
+        ));
+        app.add_plugins(MinimalPlugins)
+            .init_state::<AppPhase>()
+            .insert_resource(session)
+            .insert_resource(result)
+            .add_event::<EnterGame>()
+            .add_event::<SetCoachingActive>()
+            .add_systems(Update, handle_enter_game);
+        app
+    }
+
+    #[test]
+    fn stale_and_invalid_results_do_not_enter_game() {
+        let mut app = handoff_app();
+        app.world.resource_mut::<CoachingSession>().mark_edited();
+        app.world.send_event(EnterGame);
+        app.update();
+        app.update();
+        assert_eq!(
+            *app.world.resource::<State<AppPhase>>().get(),
+            AppPhase::Creation
+        );
+        assert!(!app.world.contains_resource::<game_handoff::GameHandoff>());
+        assert!(app.world.resource::<TacticalResult>().notice.is_some());
+
+        app.world.resource_mut::<CoachingSession>().session.status =
+            model::SessionStatus::Interpreted;
+        app.world
+            .resource_mut::<TacticalResult>()
+            .output
+            .as_mut()
+            .unwrap()["rlSelection"]["downstreamValue"] = serde_json::json!("invented");
+        app.world.send_event(EnterGame);
+        app.update();
+        app.update();
+        assert!(!app.world.contains_resource::<game_handoff::GameHandoff>());
+    }
+
+    #[test]
+    fn coached_game_spawns_ten_ai_players_moves_and_keeps_tactics_after_resets() {
+        let mut app = handoff_app();
+        app.add_plugins((
+            AssetPlugin::default(),
+            ScenePlugin,
+            bevy::transform::TransformPlugin,
+            bevy::hierarchy::HierarchyPlugin,
+        ))
+        .init_resource::<Assets<Mesh>>()
+        .init_resource::<Assets<StandardMaterial>>()
+        .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f32(
+            1.0 / 60.0,
+        )))
+        .add_plugins(game::GamePlugin);
+        {
+            let mut result = app.world.resource_mut::<TacticalResult>();
+            let output = result.output.as_mut().unwrap();
+            output["rlSelection"]["primaryTactic"] = serde_json::json!("highpress");
+            output["rlSelection"]["downstreamValue"] = serde_json::json!("highpress");
+        }
+        app.world.send_event(EnterGame);
+        for _ in 0..3 {
+            app.update();
+        }
+        assert_eq!(
+            *app.world.resource::<State<AppPhase>>().get(),
+            AppPhase::Game
+        );
+        let players: Vec<_> = app
+            .world
+            .query_filtered::<(Entity, &Transform), (With<CubePlayer>, With<AiControlled>)>()
+            .iter(&app.world)
+            .map(|(e, t)| (e, t.translation))
+            .collect();
+        assert_eq!(players.len(), 10);
+        assert_eq!(
+            app.world
+                .query_filtered::<Entity, With<Ball>>()
+                .iter(&app.world)
+                .count(),
+            1
+        );
+        for _ in 0..60 {
+            app.update();
+        }
+        assert!(players.iter().any(|(entity, start)| {
+            let now = app.world.get::<Transform>(*entity).unwrap().translation;
+            (Vec2::new(now.x, now.z) - Vec2::new(start.x, start.z)).length() > 0.1
+        }));
+        app.world.send_event(GoalScoredEvent {
+            scoring_team: Team::Orange,
+        });
+        for _ in 0..90 {
+            app.update();
+        }
+        assert!(app.world.resource::<GameState>().score[0] >= 1);
+        assert_eq!(
+            *app.world.resource::<State<MatchState>>().get(),
+            MatchState::Playing
+        );
+        app.world
+            .resource_mut::<NextState<MatchState>>()
+            .set(MatchState::RoundOver);
+        app.update();
+        app.update();
+        assert_eq!(
+            app.world.resource::<TeamTactics>().orange.base_params(),
+            Tactic::HighPress.params()
+        );
+        assert_eq!(
+            app.world.resource::<TeamTactics>().blue.base_params(),
+            Tactic::Balanced.params()
+        );
+        assert_eq!(
+            app.world
+                .query_filtered::<Entity, With<AiControlled>>()
+                .iter(&app.world)
+                .count(),
+            10
+        );
     }
 }

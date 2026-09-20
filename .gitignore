@@ -10,3 +10,6 @@ output/player-creations/
 .env
 .env.*
 !.env.example
+
+# Native test runs write session artifacts relative to the crate directory.
+/native/coaching/output/

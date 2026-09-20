@@ -401,17 +401,10 @@ fn result_view(
     if let Some(notice) = &result.notice {
         ui.colored_label(egui::Color32::from_rgb(220, 201, 141), notice);
     }
+    if let Ok(handoff) = crate::game_handoff::GameHandoff::from_output(&output, &session.session.id) {
+        ui.label(handoff.summary());
+    }
     let pretty = serde_json::to_string_pretty(&output).unwrap_or_else(|_| "{}".into());
-    egui::ScrollArea::vertical()
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            ui.add(
-                egui::TextEdit::multiline(&mut pretty.clone())
-                    .font(egui::TextStyle::Monospace)
-                    .desired_width(f32::INFINITY)
-                    .interactive(false),
-            );
-        });
     ui.horizontal(|ui| {
         if ui.button("Copy JSON").clicked() {
             ui.output_mut(|output| output.copied_text = pretty.clone());
@@ -438,6 +431,17 @@ fn result_view(
     {
         enter_game.send(EnterGame);
     }
+    ui.add_space(8.0);
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.add(
+                egui::TextEdit::multiline(&mut pretty.clone())
+                    .font(egui::TextStyle::Monospace)
+                    .desired_width(f32::INFINITY)
+                    .interactive(false),
+            );
+        });
 }
 
 fn timeline_panel(context: &egui::Context, session: &mut CoachingSession) {
