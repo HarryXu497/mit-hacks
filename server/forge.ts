@@ -23,6 +23,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
+import { monkeyforgePython } from "./monkeyforgePython";
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 /** Resolved from this file, not the working directory, so it holds however the server is started. */
 const repoRoot = path.resolve(here, "..");
@@ -60,18 +62,6 @@ export class ForgeUnavailableError extends Error {
   readonly code = "FORGE_UNAVAILABLE";
 }
 
-/**
- * The Python that can run MonkeyForge.
- *
- * Its virtualenv, not the system interpreter: torch and transformers live only there.
- * `MONKEYFORGE_PYTHON` overrides it for a machine that keeps them elsewhere.
- */
-function pythonExecutable(): string {
-  if (process.env.MONKEYFORGE_PYTHON) return process.env.MONKEYFORGE_PYTHON;
-  return process.platform === "win32"
-    ? path.join(monkeyforge, ".venv", "Scripts", "python.exe")
-    : path.join(monkeyforge, ".venv", "bin", "python");
-}
 
 /** Run the classifier and parse what it says. */
 async function classify(sketchPath: string | null, description: string): Promise<unknown> {
@@ -80,7 +70,7 @@ async function classify(sketchPath: string | null, description: string): Promise
   if (description) args.push("--description", description);
 
   return await new Promise((resolve, reject) => {
-    const child = spawn(pythonExecutable(), args, {
+    const child = spawn(monkeyforgePython(), args, {
       cwd: monkeyforge,
       // The classifier writes progress and Hugging Face notices to stderr; only stdout is data.
       stdio: ["ignore", "pipe", "pipe"],
@@ -113,7 +103,7 @@ async function classify(sketchPath: string | null, description: string): Promise
       // Overwhelmingly the missing virtualenv, which is worth saying plainly.
       reject(
         new ForgeUnavailableError(
-          `Cannot run ${pythonExecutable()}: ${error.message}. Is tools/monkeyforge/.venv set up?`,
+          `Cannot run ${monkeyforgePython()}: ${error.message}. Is tools/monkeyforge/.venv set up?`,
         ),
       );
     });

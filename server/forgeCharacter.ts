@@ -38,6 +38,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
+import { monkeyforgePython } from "./monkeyforgePython";
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "..");
 const monkeyforge = path.join(repoRoot, "tools", "monkeyforge");
@@ -135,13 +137,6 @@ function remember(job: ForgeJob): void {
   }
 }
 
-function pythonExecutable(): string {
-  if (process.env.MONKEYFORGE_PYTHON) return process.env.MONKEYFORGE_PYTHON;
-  return process.platform === "win32"
-    ? path.join(monkeyforge, ".venv", "Scripts", "python.exe")
-    : path.join(monkeyforge, ".venv", "bin", "python");
-}
-
 async function daemon(route: string, payload: unknown, timeoutMs: number): Promise<any> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -217,7 +212,7 @@ async function forge(job: ForgeJob, drawing: Buffer, seed: number): Promise<void
     // Prompt wording is decided here rather than on the GPU box, because the garment vocabulary
     // and its tests live in this repo. The planner deliberately imports no torch.
     const planned = JSON.parse(
-      await run(pythonExecutable(), [path.join("scripts", "plan_outfit.py"), "--spec", specPath, "--seed", String(seed)], monkeyforge, PLAN_TIMEOUT_MS),
+      await run(monkeyforgePython(), [path.join("scripts", "plan_outfit.py"), "--spec", specPath, "--seed", String(seed)], monkeyforge, PLAN_TIMEOUT_MS),
     );
 
     job.summary = planned.summary ?? null;
@@ -254,7 +249,7 @@ async function forge(job: ForgeJob, drawing: Buffer, seed: number): Promise<void
       "--resolution", "512",
     ];
     if (sprites.trousers) args.push("--trousers", sprites.trousers);
-    await run(pythonExecutable(), args, monkeyforge, ASSEMBLE_TIMEOUT_MS);
+    await run(monkeyforgePython(), args, monkeyforge, ASSEMBLE_TIMEOUT_MS);
 
     // Land it under assets/ with a per-team name the game already knows how to wear.
     const built = path.join(outDir, "character.glb");
