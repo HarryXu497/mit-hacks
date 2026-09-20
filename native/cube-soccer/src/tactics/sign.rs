@@ -85,7 +85,12 @@ pub fn build_sign(
     mut images: ResMut<Assets<Image>>,
     mut mats: ResMut<Assets<StandardMaterial>>,
     faces: Query<&Handle<StandardMaterial>, With<SignFace>>,
+    sign_visible: Res<super::SignVisible>,
 ) {
+    // Hidden by the coaching app, whose panel already carries this text.
+    if !sign_visible.0 {
+        return;
+    }
     let size = Extent3d { width: SIGN_PX.x, height: SIGN_PX.y, depth_or_array_layers: 1 };
     let mut target = Image {
         texture_descriptor: TextureDescriptor {
