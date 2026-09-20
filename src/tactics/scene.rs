@@ -82,8 +82,8 @@ pub fn build_table(
     });
     // Ink shell and timber frame behind the face.
     for (mat, size, offset) in [
-        (k.ink.clone(), Vec3::new(BOARD_W + INK * 8., BOARD_H + INK * 8., 0.12), -0.10),
-        (k.wood_light.clone(), Vec3::new(BOARD_W + 0.32, BOARD_H + 0.32, 0.12), -0.04),
+        (k.ink.clone(), Vec3::new(BOARD_W + INK * 8., BOARD_H + INK * 8., 0.12), -0.16),
+        (k.wood_light.clone(), Vec3::new(BOARD_W + 0.32, BOARD_H + 0.32, 0.12), -0.08),
     ] {
         c.spawn(PbrBundle {
             mesh: k.cube.clone(),
@@ -98,7 +98,9 @@ pub fn build_table(
         PbrBundle {
             mesh: quad.clone(),
             material: surface,
-            transform: Transform::from_translation(centre + lean * Vec3::new(0., 0., 0.02))
+            // On the plane itself, which is what the picking maths assumes and
+            // what the tokens stand proud of.
+            transform: Transform::from_translation(centre)
                 .with_rotation(lean)
                 .with_scale(Vec3::new(BOARD_W, BOARD_H, 1.)),
             ..default()

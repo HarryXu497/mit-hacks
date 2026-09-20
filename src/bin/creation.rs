@@ -161,21 +161,23 @@ fn self_test(
         }
     }
 
-    // Enter: save appearance, save superpower, continue from review.
-    if [470, 630, 760].contains(&f) {
-        keys.press(KeyCode::Enter);
-    } else {
-        keys.release(KeyCode::Enter);
-    }
-    // At the table: start the clock, move a token, draw an arrow, stop.
-    if f == 820 {
-        keys.press(KeyCode::KeyR);
-    } else if f == 980 {
-        keys.press(KeyCode::KeyA);
-    } else if f == 1180 {
-        keys.press(KeyCode::KeyR);
-    } else if f == 1260 {
-        keys.press(KeyCode::Enter);
+    // One key at a time, released on every other frame. Holding a key down
+    // means the next press of it is not a fresh press, which silently skipped
+    // the stop and left the session recording.
+    let wanted = match f {
+        470 | 630 | 760 => Some(KeyCode::Enter), // save, save, continue to the table
+        820 => Some(KeyCode::KeyR),              // start the clock
+        980 => Some(KeyCode::KeyA),              // arrow in hand
+        1180 => Some(KeyCode::KeyR),             // stop the clock
+        1260 => Some(KeyCode::Enter),            // leave for the match
+        _ => None,
+    };
+    for key in [KeyCode::Enter, KeyCode::KeyR, KeyCode::KeyA] {
+        if wanted == Some(key) {
+            keys.press(key);
+        } else {
+            keys.release(key);
+        }
     }
 
     let shot = match f {

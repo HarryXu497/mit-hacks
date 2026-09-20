@@ -163,21 +163,21 @@ pub fn build_sign(
         },
         RenderLayers::layer(SIGN_LAYER),
     ));
-    c.spawn((body(366., 60., 29., IVORY), StatusLine));
-    c.spawn(heading("LIVE TRANSCRIPT", 304.));
-    c.spawn((body(268., 226., 23., IVORY), TranscriptLines));
-    c.spawn(heading("SESSION TIMELINE", 24.));
-    c.spawn((body(-56., 186., 21., MUTED), TimelineLines));
-    c.spawn(heading("TACTICAL JSON", -234.));
-    c.spawn((body(-270., 96., 23., LEAF), ResultLines));
-    c.spawn(heading("COMMANDS", -348.));
-    c.spawn((body(-382., 120., 20., MUTED), KeysLine));
+    c.spawn((body(372., 60., 29., IVORY), StatusLine));
+    c.spawn(heading("LIVE TRANSCRIPT", 310.));
+    c.spawn((body(276., 200., 23., IVORY), TranscriptLines));
+    c.spawn(heading("SESSION TIMELINE", 30.));
+    c.spawn((body(-52., 150., 21., MUTED), TimelineLines));
+    c.spawn(heading("TACTICAL JSON", -220.));
+    c.spawn((body(-252., 70., 23., LEAF), ResultLines));
+    c.spawn(heading("COMMANDS", -340.));
+    c.spawn((body(-372., 78., 18., MUTED), KeysLine));
 
     // The timeline bar, and the marks that ride on it.
     c.spawn((
         SpriteBundle {
             sprite: Sprite { color: Color::rgb(0.72, 0.66, 0.50), custom_size: Some(Vec2::new(672., 10.)), ..default() },
-            transform: Transform::from_xyz(0., -14., 0.),
+            transform: Transform::from_xyz(0., -8., 0.),
             ..default()
         },
         RenderLayers::layer(SIGN_LAYER),
@@ -186,7 +186,7 @@ pub fn build_sign(
         c.spawn((
             SpriteBundle {
                 sprite: Sprite { color: GOLD, custom_size: Some(Vec2::new(4., 22.)), ..default() },
-                transform: Transform::from_xyz(0., -14., 1.),
+                transform: Transform::from_xyz(0., -8., 1.),
                 visibility: Visibility::Hidden,
                 ..default()
             },
@@ -301,13 +301,11 @@ pub fn update_sign(
     if let Ok(mut text) = texts.p4().get_single_mut() {
         // Two short columns rather than one long line, which ran off the board.
         text.sections[0].value = concat!(
-            "M move      A arrow     D draw      E erase
+            "M move   A arrow   D draw   E erase
 ",
-            "R record/stop           Space replay
+            "R record/stop   Space replay   Ctrl+Z undo
 ",
-            "Ctrl+Z undo             Backspace reset
-",
-            "G generate JSON         Enter to the match",
+            "Backspace reset   G generate   Enter to match",
         )
         .to_owned();
     }
