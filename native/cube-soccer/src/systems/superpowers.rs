@@ -3,6 +3,7 @@ use crate::game::config::*;
 use crate::entities::{CubePlayer, PlayerInput};
 use crate::systems::status_effects::{StatusEffects, EffectKind, ImpulseEvent};
 use crate::systems::power_vfx::PowerFired;
+use bevy::ecs::event::Events;
 
 /// Which ability a cube holds. Assignment (who gets which) is a later spec.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -143,9 +144,14 @@ pub fn activate_superpowers(
     others: Query<(Entity, &CubePlayer, &Transform)>,
     mut effects: Query<&mut StatusEffects>,
     mut impulses: EventWriter<ImpulseEvent>,
-    // Presentation only, and an `EventWriter` rather than a call into the renderer so the
-    // headless sim can simply leave the events unread.
-    mut fired_fx: EventWriter<PowerFired>,
+    // Presentation only, and optional on purpose.
+    //
+    // A plain `EventWriter` panics the whole system when its `Events` resource is absent, and
+    // this system is scheduled ad hoc by the headless sim, the RL environment, the coaching app
+    // and several test harnesses -- three of which it took down when the writer was mandatory.
+    // Announcing a cast is not something any of them should have to opt into: taken as an
+    // `Option`, an app that draws bursts gets them and an app that does not is simply unaffected.
+    mut fired_fx: Option<ResMut<Events<PowerFired>>>,
 ) {
     for (caster_e, caster, caster_tf, input, mut sp) in casters.iter_mut() {
         if !input.fire || sp.cooldown_remaining > 0.0 {
@@ -220,13 +226,15 @@ pub fn activate_superpowers(
 
         if fired {
             sp.cooldown_remaining = sp.kind.cooldown();
-            fired_fx.send(PowerFired {
-                kind: sp.kind,
-                origin: cpos,
-                facing,
-                target: struck,
-                tint: caster.team.color(),
-            });
+            if let Some(events) = fired_fx.as_mut() {
+                events.send(PowerFired {
+                    kind: sp.kind,
+                    origin: cpos,
+                    facing,
+                    target: struck,
+                    tint: caster.team.color(),
+                });
+            }
         }
     }
 }
@@ -345,9 +353,6 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(TimePlugin);
         app.add_event::<ImpulseEvent>();
-        // `activate_superpowers` announces each cast for the visual effects to draw. Nothing in
-        // these tests reads it, but an `EventWriter` with no `Events` resource panics the system.
-        app.add_event::<crate::systems::power_vfx::PowerFired>();
         app.add_systems(Update, (tick_superpower_cooldowns, activate_superpowers).chain());
         app
     }
