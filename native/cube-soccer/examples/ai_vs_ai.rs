@@ -1,6 +1,6 @@
 //! AI vs AI gameplay example
 //!
-//! Watch two AI teams play. Every cube runs the built-in heuristic AI.
+//! Watch two AI teams play. Every cube runs the built-in team AI.
 //! Press `T` to cycle Orange's tactic, `Y` to cycle Blue's.
 //!
 //! Run with: cargo run --release --example ai_vs_ai
@@ -8,9 +8,11 @@
 use bevy::prelude::*;
 use cube_soccer::entities::CubePlayer;
 use cube_soccer::input::keyboard::keyboard_input_system;
-use cube_soccer::systems::heuristic_ai::{
-    apply_heuristic_ai, AiControlled, Tactic, TeamDirective, TeamTactics,
-};
+use cube_soccer::systems::heuristic_ai::{AiControlled, Tactic, TeamDirective, TeamTactics};
+use cube_soccer::systems::kick::{apply_kicks, tick_kick_cooldowns, KickCooldowns};
+use cube_soccer::systems::movement::apply_player_movement;
+use cube_soccer::systems::possession::update_possession;
+use cube_soccer::systems::soccer_ai::{apply_soccer_ai, PlayMemory};
 use cube_soccer::CubeSoccerPlugin;
 
 /// Tracks the current named preset per team so we can cycle and print it.
@@ -37,10 +39,20 @@ fn main() {
         }))
         .add_plugins(CubeSoccerPlugin)
         .init_resource::<TeamTactics>()
+        .init_resource::<KickCooldowns>()
+        .init_resource::<PlayMemory>()
         .init_resource::<DemoTactic>()
         .add_systems(PostStartup, tag_all_ai)
-        // Run after the keyboard system so the AI fully controls every cube.
-        .add_systems(Update, apply_heuristic_ai.after(keyboard_input_system))
+        // Run after the keyboard system so the AI fully controls every cube. Kicks are struck
+        // after the players have moved and before possession is resolved, as in the game.
+        .add_systems(Update, apply_soccer_ai.after(keyboard_input_system))
+        .add_systems(
+            Update,
+            (tick_kick_cooldowns, apply_kicks)
+                .chain()
+                .after(apply_player_movement)
+                .before(update_possession),
+        )
         .add_systems(Update, switch_tactics)
         .run();
 }

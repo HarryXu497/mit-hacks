@@ -23,11 +23,25 @@ pub struct GooglyPupil {
     pub base_offset: Vec3,  // Original position relative to eye center
 }
 
+/// A request to strike the ball this frame, in world space.
+///
+/// `dir` need not be normalised; `apply_kicks` normalises it and ignores a zero vector.
+#[derive(Debug, Clone, Copy)]
+pub struct KickRequest {
+    pub dir: Vec3,
+    pub speed: f32,
+}
+
 #[derive(Component, Default)]
 pub struct PlayerInput {
     pub movement: Vec2,  // X, Z
     pub jump: bool,
     pub fire: bool,      // request to fire the cube's superpower this frame
+    /// Request to strike the ball this frame, consumed and cleared by `apply_kicks`.
+    ///
+    /// Optional, and left `None` by every controller that does not kick -- the keyboard and
+    /// the flat action vector both predate kicking -- so adding it changed no existing caller.
+    pub kick: Option<KickRequest>,
 }
 
 #[derive(Bundle)]
