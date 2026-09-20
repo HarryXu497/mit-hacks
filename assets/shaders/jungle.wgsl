@@ -45,8 +45,11 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front: bool) -> FragmentOut
         let illumination = dot(lit.rgb / base, vec3<f32>(0.2126, 0.7152, 0.0722));
         // Quantize illumination, not RGB: keeps the expanded palette intact.
         // Fewer, harder steps than a soft ramp: the target look is poster-flat.
-        let bands = floor(illumination * 3.0 + 0.5) / 3.0;
-        let stepped = mix(illumination, bands, 0.88);
+        // The darkest band is lifted off zero. With ambient this low, a face
+        // turned away from the sun quantised to pure black and lost its colour
+        // entirely; shade should be a darker version of the form, not a hole.
+        let bands = max(floor(illumination * 3.0 + 0.5) / 3.0, 0.36);
+        let stepped = max(mix(illumination, bands, 0.88), 0.30);
         var shaded = lit.rgb * stepped / max(illumination, 0.001);
         // settings.y marks an actor surface: players, the ball, anything that has
         // to read as a figure against the field. Actors carry their own near-black
@@ -61,7 +64,9 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front: bool) -> FragmentOut
             // keep a form's edge from going flat rather than draw the edge itself.
             let rim = pow(1.0 - facing, 4.0);
             shaded = shaded * (1.0 - rim * 0.34);
-            let hot = pow(facing, 7.0) * 0.30;
+            // The hotspot is a highlight, so it only belongs where light lands.
+            // Unscaled, a flat face seen head-on in shade was bleached to grey.
+            let hot = pow(facing, 7.0) * 0.30 * clamp(illumination * 1.4 - 0.3, 0.0, 1.0);
             shaded = shaded + vec3<f32>(hot);
         }
         out.color = vec4<f32>(shaded, lit.a);

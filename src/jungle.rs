@@ -32,41 +32,41 @@ pub fn animate_water(time: Res<Time>, mut water: Query<(&mut Transform, &WaterRi
     }
 }
 
-struct Kit {
-    cube: Handle<Mesh>,
-    leaf: Handle<Mesh>,
-    palm_frond: Handle<Mesh>,
-    stone: Handle<Mesh>,
-    terrain: Handle<Mesh>,
-    grass: [Handle<StandardMaterial>; 2],
-    greens: [Handle<StandardMaterial>; 3],
-    rock: Handle<StandardMaterial>,
-    rock_light: Handle<StandardMaterial>,
-    wood: Handle<StandardMaterial>,
-    wood_light: Handle<StandardMaterial>,
-    rope: Handle<StandardMaterial>,
-    gold: Handle<StandardMaterial>,
-    white: Handle<StandardMaterial>,
-    dark: Handle<StandardMaterial>,
-    water_light: Handle<StandardMaterial>,
-    orange: Handle<StandardMaterial>,
-    blue: Handle<StandardMaterial>,
-    face: Handle<StandardMaterial>,
-    fur: Handle<StandardMaterial>,
-    fur_dark: Handle<StandardMaterial>,
-    muzzle: Handle<StandardMaterial>,
-    eye_white: Handle<StandardMaterial>,
-    ink: Handle<StandardMaterial>,
-    flower_yellow: Handle<StandardMaterial>,
+pub(crate) struct Kit {
+    pub(crate) cube: Handle<Mesh>,
+    pub(crate) leaf: Handle<Mesh>,
+    pub(crate) palm_frond: Handle<Mesh>,
+    pub(crate) stone: Handle<Mesh>,
+    pub(crate) terrain: Handle<Mesh>,
+    pub(crate) grass: [Handle<StandardMaterial>; 2],
+    pub(crate) greens: [Handle<StandardMaterial>; 3],
+    pub(crate) rock: Handle<StandardMaterial>,
+    pub(crate) rock_light: Handle<StandardMaterial>,
+    pub(crate) wood: Handle<StandardMaterial>,
+    pub(crate) wood_light: Handle<StandardMaterial>,
+    pub(crate) rope: Handle<StandardMaterial>,
+    pub(crate) gold: Handle<StandardMaterial>,
+    pub(crate) white: Handle<StandardMaterial>,
+    pub(crate) dark: Handle<StandardMaterial>,
+    pub(crate) water_light: Handle<StandardMaterial>,
+    pub(crate) orange: Handle<StandardMaterial>,
+    pub(crate) blue: Handle<StandardMaterial>,
+    pub(crate) face: Handle<StandardMaterial>,
+    pub(crate) fur: Handle<StandardMaterial>,
+    pub(crate) fur_dark: Handle<StandardMaterial>,
+    pub(crate) muzzle: Handle<StandardMaterial>,
+    pub(crate) eye_white: Handle<StandardMaterial>,
+    pub(crate) ink: Handle<StandardMaterial>,
+    pub(crate) flower_yellow: Handle<StandardMaterial>,
 }
-fn material(m: &mut Assets<StandardMaterial>, c: Color) -> Handle<StandardMaterial> {
+pub(crate) fn material(m: &mut Assets<StandardMaterial>, c: Color) -> Handle<StandardMaterial> {
     m.add(StandardMaterial {
         base_color: c,
         perceptual_roughness: 0.92,
         ..default()
     })
 }
-fn block(c: &mut Commands, k: &Kit, mat: Handle<StandardMaterial>, p: Vec3, size: Vec3) -> Entity {
+pub(crate) fn block(c: &mut Commands, k: &Kit, mat: Handle<StandardMaterial>, p: Vec3, size: Vec3) -> Entity {
     c.spawn(PbrBundle {
         mesh: k.cube.clone(),
         material: mat,
@@ -75,7 +75,7 @@ fn block(c: &mut Commands, k: &Kit, mat: Handle<StandardMaterial>, p: Vec3, size
     })
     .id()
 }
-fn oval(
+pub(crate) fn oval(
     c: &mut Commands,
     k: &Kit,
     mat: Handle<StandardMaterial>,
@@ -93,7 +93,7 @@ fn oval(
     })
     .id()
 }
-fn beam(c: &mut Commands, k: &Kit, mat: Handle<StandardMaterial>, a: Vec3, b: Vec3, width: f32) {
+pub(crate) fn beam(c: &mut Commands, k: &Kit, mat: Handle<StandardMaterial>, a: Vec3, b: Vec3, width: f32) {
     let d = b - a;
     c.spawn(PbrBundle {
         mesh: k.cube.clone(),
@@ -139,11 +139,11 @@ fn palm_at(c: &mut Commands, k: &Kit, x: f32, z: f32, h: f32, phase: f32, ground
 /// its front faces culled, so only the far side of the shell is drawn. Growing by
 /// a fixed world offset rather than a percentage keeps the line the same weight
 /// on a head and on a fingertip.
-const INK: f32 = 0.022;
+pub(crate) const INK: f32 = 0.022;
 
 /// The original blocky character, restored. Kept tagged as an actor surface so
 /// the restyled shading still separates players from the field.
-fn monkey(c: &mut Commands, k: &Kit, parent: Entity, team: Team) {
+pub(crate) fn monkey(c: &mut Commands, k: &Kit, parent: Entity, team: Team) {
     let fur = if team == Team::Orange {
         k.orange.clone()
     } else {
@@ -296,6 +296,58 @@ fn crowd_monkey(c: &mut Commands, k: &Kit, parent: Entity, team: Team, variant: 
     }
 }
 
+/// The shared material and mesh set for everything in the jungle. Extracted so
+/// the creation clearing is built from the exact same palette as the stadium:
+/// one source of truth means the two screens cannot drift apart.
+pub(crate) fn build_kit(meshes: &mut Assets<Mesh>, mats: &mut Assets<StandardMaterial>) -> Kit {
+    let mut rock_mesh = Sphere::new(1.).mesh().ico(1).unwrap();
+    rock_mesh.duplicate_vertices();
+    rock_mesh.compute_flat_normals();
+    let terrain_mesh = Sphere::new(1.).mesh().ico(2).unwrap();
+    Kit {
+        cube: meshes.add(Cuboid::new(1., 1., 1.)),
+        leaf: meshes.add(Sphere::new(1.).mesh().ico(0).unwrap()),
+        palm_frond: meshes.add(landscape::palm_frond_mesh()),
+        stone: meshes.add(rock_mesh),
+        terrain: meshes.add(terrain_mesh),
+        grass: [
+            material(mats, Color::rgb(0.39, 0.65, 0.15)),
+            material(mats, Color::rgb(0.47, 0.72, 0.20)),
+        ],
+        greens: [
+            material(mats, Color::rgb(0.12, 0.35, 0.19)),
+            material(mats, Color::rgb(0.25, 0.52, 0.16)),
+            material(mats, Color::rgb(0.53, 0.72, 0.19)),
+        ],
+        rock: material(mats, Color::rgb(0.28, 0.34, 0.29)),
+        rock_light: material(mats, Color::rgb(0.49, 0.48, 0.36)),
+        wood: material(mats, Color::rgb(0.30, 0.15, 0.065)),
+        wood_light: material(mats, Color::rgb(0.55, 0.30, 0.12)),
+        rope: material(mats, Color::rgb(0.68, 0.46, 0.22)),
+        gold: material(mats, Color::rgb(0.76, 0.48, 0.17)),
+        white: material(mats, Color::rgb(0.98, 0.94, 0.74)),
+        dark: material(mats, Color::rgb(0.035, 0.07, 0.065)),
+        water_light: material(mats, Color::rgb(0.48, 0.86, 0.88)),
+        orange: material(mats, Color::rgb(0.87, 0.36, 0.06)),
+        blue: material(mats, Color::rgb(0.08, 0.34, 0.85)),
+        face: material(mats, Color::rgb(0.98, 0.77, 0.42)),
+        fur: material(mats, Color::rgb(0.67, 0.41, 0.18)),
+        fur_dark: material(mats, Color::rgb(0.42, 0.23, 0.10)),
+        muzzle: material(mats, Color::rgb(0.94, 0.77, 0.54)),
+        eye_white: material(mats, Color::rgb(0.98, 0.98, 0.96)),
+        // Outline shell: front faces culled so only the inside of an enlarged
+        // copy is drawn, which reads as an ink line around the form it wraps.
+        // Unlit, so the stylise pass leaves it alone.
+        ink: mats.add(StandardMaterial {
+            base_color: Color::rgb(0.05, 0.04, 0.06),
+            unlit: true,
+            cull_mode: Some(bevy::render::render_resource::Face::Front),
+            ..default()
+        }),
+        flower_yellow: material(mats, Color::rgb(1.0, 0.72, 0.08)),
+    }
+}
+
 pub fn build_jungle(
     mut c: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -322,52 +374,7 @@ pub fn build_jungle(
         t.translation = scoreboard_target + (t.translation - scoreboard_source) * 1.224;
         t.scale *= 1.224;
     }
-    let mut rock_mesh = Sphere::new(1.).mesh().ico(1).unwrap();
-    rock_mesh.duplicate_vertices();
-    rock_mesh.compute_flat_normals();
-    let terrain_mesh = Sphere::new(1.).mesh().ico(2).unwrap();
-    let k = Kit {
-        cube: meshes.add(Cuboid::new(1., 1., 1.)),
-        leaf: meshes.add(Sphere::new(1.).mesh().ico(0).unwrap()),
-        palm_frond: meshes.add(landscape::palm_frond_mesh()),
-        stone: meshes.add(rock_mesh),
-        terrain: meshes.add(terrain_mesh),
-        grass: [
-            material(&mut mats, Color::rgb(0.39, 0.65, 0.15)),
-            material(&mut mats, Color::rgb(0.47, 0.72, 0.20)),
-        ],
-        greens: [
-            material(&mut mats, Color::rgb(0.12, 0.35, 0.19)),
-            material(&mut mats, Color::rgb(0.25, 0.52, 0.16)),
-            material(&mut mats, Color::rgb(0.53, 0.72, 0.19)),
-        ],
-        rock: material(&mut mats, Color::rgb(0.28, 0.34, 0.29)),
-        rock_light: material(&mut mats, Color::rgb(0.49, 0.48, 0.36)),
-        wood: material(&mut mats, Color::rgb(0.30, 0.15, 0.065)),
-        wood_light: material(&mut mats, Color::rgb(0.55, 0.30, 0.12)),
-        rope: material(&mut mats, Color::rgb(0.68, 0.46, 0.22)),
-        gold: material(&mut mats, Color::rgb(0.76, 0.48, 0.17)),
-        white: material(&mut mats, Color::rgb(0.98, 0.94, 0.74)),
-        dark: material(&mut mats, Color::rgb(0.035, 0.07, 0.065)),
-        water_light: material(&mut mats, Color::rgb(0.48, 0.86, 0.88)),
-        orange: material(&mut mats, Color::rgb(0.87, 0.36, 0.06)),
-        blue: material(&mut mats, Color::rgb(0.08, 0.34, 0.85)),
-        face: material(&mut mats, Color::rgb(0.98, 0.77, 0.42)),
-        fur: material(&mut mats, Color::rgb(0.67, 0.41, 0.18)),
-        fur_dark: material(&mut mats, Color::rgb(0.42, 0.23, 0.10)),
-        muzzle: material(&mut mats, Color::rgb(0.94, 0.77, 0.54)),
-        eye_white: material(&mut mats, Color::rgb(0.98, 0.98, 0.96)),
-        // Outline shell: front faces culled so only the inside of an enlarged
-        // copy is drawn, which reads as an ink line around the form it wraps.
-        // Unlit, so the stylise pass leaves it alone.
-        ink: mats.add(StandardMaterial {
-            base_color: Color::rgb(0.05, 0.04, 0.06),
-            unlit: true,
-            cull_mode: Some(bevy::render::render_resource::Face::Front),
-            ..default()
-        }),
-        flower_yellow: material(&mut mats, Color::rgb(1.0, 0.72, 0.08)),
-    };
+    let k = build_kit(&mut meshes, &mut mats);
     c.insert_resource(ClearColor(Color::rgb(0.18, 0.38, 0.30)));
     // Continuous terrain meets the unchanged playable plane without a raised slab.
     for i in 0..(FIELD_WIDTH as usize / 2) {
