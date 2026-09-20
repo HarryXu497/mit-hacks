@@ -23,20 +23,13 @@ pub struct CoachingUiState {
     confirm_reset: bool,
 }
 
+/// Dress every flat screen in the jungle's colours, once at startup.
+///
+/// The blue-grey palette this used to set belonged to a 2D board floating over a blank window.
+/// There is a jungle behind these panels now, so they take their colours from it -- see `theme`,
+/// which also owns the slab the menus are built from.
 pub fn configure_egui(mut contexts: EguiContexts) {
-    let context = contexts.ctx_mut();
-    let mut style = (*context.style()).clone();
-    style.visuals.dark_mode = true;
-    style.visuals.panel_fill = PANEL;
-    style.visuals.window_fill = PANEL;
-    style.visuals.override_text_color = Some(TEXT);
-    style.visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0_f32, BORDER);
-    style.visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(21, 31, 43);
-    style.visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(27, 39, 53);
-    style.visuals.selection.bg_fill = BLUE.linear_multiply(0.35);
-    style.visuals.selection.stroke = egui::Stroke::new(1.0_f32, BLUE);
-    style.spacing.item_spacing = egui::vec2(9.0, 8.0);
-    context.set_style(style);
+    crate::theme::apply(contexts.ctx_mut());
 }
 
 #[allow(clippy::too_many_arguments)]

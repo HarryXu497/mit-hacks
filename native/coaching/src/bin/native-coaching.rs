@@ -39,5 +39,38 @@ fn main() {
         .add_plugins(GamePlugin)
         // Turns the painted superpower into one of the game's four, and arms the coached side.
         .add_plugins(ForgePlugin)
+        .add_systems(Update, capture)
         .run();
+}
+
+/// Set `TACTIC_LAB_CAPTURE` to a PNG path for a reproducible screenshot of the running app.
+///
+/// The same affordance `cube-soccer`'s own preview binary has, and for the same reason: a screen
+/// is the only honest way to check a screen, and "it looked right on my machine" is not a record.
+/// `TACTIC_LAB_CAPTURE_FRAME` picks the frame, which matters because the world takes a moment to
+/// batch and any glTF character arrives a little after that.
+fn capture(
+    mut frames: Local<u32>,
+    mut screenshots: ResMut<bevy::render::view::screenshot::ScreenshotManager>,
+    window: Query<Entity, With<bevy::window::PrimaryWindow>>,
+    mut exit: EventWriter<bevy::app::AppExit>,
+) {
+    let Ok(path) = std::env::var("TACTIC_LAB_CAPTURE") else {
+        return;
+    };
+    let Ok(window) = window.get_single() else {
+        return;
+    };
+    *frames += 1;
+    let at = std::env::var("TACTIC_LAB_CAPTURE_FRAME")
+        .ok()
+        .and_then(|frame| frame.parse::<u32>().ok())
+        .unwrap_or(150)
+        .clamp(1, 3600);
+    if *frames == at {
+        let _ = screenshots.save_screenshot_to_disk(window, path);
+    }
+    if *frames == at + 90 {
+        exit.send(bevy::app::AppExit);
+    }
 }

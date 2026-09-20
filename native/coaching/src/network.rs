@@ -195,6 +195,10 @@ pub enum LobbyScreen {
     MainMenu,
     Hosting,
     Joining,
+    /// Microphone, picture, and where the local service is. See `menu::settings_ui`.
+    Settings,
+    /// What the app believes, and the shortcuts past it. See `menu::admin_ui`.
+    Admin,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -528,7 +532,17 @@ impl Plugin for LobbyPlugin {
             .add_event::<MatchReady>()
             .add_systems(
                 Update,
-                lobby_menu_ui.run_if(in_state(AppPhase::Lobby)),
+                lobby_menu_ui
+                    .run_if(in_state(AppPhase::Lobby))
+                    .run_if(|ui_state: Res<LobbyUiState>| {
+                        // Settings and Admin draw their own central panel; two in one frame
+                        // would stack.
+                        !matches!(ui_state.screen, LobbyScreen::Settings | LobbyScreen::Admin)
+                    }),
+            )
+            .add_systems(
+                Update,
+                (crate::menu::settings_ui, crate::menu::admin_ui).run_if(in_state(AppPhase::Lobby)),
             )
             .add_systems(
                 Update,
@@ -552,16 +566,44 @@ fn lobby_menu_ui(
     mut next_phase: ResMut<NextState<AppPhase>>,
 ) {
     let ctx = contexts.ctx_mut();
-    egui::CentralPanel::default().show(ctx, |ui| {
-        ui.add_space(48.0);
-        ui.vertical_centered(|ui| {
-            ui.heading("Tactic Lab");
-            ui.label("Coach a 5-v-5 tactic, alone or against a friend on the same wifi.");
-            ui.add_space(24.0);
+    // No panel fill: the jungle standing behind this *is* the backdrop, and a flat colour in
+    // front of it is a worse picture than the one it hides. A gradient wash goes under the
+    // column instead, so cloth text stays readable over sunlit turf without covering the
+    // stadium. See `theme::scrim`.
+    egui::CentralPanel::default()
+        .frame(egui::Frame::none())
+        .show(ctx, |ui| {
+            let screen = ui.max_rect();
+            let washed = egui::Rect::from_min_size(
+                screen.left_top(),
+                egui::vec2(screen.width() * crate::theme::SCRIM_FRACTION, screen.height()),
+            );
+            crate::theme::scrim(ui.painter(), washed, 225, 0);
+
+            // Laid out from the left, as the reference does, rather than centred: the menu is a
+            // column down one side and the scenery has the rest of the frame.
+            let column = egui::Rect::from_min_size(
+                screen.left_top() + egui::vec2(56.0, 64.0),
+                egui::vec2(crate::theme::SLAB_MAX_WIDTH, screen.height() - 96.0),
+            );
+            ui.allocate_ui_at_rect(column, |ui| {
+        {
+            crate::theme::title(
+                ui,
+                "Canopy Clash",
+                Some("Draw a player. Coach a play. Watch it happen."),
+            );
 
             match ui_state.screen {
                 LobbyScreen::MainMenu => {
-                    ui.set_max_width(320.0);
+                    ui.set_max_width(crate::theme::SLAB_MAX_WIDTH);
+                    // Solo first, and marked as the primary route: it is the whole flow on one
+                    // machine and needs no second player, so it is what most people want.
+                    if primary_button(ui, "Play Solo") {
+                        *role = NetworkRole::Solo;
+                        next_phase.set(AppPhase::Creation);
+                    }
+                    ui.add_space(8.0);
                     if big_button(ui, "Host Match") {
                         *role = NetworkRole::Host;
                         *endpoint = NetworkEndpoint::default();
@@ -577,12 +619,17 @@ fn lobby_menu_ui(
                         ui_state.discovered.clear();
                         mdns.start_browsing();
                     }
+                    ui.add_space(20.0);
+                    if big_button(ui, "Settings") {
+                        ui_state.screen = LobbyScreen::Settings;
+                    }
                     ui.add_space(8.0);
-                    if big_button(ui, "Play Solo") {
-                        *role = NetworkRole::Solo;
-                        next_phase.set(AppPhase::Creation);
+                    if big_button(ui, "Admin") {
+                        ui_state.screen = LobbyScreen::Admin;
                     }
                 }
+                // Drawn by `menu.rs`, which owns everything on them.
+                LobbyScreen::Settings | LobbyScreen::Admin => {}
                 LobbyScreen::Hosting => {
                     ui.label(format!(
                         "Hosting on {} — share this address with the other player.",
@@ -643,8 +690,9 @@ fn lobby_menu_ui(
                     }
                 }
             }
+        }
+            });
         });
-    });
 }
 
 fn poll_mdns_discoveries(mdns: Res<MdnsState>, mut ui_state: ResMut<LobbyUiState>) {
@@ -890,12 +938,17 @@ fn redirect_env_to_host(host_addr: &str) {
     );
 }
 
+/// One row of the menu.
+///
+/// A slab rather than a rectangle: see `theme`. `primary` marks the entry most people want, which
+/// is the only reason to make one row look different from another.
 fn big_button(ui: &mut egui::Ui, label: &str) -> bool {
-    ui.add_sized(
-        egui::vec2(ui.available_width(), 48.0),
-        egui::Button::new(egui::RichText::new(label).strong()),
-    )
-    .clicked()
+    crate::theme::slab(ui, label, crate::theme::Tone::Plain, false).clicked()
+}
+
+/// The menu row that is probably what you came for.
+fn primary_button(ui: &mut egui::Ui, label: &str) -> bool {
+    crate::theme::slab(ui, label, crate::theme::Tone::Primary, false).clicked()
 }
 
 #[cfg(test)]

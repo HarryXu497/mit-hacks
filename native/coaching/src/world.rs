@@ -108,6 +108,14 @@ impl Plugin for WorldPlugin {
             // painting is hung, a generated character loads. It is a no-op for anything already
             // wearing the jungle material.
             .add_systems(Update, (stylize, animate_jungle, animate_water))
+            // The lobby's backdrop is the stadium itself, seen from a slow orbit. Set after the
+            // creation camera is spawned, because it is that same camera -- there is only ever
+            // one, and it is about to glide from here up to the easel.
+            .add_systems(
+                Startup,
+                frame_the_lobby.after(cube_soccer::creation::camera::spawn_camera),
+            )
+            .add_systems(Update, drift_the_lobby_view.run_if(in_state(AppPhase::Lobby)))
             .add_systems(OnExit(AppPhase::Lobby), step_up_to_the_easel)
             .add_systems(
                 OnEnter(CreationPhase::Coaching),
@@ -138,6 +146,47 @@ impl Plugin for WorldPlugin {
 /// How many rounds have been played, so the table can say which play it is taking.
 #[derive(Resource, Debug, Default)]
 pub struct RoundCount(pub u32);
+
+/// Where the camera sits while the menu is up: a wide three-quarter view of the stadium.
+///
+/// High and far enough back that the pitch, the stands and the ranges behind them are all in
+/// frame, because this is the establishing shot of the whole game and the only chance to show
+/// the place before the flow starts walking through it.
+fn lobby_view(angle: f32) -> Transform {
+    /// Distance from the pitch's centre, and height above it.
+    const RADIUS: f32 = 104.0;
+    const HEIGHT: f32 = 40.0;
+    /// Aimed above the turf so the horizon and a band of sky stay in shot, as the match camera
+    /// does for the same reason.
+    const AIM: Vec3 = Vec3::new(0.0, 12.0, 0.0);
+
+    Transform::from_translation(Vec3::new(
+        angle.sin() * RADIUS,
+        HEIGHT,
+        angle.cos() * RADIUS,
+    ))
+    .looking_at(AIM, Vec3::Y)
+}
+
+fn frame_the_lobby(mut cameras: Query<&mut Transform, With<CreationCamera>>) {
+    if let Ok(mut transform) = cameras.get_single_mut() {
+        *transform = lobby_view(0.0);
+    }
+}
+
+/// Turn the establishing shot, slowly.
+///
+/// Slowly on purpose: about four minutes for a full turn, which reads as a living scene behind a
+/// menu rather than as something moving that you are meant to watch. The easel glide takes over
+/// the moment the lobby is left, easing from wherever this had got to.
+fn drift_the_lobby_view(time: Res<Time>, mut cameras: Query<&mut Transform, With<CreationCamera>>) {
+    /// Radians per second. TAU over this is roughly four minutes.
+    const DRIFT: f32 = 0.026;
+
+    if let Ok(mut transform) = cameras.get_single_mut() {
+        *transform = lobby_view(time.elapsed_seconds() * DRIFT);
+    }
+}
 
 /// The lobby is done with: step up to the easel.
 ///
