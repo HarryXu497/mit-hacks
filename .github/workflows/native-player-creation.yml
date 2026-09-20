@@ -15,7 +15,12 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.85.0
+      # `stable`, not an exact pin. Both workflows pinned one, and the pin is what kept breaking:
+      # 1.75 could not read the crate's own lockfile (v4 needs Cargo 1.78+), and 1.85 is refused
+      # outright by transitive deps -- `icu_*` 2.3, pulled in through `url`, requires rustc 1.88.
+      # An exact pin has to be chased every time a dependency raises its floor, and it was not
+      # being chased.
+      - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
