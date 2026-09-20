@@ -12,6 +12,7 @@ use std::time::Duration;
 pub enum InterpretationState {
     Idle,
     Generating,
+    Failed,
     Ready,
 }
 
@@ -38,15 +39,17 @@ impl Default for TacticalResult {
     }
 }
 
-#[derive(Event)]
-pub struct RequestInterpretation;
+#[derive(Event, Clone, Copy)]
+pub enum RequestInterpretation {
+    Generate,
+    ContinueBalanced,
+}
 
 struct InterpretationReply {
     generation: u64,
     revision: u64,
     session_id: String,
-    output: Value,
-    notice: Option<String>,
+    outcome: Result<Value, String>,
 }
 
 #[derive(Resource)]
@@ -64,19 +67,44 @@ impl Default for InterpretationRuntime {
 
 pub fn request_interpretation(
     mut requests: EventReader<RequestInterpretation>,
-    session: Res<CoachingSession>,
+    mut session: ResMut<CoachingSession>,
     mut result: ResMut<TacticalResult>,
     runtime: Res<InterpretationRuntime>,
+    mut enter_game: EventWriter<crate::EnterGame>,
 ) {
-    if requests.read().next().is_none()
-        || session.session.status == SessionStatus::Recording
+    let Some(request) = requests.read().next().copied() else {
+        return;
+    };
+    if session.session.status == SessionStatus::Recording
         || result.state == InterpretationState::Generating
     {
+        return;
+    }
+    if matches!(request, RequestInterpretation::ContinueBalanced) {
+        if result.state != InterpretationState::Failed {
+            return;
+        }
+        let diagnostic = result
+            .notice
+            .clone()
+            .unwrap_or_else(|| "Unknown interpretation error".into());
+        let output = deterministic_interpretation(&session.session, "deterministic-fallback");
+        accept_interpretation(
+            &mut session,
+            &mut result,
+            output,
+            Some(format!(
+                "You chose to continue with Balanced. Interpretation failure: {diagnostic}"
+            )),
+        );
+        enter_game.send(crate::EnterGame);
         return;
     }
     result.state = InterpretationState::Generating;
     result.output = None;
     result.notice = None;
+    result.session_path = None;
+    result.tactics_path = None;
     result.requested_revision = Some(session.revision);
     let generation = session.generation;
     let revision = session.revision;
@@ -85,34 +113,72 @@ pub fn request_interpretation(
     drop(std::thread::spawn(move || {
         let endpoint = std::env::var("TACTIC_LAB_API_URL")
             .unwrap_or_else(|_| "http://127.0.0.1:8787".to_owned());
-        let response = reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(25))
-            .build()
-            .and_then(|client| {
-                client
-                    .post(format!("{endpoint}/api/interpret"))
-                    .json(&json!({ "schemaVersion": "1.0", "session": snapshot }))
-                    .send()?
-                    .error_for_status()?
-                    .json::<Value>()
-            });
-        let (output, notice) = match response {
-            Ok(output) => (output, None),
-            Err(error) => (
-                deterministic_interpretation(&snapshot, "deterministic-fallback"),
-                Some(format!(
-                    "The model service was unavailable ({error}); using deterministic fallback."
-                )),
-            ),
-        };
+        let outcome = fetch_interpretation(&endpoint, &snapshot);
         let _ = sender.send(InterpretationReply {
             generation,
             revision,
             session_id: snapshot.id,
-            output,
-            notice,
+            outcome,
         });
     }));
+}
+
+fn fetch_interpretation(endpoint: &str, session: &Session) -> Result<Value, String> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(transport_diagnostic)?;
+    let response = client
+        .post(format!("{}/api/interpret", endpoint.trim_end_matches('/')))
+        .json(&json!({ "schemaVersion": "1.0", "session": session }))
+        .send()
+        .map_err(transport_diagnostic)?;
+    let status = response.status().as_u16();
+    // Read the error body before inspecting status: it contains the actionable reason.
+    let body = response.text().map_err(transport_diagnostic)?;
+    decode_interpretation_response(status, &body, &session.id)
+}
+
+fn transport_diagnostic(error: reqwest::Error) -> String {
+    let guidance = if error.is_timeout() {
+        "INTERPRETATION_SERVER_TIMEOUT: The local server did not respond within 30 seconds. Check its logs and retry."
+    } else if error.is_connect() {
+        "INTERPRETATION_SERVER_UNREACHABLE: Cannot connect to the interpretation server. Start npm run dev:api and check TACTIC_LAB_API_URL."
+    } else {
+        "INTERPRETATION_TRANSPORT_ERROR: The request or response could not be transferred. Check the server logs."
+    };
+    format!("{guidance} Details: {}", error.without_url())
+}
+
+fn decode_interpretation_response(
+    status: u16,
+    body: &str,
+    session_id: &str,
+) -> Result<Value, String> {
+    let output: Value = serde_json::from_str(body)
+        .map_err(|error| format!("INVALID_SERVER_RESPONSE (HTTP {status}): Expected JSON, but could not decode the response: {error}. Check the API server logs."))?;
+    if !(200..300).contains(&status) {
+        let code = output["code"]
+            .as_str()
+            .unwrap_or("INTERPRETATION_HTTP_ERROR");
+        let message = output["message"]
+            .as_str()
+            .unwrap_or("The server returned no error explanation; check its logs.");
+        let request_id = output["requestId"]
+            .as_str()
+            .map(|id| format!(" Request ID: {id}"))
+            .unwrap_or_default();
+        return Err(format!("{code} (HTTP {status}): {message}{request_id}"));
+    }
+    if output["interpretationMode"].as_str() != Some("model-backed") {
+        return Err("NON_MODEL_INTERPRETATION: The server returned a preview or fallback instead of a model interpretation. Restart the updated API server and retry; no fallback tactic was applied.".into());
+    }
+    if output["rlSelection"]["selectionReason"].as_str() != Some("best_match") {
+        return Err("NON_BEST_MATCH_SELECTION: The server did not return a supported best-match interpretation. Restart the updated API server and retry.".into());
+    }
+    crate::game_handoff::GameHandoff::from_output(&output, session_id)
+        .map_err(|error| format!("INVALID_TACTICAL_PAYLOAD: {error:#}"))?;
+    Ok(output)
 }
 
 pub fn receive_interpretation(
@@ -127,21 +193,58 @@ pub fn receive_interpretation(
         {
             continue;
         }
-        result.notice = reply.notice;
-        result.output = Some(reply.output);
-        result.state = InterpretationState::Ready;
         result.requested_revision = None;
-        session.session.status = SessionStatus::Interpreted;
-        session.playhead_ms = session.session.elapsed_ms;
-        if let Some(output) = &result.output {
-            match save_artifacts(&session.session, output) {
-                Ok((session_path, tactics_path)) => {
-                    result.session_path = Some(session_path);
-                    result.tactics_path = Some(tactics_path);
-                }
-                Err(error) => {
-                    result.notice = Some(format!("Output generated, but saving failed: {error:#}"));
-                }
+        let output = match reply.outcome {
+            Ok(output) => output,
+            Err(diagnostic) => {
+                eprintln!("Interpretation failed: {diagnostic}");
+                result.output = None;
+                result.state = InterpretationState::Failed;
+                result.notice = Some(diagnostic);
+                session.session.status = SessionStatus::Review;
+                continue;
+            }
+        };
+        let notice = if output["classification"]["evidenceStrength"].as_str() == Some("weak") {
+            Some(format!(
+                "Low-confidence best match: {}. {}",
+                output["rlSelection"]["downstreamValue"]
+                    .as_str()
+                    .unwrap_or("unknown"),
+                output["classification"]["explanation"]
+                    .as_str()
+                    .unwrap_or("Review the interpretation before starting the game.")
+            ))
+        } else {
+            None
+        };
+        accept_interpretation(&mut session, &mut result, output, notice);
+    }
+}
+
+fn accept_interpretation(
+    session: &mut CoachingSession,
+    result: &mut TacticalResult,
+    output: Value,
+    notice: Option<String>,
+) {
+    result.output = Some(output);
+    result.state = InterpretationState::Ready;
+    result.notice = notice;
+    result.requested_revision = None;
+    session.session.status = SessionStatus::Interpreted;
+    session.playhead_ms = session.session.elapsed_ms;
+    if let Some(output) = &result.output {
+        match save_artifacts(&session.session, output) {
+            Ok((session_path, tactics_path)) => {
+                result.session_path = Some(session_path);
+                result.tactics_path = Some(tactics_path);
+            }
+            Err(error) => {
+                let prefix = result.notice.as_deref().unwrap_or("");
+                result.notice = Some(format!(
+                    "{prefix} Output generated, but saving failed: {error:#}"
+                ));
             }
         }
     }
@@ -317,6 +420,88 @@ mod tests {
     use crate::model::{Point, TranscriptSegment, TranscriptSource};
 
     #[test]
+    fn http_failure_preserves_server_reason_and_request_id() {
+        let error = decode_interpretation_response(429,
+            r#"{"code":"OPENAI_RATE_LIMIT_OR_QUOTA","message":"Quota exhausted","requestId":"req-test"}"#, "s").unwrap_err();
+        assert!(error.contains("OPENAI_RATE_LIMIT_OR_QUOTA"));
+        assert!(error.contains("Quota exhausted"));
+        assert!(error.contains("req-test"));
+        assert!(error.contains("HTTP 429"));
+    }
+
+    #[test]
+    fn rejects_invalid_response_and_automatic_server_fallback() {
+        assert!(
+            decode_interpretation_response(502, "<html>Gateway error</html>", "s")
+                .unwrap_err()
+                .contains("HTTP 502")
+        );
+        let session = Session::default();
+        let output = deterministic_interpretation(&session, "deterministic-fallback");
+        assert!(
+            decode_interpretation_response(200, &output.to_string(), &session.id)
+                .unwrap_err()
+                .contains("NON_MODEL_INTERPRETATION")
+        );
+    }
+
+    #[test]
+    fn failure_waits_for_explicit_continue_and_then_emits_balanced_game_handoff() {
+        let mut app = App::new();
+        app.init_resource::<CoachingSession>()
+            .init_resource::<TacticalResult>()
+            .init_resource::<InterpretationRuntime>()
+            .add_event::<RequestInterpretation>()
+            .add_event::<crate::EnterGame>()
+            .add_systems(
+                Update,
+                (receive_interpretation, request_interpretation).chain(),
+            );
+        let session = app.world.resource::<CoachingSession>();
+        let reply = InterpretationReply {
+            generation: session.generation,
+            revision: session.revision,
+            session_id: session.session.id.clone(),
+            outcome: Err("OPENAI_AUTH_FAILED: invalid API key".into()),
+        };
+        app.world
+            .resource::<InterpretationRuntime>()
+            .sender
+            .send(reply)
+            .unwrap();
+        app.update();
+        let result = app.world.resource::<TacticalResult>();
+        assert_eq!(result.state, InterpretationState::Failed);
+        assert!(result.output.is_none());
+        assert!(result
+            .notice
+            .as_deref()
+            .unwrap()
+            .contains("invalid API key"));
+        assert!(app.world.resource::<Events<crate::EnterGame>>().is_empty());
+        app.world
+            .send_event(RequestInterpretation::ContinueBalanced);
+        app.update();
+        let result = app.world.resource::<TacticalResult>();
+        assert_eq!(result.state, InterpretationState::Ready);
+        assert_eq!(
+            result.output.as_ref().unwrap()["rlSelection"]["downstreamValue"],
+            "balanced"
+        );
+        assert!(result
+            .notice
+            .as_deref()
+            .unwrap()
+            .contains("You chose to continue"));
+        assert!(result
+            .notice
+            .as_deref()
+            .unwrap()
+            .contains("invalid API key"));
+        assert!(!app.world.resource::<Events<crate::EnterGame>>().is_empty());
+    }
+
+    #[test]
     fn deterministic_payload_preserves_contract() {
         let session = Session {
             elapsed_ms: 3_000,
@@ -347,5 +532,8 @@ mod tests {
         let output = deterministic_interpretation(&session, "deterministic-preview");
         assert_eq!(output["steps"][0]["movements"][0]["entityId"], "ball");
         assert_eq!(output["schemaVersion"], "2.0");
+        let handoff = crate::game_handoff::GameHandoff::from_output(&output, &session.id).unwrap();
+        assert_eq!(handoff.tactic, cube_soccer::systems::Tactic::Balanced);
+        assert!(handoff.overrides.is_empty());
     }
 }

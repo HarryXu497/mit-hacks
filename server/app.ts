@@ -29,6 +29,7 @@ export function createApp(interpreter: Interpreter = interpretSessionWithOpenAI)
     } catch (error) {
       const knownError = apiErrorResponse(error);
       if (knownError) {
+        console.warn(JSON.stringify({ event: "interpretation_rejected", ...knownError.body }));
         response.status(knownError.status).json(knownError.body);
         return;
       }
@@ -42,16 +43,16 @@ export function createApp(interpreter: Interpreter = interpretSessionWithOpenAI)
 
 export function apiErrorResponse(error: unknown): {
   status: number;
-  body: { code: string; message: string };
+  body: { code: string; message: string; requestId?: string };
 } | null {
   if (error instanceof ZodError) {
-    return { status: 400, body: { code: "INVALID_SESSION", message: "The session payload is invalid." } };
+    return { status: 400, body: { code: "INVALID_SESSION", message: `Invalid session: ${error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ")}` } };
   }
   if (error instanceof GroundingError) {
     return { status: 422, body: { code: error.code, message: error.message } };
   }
   if (error instanceof InterpretationServiceError) {
-    return { status: error.status, body: { code: error.code, message: error.message } };
+    return { status: error.status, body: { code: error.code, message: error.message, ...(error.requestId ? { requestId: error.requestId } : {}) } };
   }
   return null;
 }

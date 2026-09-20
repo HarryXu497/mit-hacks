@@ -11,7 +11,7 @@ export const TACTIC_TAXONOMY = [
     "key": "balanced",
     "displayName": "Balanced",
     "downstreamValue": "balanced",
-    "description": "Balanced shape when no supported tactic dominates."
+    "description": "Balanced attacking and defensive commitment with neutral pressing and width; choose when the coaching supports this shape, not merely when uncertain."
   },
   {
     "key": "highpress",
@@ -76,7 +76,7 @@ export const playerOverrideSchema = z.object({
 });
 
 export const evidenceStrengthSchema = z.enum(["strong", "moderate", "weak"]);
-export const modelSelectionReasonSchema = z.enum(["best_match", "uncertain_fallback"]);
+export const modelSelectionReasonSchema = z.literal("best_match");
 export const selectionReasonSchema = z.enum([
   "best_match",
   "uncertain_fallback",

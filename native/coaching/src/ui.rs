@@ -289,8 +289,18 @@ fn transcript_view(
     let replay = replay_session(&session.session.events, None);
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
-        .max_height(ui.available_height() - 185.0)
+        .max_height((ui.available_height() - if result.state == InterpretationState::Failed { 230.0 } else { 185.0 }).max(80.0))
         .show(ui, |ui| {
+            // DEMO TODO: simplify these diagnostics after integration is stable;
+            // retain an explicit failure state and retry, never silently use Balanced.
+            if result.state == InterpretationState::Failed {
+                ui.colored_label(egui::Color32::from_rgb(245, 130, 120), "Interpretation failed — no tactic was applied.");
+                if let Some(notice) = &result.notice {
+                    ui.label(notice);
+                }
+                ui.label("Your recording is preserved. Retry, or explicitly continue with Balanced.");
+                ui.separator();
+            }
             if replay.transcripts.is_empty() && speech.partial_text.is_empty() {
                 ui.vertical_centered(|ui| {
                     ui.add_space(70.0);
@@ -366,6 +376,8 @@ fn transcript_view(
         "Generating…"
     } else if speech.is_finalizing() {
         "Finalizing transcript…"
+    } else if result.state == InterpretationState::Failed {
+        "Retry interpretation"
     } else {
         "Generate JSON"
     };
@@ -380,8 +392,21 @@ fn transcript_view(
         .inner
         .clicked()
     {
-        requests.send(RequestInterpretation);
+        requests.send(RequestInterpretation::Generate);
     }
+    if result.state == InterpretationState::Failed {
+        ui.add_space(4.0);
+        if ui
+            .add_sized(
+                egui::vec2(ui.available_width(), 34.0),
+                egui::Button::new("Continue anyway (Balanced)"),
+            )
+            .clicked()
+        {
+            requests.send(RequestInterpretation::ContinueBalanced);
+        }
+    }
+
 }
 
 fn result_view(
