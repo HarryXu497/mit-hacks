@@ -24,9 +24,14 @@
 //!    jungle and no model. Also tagged, for the same reason.
 //!
 //! Tier 1 starts as the undressed [`BASE_CHARACTER`], which is committed, so the fallback exists
-//! even on a machine that can reach no GPU. Models are exported one unit tall standing on the
-//! origin, so the scene child carries a `CUBE_SIZE` scale and a half-cube drop; the node itself
-//! stays neutral, because tiers 2 and 3 are already authored at body scale.
+//! even on a machine that can reach no GPU. Models stand on y=0 and are
+//! [`CHARACTER_MODEL_HEIGHT`] tall in their own space, so the scene child is scaled to the
+//! body's height and dropped half a cube to put its feet on the body's bottom face. The node
+//! itself stays neutral, because tiers 2 and 3 are already authored at body scale.
+//!
+//! A generated character also keeps the *standard* material: the jungle's cel step is authored
+//! for flat-coloured props and turns textured character art into bands of dark. See
+//! `rendering::stylized::Unstylised`.
 
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::Velocity;
@@ -41,6 +46,20 @@ use crate::systems::status_effects::ImpulseEvent;
 /// GPU box that does the forging is unreachable. It is committed to the repo precisely so that
 /// fallback always exists.
 pub const BASE_CHARACTER: &str = "characters/base.glb#Scene0";
+
+/// How tall a character model is in its own space, before the game scales it.
+///
+/// Measured from `base.glb`: 1.4 units, standing on y=0. This was previously assumed to be 1.0 --
+/// the comment even said "exported one unit tall" -- so every character was rendered 40% taller
+/// than the body it hangs on, which is why they did not sit right against the pitch or each other.
+/// MonkeyForge exports on a fixed base, so every forged character shares this height; the test
+/// below pins it, and a changed asset breaks that rather than silently mis-scaling.
+pub const CHARACTER_MODEL_HEIGHT: f32 = 1.4;
+
+/// Scale that makes a character exactly as tall as the body it replaces.
+pub fn character_scale() -> f32 {
+    CUBE_SIZE / CHARACTER_MODEL_HEIGHT
+}
 
 /// Which model each team is wearing, as a path under `assets/`.
 ///
@@ -110,14 +129,14 @@ const GAIT_PER_METRE: f32 = 1.8;
 /// Horizontal speed at which the gait reaches full amplitude.
 const FULL_STRIDE_SPEED: f32 = 6.0;
 /// Peak bob height at full stride.
-const BOB_HEIGHT: f32 = 0.055;
+const BOB_HEIGHT: f32 = 0.16;
 /// Shoulder roll that rides along with the stride.
-const SWAY: f32 = 0.05;
+const SWAY: f32 = 0.13;
 /// Amplitude and rate of the standing-still breath.
-const IDLE_RISE: f32 = 0.018;
+const IDLE_RISE: f32 = 0.045;
 const IDLE_RATE: f32 = 1.6;
 /// Forward pitch at full speed, and bank per rad/s of turn.
-const LEAN_PITCH: f32 = 0.22;
+const LEAN_PITCH: f32 = 0.30;
 const LEAN_BANK: f32 = 0.06;
 /// How fast lean eases toward its target, per second.
 const LEAN_EASE: f32 = 8.0;
@@ -284,8 +303,11 @@ pub fn reveal_loaded_characters(
                 // at the cube's bottom face, and scale it up to the body's size. The node itself
                 // stays unscaled, because the blocky character and the cube fallback are already
                 // authored at body scale and share it.
+                // Feet on the bottom face of the body, and exactly the body's height -- scaled
+                // by its own measured height rather than by `CUBE_SIZE` directly, which had been
+                // making every character 40% too tall.
                 transform: Transform::from_xyz(0.0, -CUBE_SIZE / 2.0, 0.0)
-                    .with_scale(Vec3::splat(CUBE_SIZE)),
+                    .with_scale(Vec3::splat(character_scale())),
                 ..default()
             });
         });

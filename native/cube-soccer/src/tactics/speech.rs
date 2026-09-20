@@ -145,21 +145,41 @@ impl Drop for SpeechRuntime {
     }
 }
 
+/// Wire the microphone into an app.
+///
+/// Deliberately *not* gated on `CreationPhase::Coaching`. Stopping the clock only asks the worker
+/// for the last sentence; that sentence, and the status that clears `Finalizing`, arrive over a
+/// channel some frames later. Gating the drain on being at the table meant that leaving it --
+/// which is exactly what a coach does after speaking -- stopped `receive_speech` before those
+/// replies landed, so the transcript sat on "Finishing the last sentence..." forever and the
+/// closing words were dropped. Both systems are cheap no-ops while the microphone is closed.
+///
+/// Extracted so the test that pins this can exercise the real wiring rather than a copy of it.
+pub fn register(app: &mut App) {
+    app.init_resource::<SpeechRuntime>()
+        .add_systems(Update, (drive_speech, receive_speech).chain());
+}
+
 /// Opens and closes the microphone as the clock starts and stops, so talking is
 /// captured over exactly the stretch the coach is recording.
 pub fn drive_speech(
     state: Res<State<TableState>>,
+    phase: Res<State<crate::creation::CreationPhase>>,
     mut runtime: ResMut<SpeechRuntime>,
     session: Res<Session>,
     creation: Res<crate::creation::persistence::CreationSession>,
 ) {
-    if !state.is_changed() {
+    // Walking away from the table closes the microphone too, not just stopping the clock. This
+    // system now runs in every phase, so it has to notice the phase leaving `Coaching` -- else a
+    // coach who left while still recording would keep an open stream behind them.
+    let at_the_table = *phase.get() == crate::creation::CreationPhase::Coaching;
+    if !state.is_changed() && !phase.is_changed() {
         return;
     }
     match state.get() {
         // The same session id the paintings were saved under, so the whole
         // sitting is one session from first brushstroke to last word.
-        TableState::Recording => runtime.listen(&creation.id, session.elapsed_ms),
+        TableState::Recording if at_the_table => runtime.listen(&creation.id, session.elapsed_ms),
         _ => runtime.hush(),
     }
 }
@@ -489,6 +509,64 @@ mod tests {
         runtime.devices.clear();
         assert!(!runtime.available());
         assert!(runtime.report().contains("No microphone"));
+    }
+
+    /// The closing words must land even though the coach has already walked away.
+    ///
+    /// This is the "stuck on Finalizing" bug, pinned. Stopping the clock sets `Finalizing` and
+    /// asks the worker for the last sentence; the answer arrives frames later, by which time the
+    /// coach has left the table. While the drain was gated on `CreationPhase::Coaching` that
+    /// answer was never read: the status stayed `Finalizing` forever and the sentence was lost.
+    #[test]
+    fn a_last_sentence_arriving_after_the_coach_leaves_the_table_still_lands() {
+        let (reply_tx, replies) = unbounded();
+        let (commands, _command_rx) = unbounded();
+        let mut app = App::new();
+        // Inserted before `register`, whose `init_resource` then leaves it alone -- this runtime
+        // has a sender the test can answer on, where a real one has a worker thread.
+        app.insert_resource(SpeechRuntime {
+            commands,
+            replies,
+            devices: vec!["Test microphone".into()],
+            selected: 0,
+            status: SpeechStatus::Finalizing,
+            error: None,
+            generation: 0,
+            seen: HashSet::new(),
+        })
+        .init_resource::<Transcript>()
+        .init_resource::<Session>()
+        .init_resource::<crate::creation::persistence::CreationSession>()
+        .init_state::<TableState>()
+        .init_state::<crate::creation::CreationPhase>();
+        register(&mut app);
+
+        // The coach is no longer at the table, and the clock is no longer running.
+        app.insert_state(crate::creation::CreationPhase::Departing);
+        app.insert_state(TableState::Setup);
+
+        reply_tx
+            .send(Reply::Final {
+                generation: 0,
+                item_id: "last".into(),
+                text: "press high on the left".into(),
+            })
+            .expect("the worker can answer");
+        reply_tx
+            .send(Reply::Status { generation: 0, status: SpeechStatus::Idle, message: None })
+            .expect("the worker can answer");
+        app.update();
+
+        assert_eq!(
+            app.world.resource::<Transcript>().pending,
+            vec!["press high on the left".to_owned()],
+            "the closing sentence must reach the transcript"
+        );
+        assert_eq!(
+            app.world.resource::<SpeechRuntime>().status,
+            SpeechStatus::Idle,
+            "the transcript must not sit on Finalizing once the worker has answered"
+        );
     }
 
     /// Built field by field: the runtime owns channels and a worker thread, so

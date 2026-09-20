@@ -263,13 +263,16 @@ impl Plugin for TacticsPlugin {
             );
         // The microphone follows the clock: it opens when recording starts and
         // closes when it stops, so speech covers exactly the recorded stretch.
+        //
+        // Deliberately *not* gated on `CreationPhase::Coaching`. Stopping the clock only asks
+        // the worker for the last sentence; the sentence and the status that clears
+        // `Finalizing` arrive over a channel some frames later. Gating the drain on being at
+        // the table meant that leaving it -- which is exactly what a coach does after
+        // speaking -- stopped `receive_speech` before those replies landed, so the transcript
+        // sat on "Finishing the last sentence..." forever and the closing words were dropped.
+        // Both systems are cheap no-ops when the microphone is closed.
         #[cfg(feature = "speech")]
-        app.init_resource::<speech::SpeechRuntime>().add_systems(
-            Update,
-            (speech::drive_speech, speech::receive_speech)
-                .chain()
-                .run_if(in_state(CreationPhase::Coaching)),
-        );
+        speech::register(app);
     }
 }
 

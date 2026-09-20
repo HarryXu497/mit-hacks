@@ -15,6 +15,7 @@ pub mod rl;
 pub mod systems;
 pub mod ui;
 pub mod jungle;
+pub mod assets;
 pub mod creation;
 pub mod tactics;
 

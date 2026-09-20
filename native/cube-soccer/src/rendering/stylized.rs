@@ -81,6 +81,44 @@ mod tests {
     }
 }
 
+/// A surface the jungle's cel pass must not touch.
+///
+/// The step function here is authored for flat-coloured props: a banner, a rock, a painted board.
+/// Run over a *textured* character it reads as bands of dark, which is not a look anyone chose --
+/// the generated monkeys came out as dark lumps. Their art already has its own shading baked into
+/// the texture, so they keep the standard material.
+#[derive(Component)]
+pub struct Unstylised;
+
+/// Mark a generated character's meshes so the cel pass leaves them alone.
+///
+/// A glTF scene's meshes are spawned by the asset server some frames after the scene is asked
+/// for, and they arrive as descendants rather than on the entity that asked. So this walks up
+/// from each unmarked surface looking for a [`CharacterSkin`](crate::entities::CharacterSkin),
+/// and tags what it finds. It runs before `stylize` and does nothing once everything is tagged.
+pub fn keep_characters_unstylised(
+    mut commands: Commands,
+    surfaces: Query<Entity, (With<Handle<StandardMaterial>>, Without<Unstylised>)>,
+    parents: Query<&Parent>,
+    skins: Query<(), With<crate::entities::CharacterSkin>>,
+) {
+    /// Deep enough for a glTF scene under a visual node under a body; the bound only stops a
+    /// malformed hierarchy from spinning here.
+    const MAX_DEPTH: usize = 12;
+
+    for surface in &surfaces {
+        let mut current = surface;
+        for _ in 0..MAX_DEPTH {
+            if skins.contains(current) {
+                commands.entity(surface).insert(Unstylised);
+                break;
+            }
+            let Ok(parent) = parents.get(current) else { break };
+            current = parent.get();
+        }
+    }
+}
+
 /// Swaps draw materials only. Physics, transforms and scoreboard emissives stay untouched.
 pub fn stylize(
     mut commands: Commands,
@@ -91,7 +129,10 @@ pub fn stylize(
     target: Option<ResMut<Assets<JungleMaterial>>>,
     surfaces: Query<
         (Entity, &Handle<StandardMaterial>, Option<&ActorSurface>),
-        Without<crate::systems::display::DigitSegment>,
+        (
+            Without<crate::systems::display::DigitSegment>,
+            Without<Unstylised>,
+        ),
     >,
 ) {
     let Some(mut target) = target else {

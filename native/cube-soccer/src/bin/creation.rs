@@ -11,14 +11,18 @@ use cube_soccer::rendering::{setup_lighting, stylized};
 
 fn main() {
     let mut app = App::new();
-    app.add_plugins(DefaultPlugins.set(WindowPlugin {
+    app.add_plugins(
+        DefaultPlugins
+            .set(cube_soccer::assets::asset_plugin())
+            .set(WindowPlugin {
         primary_window: Some(Window {
             title: "Canopy Clash | The Sitting".to_string(),
             resolution: (1440.0_f32, 900.0_f32).into(),
             ..default()
         }),
-        ..default()
-    }));
+            ..default()
+        }),
+    );
     // CANOPY_MSAA=0|2|4 to compare anti-aliasing cost on a given machine.
     if let Ok(samples) = std::env::var("CANOPY_MSAA") {
         app.insert_resource(match samples.as_str() {

@@ -127,12 +127,23 @@ fn ease(t: f32) -> f32 {
 /// The path bows outward through a waypoint above the valley rather than
 /// interpolating straight through the mountainside — a straight line from the
 /// peak to the broadcast position would clip through the summit massif.
+/// Carries the camera from the island down to the match.
+///
+/// `Flight` is optional rather than required. Whoever sets `Departing` is supposed to insert one
+/// describing the journey -- the table does, when the coach presses Enter -- but a hard `ResMut`
+/// turns forgetting into a crash at the exact moment a match starts, which is what happened once
+/// a second host started driving this phase. Without a flight there is nothing to move, so the
+/// camera is simply declared arrived.
 pub fn fly(
     time: Res<Time>,
-    mut flight: ResMut<Flight>,
+    flight: Option<ResMut<Flight>>,
     mut cameras: Query<&mut Transform, With<CreationCamera>>,
     mut phase: ResMut<NextState<CreationPhase>>,
 ) {
+    let Some(mut flight) = flight else {
+        phase.set(CreationPhase::Finished);
+        return;
+    };
     let Ok(mut transform) = cameras.get_single_mut() else {
         return;
     };

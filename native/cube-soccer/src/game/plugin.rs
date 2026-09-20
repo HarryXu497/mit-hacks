@@ -94,6 +94,7 @@ impl Plugin for CubeSoccerPlugin {
             .add_systems(PostStartup, (
                 crate::jungle::build_jungle,
                 crate::rendering::batching::merge_static_draws,
+                crate::rendering::stylized::keep_characters_unstylised,
                 crate::rendering::stylized::stylize,
             ).chain())
 

@@ -6,7 +6,7 @@ use crate::model::{create_id, RawSessionEvent, SessionStatus, Tool, TranscriptSo
 use crate::persistence::{export_tactical_json, PersistenceStatus};
 use crate::replay::{find_undo_target, replay_session};
 use crate::session::CoachingSession;
-use crate::speech::{SpeechRuntime, SpeechStatus};
+use cube_soccer::tactics::Transcript as TableTranscript;
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 
@@ -38,7 +38,7 @@ pub fn coaching_ui(
     mut session: ResMut<CoachingSession>,
     mut interaction: ResMut<BoardInteraction>,
     mut viewport: ResMut<BoardViewport>,
-    mut speech: ResMut<SpeechRuntime>,
+    table_speech: Res<TableTranscript>,
     mut result: ResMut<TacticalResult>,
     persistence: Res<PersistenceStatus>,
     mut ui_state: ResMut<CoachingUiState>,
@@ -48,12 +48,12 @@ pub fn coaching_ui(
 ) {
     let context = contexts.ctx_mut();
 
-    top_bar(context, &mut session, &mut speech, &mut ui_state);
+    top_bar(context, &mut session, &mut ui_state);
     timeline_panel(context, &mut session);
     transcript_panel(
         context,
         &mut session,
-        &mut speech,
+        &table_speech,
         &mut result,
         &persistence,
         &mut ui_state,
@@ -64,14 +64,13 @@ pub fn coaching_ui(
     board_panel(context, &mut session, &mut interaction, &mut viewport);
 
     if ui_state.confirm_reset {
-        reset_dialog(context, &mut session, &mut speech, &mut ui_state);
+        reset_dialog(context, &mut session, &mut ui_state);
     }
 }
 
 fn top_bar(
     context: &egui::Context,
     session: &mut CoachingSession,
-    speech: &mut SpeechRuntime,
     ui_state: &mut CoachingUiState,
 ) {
     egui::TopBottomPanel::top("top-bar")
@@ -113,11 +112,9 @@ fn top_bar(
                         .min_size(egui::vec2(142.0, 40.0));
                     if ui.add(button).clicked() {
                         if session.session.status == SessionStatus::Recording {
-                            speech.stop();
                             session.stop();
                         } else {
                             session.start_or_resume();
-                            speech.start(session);
                         }
                     }
                 });
@@ -206,7 +203,7 @@ fn tool_button(ui: &mut egui::Ui, interaction: &mut BoardInteraction, tool: Tool
 fn transcript_panel(
     context: &egui::Context,
     session: &mut CoachingSession,
-    speech: &mut SpeechRuntime,
+    table_speech: &TableTranscript,
     result: &mut TacticalResult,
     persistence: &PersistenceStatus,
     ui_state: &mut CoachingUiState,
@@ -227,13 +224,13 @@ fn transcript_panel(
                     "Live transcript"
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let status = match speech.status {
-                        SpeechStatus::Listening => "Listening…",
-                        SpeechStatus::Connecting => "Connecting…",
-                        SpeechStatus::Finalizing => "Finalizing…",
-                        SpeechStatus::Error => "Speech unavailable",
-                        SpeechStatus::Idle => "Idle",
-                    };
+                    // The table's microphone reports itself, in its own words. This panel used
+                    // to show its *own* `SpeechRuntime`, which no longer runs.
+                    let status = table_speech
+                        .status
+                        .lines()
+                        .next()
+                        .unwrap_or(if table_speech.live { "Listening" } else { "Idle" });
                     ui.label(egui::RichText::new(status).small().color(MUTED));
                 });
             });
@@ -242,7 +239,7 @@ fn transcript_panel(
             if result.output.is_some() {
                 result_view(ui, session, result, match_ready, coached_side);
             } else {
-                transcript_view(ui, session, speech, persistence, ui_state, requests, result);
+                transcript_view(ui, session, table_speech, persistence, ui_state, requests, result);
             }
         });
 }
@@ -250,33 +247,13 @@ fn transcript_panel(
 fn transcript_view(
     ui: &mut egui::Ui,
     session: &mut CoachingSession,
-    speech: &mut SpeechRuntime,
+    table_speech: &TableTranscript,
     persistence: &PersistenceStatus,
     ui_state: &mut CoachingUiState,
     requests: &mut EventWriter<RequestInterpretation>,
     result: &TacticalResult,
 ) {
-    if !speech.devices.is_empty() {
-        egui::ComboBox::from_label("Microphone")
-            .selected_text(
-                speech
-                    .devices
-                    .get(speech.selected_device)
-                    .map(String::as_str)
-                    .unwrap_or("Default"),
-            )
-            .show_ui(ui, |ui| {
-                for (index, device) in speech.devices.iter().enumerate() {
-                    ui.selectable_value(&mut speech.selected_device, index, device);
-                }
-            });
-    } else {
-        ui.colored_label(
-            egui::Color32::from_rgb(220, 170, 90),
-            "No microphone detected",
-        );
-    }
-    if let Some(error) = &speech.error {
+    if let Some(error) = table_speech.status.strip_prefix("Speech error: ") {
         ui.colored_label(egui::Color32::from_rgb(235, 170, 120), error);
     }
     if let Some(error) = &persistence.error {
@@ -298,7 +275,7 @@ fn transcript_view(
                 ui.label("Your recording is preserved. Retry, or explicitly continue with Balanced.");
                 ui.separator();
             }
-            if replay.transcripts.is_empty() && speech.partial_text.is_empty() {
+            if replay.transcripts.is_empty() && table_speech.partial.is_empty() {
                 ui.vertical_centered(|ui| {
                     ui.add_space(70.0);
                     ui.label(
@@ -332,9 +309,9 @@ fn transcript_view(
                 });
                 ui.separator();
             }
-            if !speech.partial_text.is_empty() {
+            if !table_speech.partial.is_empty() {
                 ui.label(
-                    egui::RichText::new(&speech.partial_text)
+                    egui::RichText::new(&table_speech.partial)
                         .italics()
                         .color(egui::Color32::from_rgb(170, 190, 215)),
                 );
@@ -367,12 +344,9 @@ fn transcript_view(
     let can_generate = matches!(
         session.session.status,
         SessionStatus::Review | SessionStatus::Interpreted
-    ) && !speech.is_finalizing()
-        && result.state != InterpretationState::Generating;
+    ) && result.state != InterpretationState::Generating;
     let label = if result.state == InterpretationState::Generating {
         "Generating…"
-    } else if speech.is_finalizing() {
-        "Finalizing transcript…"
     } else if result.state == InterpretationState::Failed {
         "Retry interpretation"
     } else {
@@ -546,7 +520,6 @@ fn timeline_panel(context: &egui::Context, session: &mut CoachingSession) {
 fn reset_dialog(
     context: &egui::Context,
     session: &mut CoachingSession,
-    speech: &mut SpeechRuntime,
     ui_state: &mut CoachingUiState,
 ) {
     egui::Window::new("Reset session?")
@@ -561,7 +534,6 @@ fn reset_dialog(
                 }
                 if ui.add(egui::Button::new("Reset").fill(RED)).clicked() {
                     session.reset();
-                    speech.reset(session.generation);
                     ui_state.manual_transcript.clear();
                     ui_state.confirm_reset = false;
                 }

@@ -65,6 +65,13 @@ pub fn update_camera(
     ball: Query<&Transform, (With<Ball>, Without<MainCamera>)>,
     mut cameras: Query<(&mut Transform, &mut CameraRig), With<MainCamera>>,
 ) {
+    if std::env::var("TACTIC_LAB_AUTOPLAY").is_ok() {
+        static TICKS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let n = TICKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if n % 120 == 0 {
+            eprintln!("DIAG update_camera tick {n}; cameras matched = {}", cameras.iter().count());
+        }
+    }
     for (mut transform, mut rig) in &mut cameras {
         if let Ok(ball) = ball.get_single() {
             let desired = Vec3::new(

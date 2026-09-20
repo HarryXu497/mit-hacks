@@ -38,17 +38,21 @@ use crate::phase::AppPhase;
 use crate::interpretation::{InterpretationState, RequestInterpretation, TacticalResult};
 use crate::model::SessionStatus;
 use crate::session::CoachingSession;
+use crate::EnterGame;
 use crate::tactics_bridge;
 
-use cube_soccer::creation::{camera::CreationCamera, persistence::CreationSession, CreationPhase, CreationPlugin};
+use cube_soccer::creation::camera::{broadcast_view, CreationCamera, Flight};
+use cube_soccer::creation::{persistence::CreationSession, CreationPhase, CreationPlugin};
 use cube_soccer::entities::{
     spawn_arena, spawn_ball, spawn_field, spawn_goals, spawn_players, spawn_wall_scoreboard,
 };
-use cube_soccer::game::{GameState, MatchState};
+use cube_soccer::game::{GameState, MatchState, MATCH_DURATION_SECS};
 use cube_soccer::jungle::{animate_jungle, animate_water, build_jungle};
 use cube_soccer::rendering::batching::merge_static_draws;
 use cube_soccer::rendering::setup_lighting;
-use cube_soccer::rendering::stylized::{is_rendering, register_shader, stylize, JungleMaterial};
+use cube_soccer::rendering::stylized::{
+    is_rendering, keep_characters_unstylised, register_shader, stylize, JungleMaterial,
+};
 use cube_soccer::systems::camera::{CameraRig, MainCamera};
 use cube_soccer::systems::physics::configure_physics;
 use cube_soccer::tactics::{
@@ -75,6 +79,7 @@ impl Plugin for WorldPlugin {
             // and the goal netting's sub-pixel beams sparkle with no coverage sampling at all.
             .insert_resource(Msaa::Sample2)
             .init_resource::<RoundCount>()
+            .init_resource::<HalfTime>()
             // The pitch and its lighting first, then the jungle on top of it. `build_jungle`
             // blanks the draw mesh of everything that already exists, rebuilding the arena, field
             // and goals procedurally -- so it has to run after the things it replaces, and the
@@ -107,7 +112,10 @@ impl Plugin for WorldPlugin {
             // Stylising runs every frame rather than once, because entities keep arriving: a
             // painting is hung, a generated character loads. It is a no-op for anything already
             // wearing the jungle material.
-            .add_systems(Update, (stylize, animate_jungle, animate_water))
+            .add_systems(
+                Update,
+                (keep_characters_unstylised, stylize, animate_jungle, animate_water).chain(),
+            )
             // The lobby's backdrop is the stadium itself, seen from a slow orbit. Set after the
             // creation camera is spawned, because it is that same camera -- there is only ever
             // one, and it is about to glide from here up to the easel.
@@ -122,8 +130,12 @@ impl Plugin for WorldPlugin {
                 (capture_the_drawings, open_the_table).chain(),
             )
             .add_systems(OnEnter(AppPhase::Game), leave_the_island)
-            .add_systems(OnEnter(CreationPhase::Finished), hand_the_camera_to_the_match)
-            .add_systems(OnEnter(MatchState::RoundOver), back_to_the_table)
+            .add_systems(
+                OnEnter(CreationPhase::Finished),
+                (hand_the_camera_to_the_match, kick_off).chain(),
+            )
+            .add_systems(OnEnter(MatchState::RoundOver), half_time)
+            .add_systems(OnEnter(AppPhase::Game), a_new_match_has_its_interval_to_come)
             .add_systems(
                 Update,
                 (
@@ -227,15 +239,36 @@ fn open_the_table(phase: Res<State<AppPhase>>, mut next: ResMut<NextState<AppPha
 /// pushes both coaches' merged output, which can be a good while after this machine finished
 /// coaching.
 fn leave_the_island(
+    mut commands: Commands,
     phase: Res<State<CreationPhase>>,
     mut next: ResMut<NextState<CreationPhase>>,
     mut rounds: ResMut<RoundCount>,
+    cameras: Query<&Transform, With<CreationCamera>>,
 ) {
     rounds.0 += 1;
     // Already down on the pitch: a later round needs no second flight.
-    if !matches!(*phase.get(), CreationPhase::Finished | CreationPhase::Departing) {
-        next.set(CreationPhase::Departing);
+    if matches!(*phase.get(), CreationPhase::Finished | CreationPhase::Departing) {
+        return;
     }
+    let Ok(from) = cameras.get_single() else {
+        // No camera to fly. Skip straight to arrived rather than entering a phase whose only
+        // system has nothing to move.
+        next.set(CreationPhase::Finished);
+        return;
+    };
+
+    // `Departing` is not a state the camera can be put into on its own: `camera::fly` reads a
+    // `Flight` resource describing the journey, and the table inserts one when the coach presses
+    // Enter to leave. Setting the phase without it panicked the moment the match started --
+    // "Resource requested by creation::camera::fly does not exist". The flight has to be handed
+    // over with the phase, from wherever the camera currently is.
+    commands.insert_resource(Flight {
+        elapsed: 0.0,
+        duration: cube_soccer::creation::FLIGHT_SECONDS,
+        from: *from,
+        to: broadcast_view(),
+    });
+    next.set(CreationPhase::Departing);
 }
 
 /// Hand the creation camera over to the match once it has landed.
@@ -246,28 +279,97 @@ fn leave_the_island(
 /// `MainCamera` and starts following the ball from exactly where the flight left it.
 fn hand_the_camera_to_the_match(
     mut commands: Commands,
-    camera: Query<Entity, (With<CreationCamera>, Without<MainCamera>)>,
+    mut camera: Query<(Entity, &mut Transform), (With<CreationCamera>, Without<MainCamera>)>,
 ) {
-    for entity in &camera {
+    for (entity, mut transform) in &mut camera {
+        // Placed, not merely marked. `update_camera` will drive it from here, but it runs in
+        // PostUpdate, so without this the first rendered frame of a match is still looking at
+        // the tactics board.
+        *transform = broadcast_view();
+
+        // And `CreationCamera` comes off. It is the tag every camera system in `creation` keys
+        // on -- `glide` pulls the camera to the easel or the table, `fly` carries it down -- so
+        // leaving it attached means the match camera is still reachable by systems that believe
+        // they own it. Handing it over has to be a handover, not a shared claim: after this,
+        // `update_camera` is the only thing that moves it.
         commands
             .entity(entity)
-            .insert((MainCamera, CameraRig::default()));
+            .insert((MainCamera, CameraRig::default()))
+            .remove::<CreationCamera>();
     }
 }
 
-/// A round has ended: go back up to the table and coach the next one.
+/// The flight has landed: start the match.
 ///
-/// This is what "plays are defined in rounds" means. The match does not need pausing explicitly --
-/// every gameplay system is gated on `in_state(AppPhase::Game)`, so leaving that phase stops the
-/// AI, movement and scoring on its own, and the world simply stands there while the coach works.
+/// This link was missing, and its absence was the whole game. The table's Enter key carries the
+/// camera down to the pitch and leaves `CreationPhase` at `Finished` — but `AppPhase` stayed on
+/// `Coaching`, and *every* match system is gated on `in_state(AppPhase::Game)`:
+/// `apply_heuristic_ai`, `apply_player_movement`, `activate_superpowers`, `detect_goals`,
+/// `update_timers`, possession. So the camera showed a pitch with ten players standing on it
+/// under gravity and no game running at all. It looked like broken AI; there was no AI.
 ///
-/// Solo only. In networked play the lobby merges both coaches' output once per *match*, so
-/// re-coaching every round would mean re-synchronising two machines every fifteen seconds over a
-/// protocol that has no version negotiation. A networked match keeps its opening play throughout.
-fn back_to_the_table(
+/// `EnterGame` is sent first so the coached play is applied by `handle_enter_game`, which is
+/// where the tactical output is validated and turned into `TeamTactics`. If it refuses — no
+/// interpretation yet, or a failed one — the match still begins, on the balanced default that
+/// `GamePlugin` already registers. A coach who could not reach the model should still get a game,
+/// and arriving on the pitch must never be a dead end.
+fn kick_off(
+    phase: Res<State<AppPhase>>,
+    role: Option<Res<NetworkRole>>,
+    result: Res<TacticalResult>,
+    session: Res<CoachingSession>,
+    mut enter_game: EventWriter<EnterGame>,
+    mut next_phase: ResMut<NextState<AppPhase>>,
+) {
+    // Networked play starts when the server pushes both coaches' merged output, not when this
+    // machine's camera lands; `network.rs` owns that transition.
+    if role.map(|role| role.is_networked()).unwrap_or(false) {
+        return;
+    }
+    if *phase.get() == AppPhase::Game {
+        return;
+    }
+
+    let coached_play_is_ready = result.state == InterpretationState::Ready
+        && session.session.status == SessionStatus::Interpreted;
+    if coached_play_is_ready {
+        enter_game.send(EnterGame);
+    } else {
+        next_phase.set(AppPhase::Game);
+    }
+}
+
+/// Whether the coach has already had their half-time interval this match.
+///
+/// One break per match, so this has to outlive the round it is taken in.
+#[derive(Resource, Default)]
+pub struct HalfTime {
+    taken: bool,
+}
+
+/// Half time: go back up to the table once, at the midpoint, to change the play.
+///
+/// Plays used to be re-coached at *every* round boundary -- every fifteen seconds of a
+/// five-minute match, twenty interruptions. That is not how a game of soccer is coached, so the
+/// interval now happens once, when the match clock reaches halfway.
+///
+/// It is taken at the first round boundary at or after the midpoint rather than at the exact
+/// second, because the round boundary is already a clean break: positions have just been reset
+/// and the ball is back on the centre spot, so play is never interrupted mid-move.
+///
+/// The match does not need pausing explicitly -- every gameplay system is gated on
+/// `in_state(AppPhase::Game)`, including `update_timers`, so leaving that phase stops the AI,
+/// movement, scoring *and the clock* on its own, and the world simply stands there while the
+/// coach works.
+///
+/// Solo only. In networked play the lobby merges both coaches' output once per match, so
+/// re-coaching mid-match would mean re-synchronising two machines over a protocol that has no
+/// version negotiation. A networked match keeps its opening play throughout.
+fn half_time(
     role: Option<Res<NetworkRole>>,
     state: Res<GameState>,
     phase: Res<State<AppPhase>>,
+    mut half: ResMut<HalfTime>,
     mut next_phase: ResMut<NextState<AppPhase>>,
     mut next_creation: ResMut<NextState<CreationPhase>>,
     mut table: ResMut<TableSession>,
@@ -280,14 +382,34 @@ fn back_to_the_table(
     if *phase.get() != AppPhase::Game || state.winner.is_some() {
         return;
     }
+    if !is_half_time(state.time_remaining, half.taken) {
+        return;
+    }
+    half.taken = true;
 
-    // A fresh play, on a fresh clock. The previous round's log has already been mirrored into the
+    // A fresh play, on a fresh clock. The first half's log has already been mirrored into the
     // session and interpreted, so nothing is lost by clearing it -- and keeping it would put the
-    // last round's movements into the next round's evidence.
+    // first half's movements into the second half's evidence.
     *table = TableSession::default();
     next_table.set(TableState::Setup);
     next_creation.set(CreationPhase::Coaching);
     next_phase.set(AppPhase::Coaching);
+}
+
+/// Whether this round boundary is the half-time interval.
+///
+/// The first boundary at or after the midpoint, and only ever one per match.
+fn is_half_time(time_remaining: f32, already_taken: bool) -> bool {
+    !already_taken && time_remaining <= MATCH_DURATION_SECS / 2.0
+}
+
+/// A match starting from a full clock has not had its interval yet.
+///
+/// Without this a second match in the same session would kick off already past half time.
+fn a_new_match_has_its_interval_to_come(state: Res<GameState>, mut half: ResMut<HalfTime>) {
+    if state.time_remaining >= MATCH_DURATION_SECS {
+        half.taken = false;
+    }
 }
 
 /// Start and stop are the panel's to give: push them to the table when they change.
@@ -434,5 +556,28 @@ mod tests {
                 "the guard in leave_the_island must cover {already_down:?}"
             );
         }
+    }
+
+    /// Plays are re-coached once, at half time -- not twenty times a match.
+    ///
+    /// The interval used to be taken at *every* round boundary: a five-minute match with
+    /// fifteen-second rounds meant twenty trips back to the table.
+    #[test]
+    fn the_interval_is_taken_once_at_the_midpoint() {
+        let full = cube_soccer::game::MATCH_DURATION_SECS;
+
+        // The whole first half is played without interruption.
+        for elapsed in [0.0, 0.25, 0.49] {
+            assert!(
+                !is_half_time(full - full * elapsed, false),
+                "no interval {elapsed} of the way through the first half"
+            );
+        }
+        // The first boundary at or past the midpoint takes it.
+        assert!(is_half_time(full / 2.0, false), "the midpoint is half time");
+        assert!(is_half_time(full * 0.4, false), "so is the first boundary after it");
+        // And the second half is played without interruption.
+        assert!(!is_half_time(full * 0.4, true), "one interval per match, not two");
+        assert!(!is_half_time(1.0, true), "not again in the closing seconds");
     }
 }

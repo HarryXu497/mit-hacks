@@ -29,6 +29,24 @@ pub struct BallBundle {
     pub ccd: Ccd,
 }
 
+/// Continuous collision detection for the ball.
+///
+/// **On for the game, off for headless training.** These are two genuinely different needs and
+/// the merge dropped one of them: main turned CCD off for simulation throughput, and the coaching
+/// app had turned it back on with the note "preserve the visible game's continuous ball collision
+/// detection". Taking main's line wholesale meant a moving ball tunnelled clean through players --
+/// the ball could not be touched, which is exactly what it looked like.
+///
+/// Training runs headless and samples far more steps than a match ever will, so it keeps the
+/// cheaper setting; anything anyone watches keeps the correct one.
+fn ball_ccd() -> Ccd {
+    if cfg!(feature = "headless") {
+        Ccd::disabled()
+    } else {
+        Ccd::enabled()
+    }
+}
+
 impl BallBundle {
     pub fn new(
         position: Vec3,
@@ -59,7 +77,7 @@ impl BallBundle {
                 linear_damping: BALL_LINEAR_DAMPING,
                 angular_damping: BALL_ANGULAR_DAMPING,
             },
-            ccd: Ccd::disabled(), // CCD off for sim throughput; re-enable if the ball tunnels
+            ccd: ball_ccd(),
         }
     }
 }
