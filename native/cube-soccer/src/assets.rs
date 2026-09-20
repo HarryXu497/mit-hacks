@@ -17,10 +17,20 @@ use std::path::PathBuf;
 /// levels below the root. `TACTIC_LAB_ASSETS` overrides it, which is the hook a packaged build
 /// would use -- there is no packaged build yet, and when there is, this is the one line it needs.
 pub fn root() -> PathBuf {
-    if let Ok(override_path) = std::env::var("TACTIC_LAB_ASSETS") {
-        return PathBuf::from(override_path);
+    resolve(std::env::var("TACTIC_LAB_ASSETS").ok())
+}
+
+/// [`root`] with the override handed in rather than read from the environment.
+///
+/// Split out so the override can be tested without a test setting a process-wide variable that
+/// every other test in the binary can see. It used to, and the comment claiming the two tests
+/// were serialised was wrong -- the harness runs them in parallel, so whether the other test
+/// caught the variable mid-flight came down to how long the rest of the suite took.
+fn resolve(override_path: Option<String>) -> PathBuf {
+    match override_path {
+        Some(path) => PathBuf::from(path),
+        None => PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets")),
     }
-    PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets"))
 }
 
 /// An [`AssetPlugin`](bevy::asset::AssetPlugin) pointed at that directory.
@@ -51,10 +61,14 @@ mod tests {
 
     #[test]
     fn an_override_wins_so_a_packaged_build_has_somewhere_to_point() {
-        // Serialised against the other test only by not being run concurrently with it in the
-        // same process for the same variable; `root()` reads the variable each call.
-        std::env::set_var("TACTIC_LAB_ASSETS", "/somewhere/else");
-        assert_eq!(root(), PathBuf::from("/somewhere/else"));
-        std::env::remove_var("TACTIC_LAB_ASSETS");
+        assert_eq!(
+            resolve(Some("/somewhere/else".to_owned())),
+            PathBuf::from("/somewhere/else")
+        );
+    }
+
+    #[test]
+    fn without_an_override_the_repos_own_assets_are_used() {
+        assert_eq!(resolve(None), root(), "no override should resolve to the repo's assets");
     }
 }

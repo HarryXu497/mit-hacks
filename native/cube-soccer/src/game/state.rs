@@ -15,9 +15,12 @@ pub enum MatchState {
 pub struct GameState {
     pub score: [u32; 2],  // [Orange, Blue]
     pub time_remaining: f32,
-    pub round_timer: f32,  // 15 second round timer
+    pub round_timer: f32,
     pub winner: Option<Team>,
     pub current_step: u32,
+    /// Who scored the most recent goal, so the restart can give the kickoff to the side that
+    /// conceded. `None` before the first goal of a match.
+    pub last_scorer: Option<Team>,
 }
 
 impl Default for GameState {
@@ -28,6 +31,7 @@ impl Default for GameState {
             round_timer: ROUND_DURATION_SECS,
             winner: None,
             current_step: 0,
+            last_scorer: None,
         }
     }
 }
@@ -39,6 +43,7 @@ impl GameState {
         self.round_timer = ROUND_DURATION_SECS;
         self.winner = None;
         self.current_step = 0;
+        self.last_scorer = None;
     }
 
     pub fn reset_round(&mut self) {
@@ -50,6 +55,12 @@ impl GameState {
             Team::Orange => self.score[0] += 1,
             Team::Blue => self.score[1] += 1,
         }
+        self.last_scorer = Some(team);
+    }
+
+    /// Total goals scored by both sides.
+    pub fn goals_scored(&self) -> u32 {
+        self.score[0] + self.score[1]
     }
 
     pub fn get_score(&self, team: Team) -> u32 {

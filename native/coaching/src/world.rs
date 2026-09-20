@@ -134,7 +134,15 @@ impl Plugin for WorldPlugin {
                 OnEnter(CreationPhase::Finished),
                 (hand_the_camera_to_the_match, kick_off).chain(),
             )
-            .add_systems(OnEnter(MatchState::RoundOver), half_time)
+            // Both restarts, not just the round boundary. A round is forty-five seconds now,
+            // so waiting for one could carry the interval most of a round past the midpoint,
+            // while goals arrive every twenty or thirty seconds -- and a goal is just as clean
+            // a break to take it at, for the same reason: the ball is back on the centre spot.
+            .add_systems(
+                OnEnter(MatchState::RoundOver),
+                half_time,
+            )
+            .add_systems(OnEnter(MatchState::GoalScored), half_time)
             .add_systems(OnEnter(AppPhase::Game), a_new_match_has_its_interval_to_come)
             .add_systems(
                 Update,
@@ -304,7 +312,7 @@ fn hand_the_camera_to_the_match(
 /// This link was missing, and its absence was the whole game. The table's Enter key carries the
 /// camera down to the pitch and leaves `CreationPhase` at `Finished` — but `AppPhase` stayed on
 /// `Coaching`, and *every* match system is gated on `in_state(AppPhase::Game)`:
-/// `apply_heuristic_ai`, `apply_player_movement`, `activate_superpowers`, `detect_goals`,
+/// `apply_soccer_ai`, `apply_player_movement`, `activate_superpowers`, `detect_goals`,
 /// `update_timers`, possession. So the camera showed a pitch with ten players standing on it
 /// under gravity and no game running at all. It looked like broken AI; there was no AI.
 ///
@@ -353,9 +361,11 @@ pub struct HalfTime {
 /// five-minute match, twenty interruptions. That is not how a game of soccer is coached, so the
 /// interval now happens once, when the match clock reaches halfway.
 ///
-/// It is taken at the first round boundary at or after the midpoint rather than at the exact
-/// second, because the round boundary is already a clean break: positions have just been reset
-/// and the ball is back on the centre spot, so play is never interrupted mid-move.
+/// It is taken at the first restart at or after the midpoint rather than at the exact second,
+/// because a restart is already a clean break: positions have just been reset and the ball is
+/// back on the centre spot, so play is never interrupted mid-move. Either kind of restart
+/// counts -- a goal as well as a round boundary -- since a round now lasts forty-five seconds
+/// and waiting only for those would push the interval well past halfway.
 ///
 /// The match does not need pausing explicitly -- every gameplay system is gated on
 /// `in_state(AppPhase::Game)`, including `update_timers`, so leaving that phase stops the AI,

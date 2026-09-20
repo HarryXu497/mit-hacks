@@ -26,6 +26,17 @@ worktree, Python service, or trained model is needed for gameplay. See
 [docs/native-coaching.md](./docs/native-coaching.md) for platform setup,
 permissions, storage, and verification.
 
+The coached play reaches the pitch as team shape and on-ball decisions: the side
+picks a ball carrier, shoots at the open part of the goal, passes to whoever is
+best placed, clears when it is pinned in its own third, and brings the ball back
+infield when it drifts wide. How high the team holds its line, how many players
+leave the shape to press, how wide it spreads, and how readily it shoots all come
+from the coached tactic, so an aggressive play looks aggressive. Matches are
+high-scoring by design — there is no goalkeeper. `native/cube-soccer/src/systems/soccer_ai.rs`
+is the whole of it, and its tests play simulated matches to check that goals keep
+coming, that the ball never leaves the game for long, and that the tactic is
+visible in where the ball spends the match.
+
 ## Run the local service only
 
 ```bash
