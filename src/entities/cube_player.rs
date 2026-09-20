@@ -94,6 +94,7 @@ pub fn spawn_players(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    asset_server: Res<AssetServer>,
 ) {
     // Eye materials (shared)
     let eye_white = materials.add(StandardMaterial {
@@ -113,6 +114,7 @@ pub fn spawn_players(
                 &mut commands,
                 &mut meshes,
                 &mut materials,
+                &asset_server,
                 team,
                 index,
                 get_spawn_position(team, index),
@@ -129,6 +131,7 @@ fn spawn_player_with_eyes(
     commands: &mut Commands,
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
+    asset_server: &AssetServer,
     team: Team,
     index: usize,
     position: Vec3,
@@ -142,7 +145,24 @@ fn spawn_player_with_eyes(
     let eye_y = 0.15;  // Slightly above center
     let eye_spacing = 0.3;  // Distance between eyes
 
-    commands.spawn(CubePlayerBundle::new(team, index, position, meshes, materials))
+    // A generated character replaces the cube's *appearance* only. The bundle below -- collider,
+    // mass, damping, locked axes -- is spawned identically either way, so physics and the
+    // observation vector are unaffected and trained policies stay valid.
+    let mut entity = commands.spawn(CubePlayerBundle::new(team, index, position, meshes, materials));
+    let mut skinned = false;
+    entity.with_children(|parent| {
+        skinned = crate::entities::character::spawn_skin(parent, asset_server, team);
+    });
+
+    if skinned {
+        // Hide the cube itself without hiding its children: `Visibility::Hidden` would take the
+        // character down with it, since visibility propagates. Swapping in the default mesh
+        // handle draws nothing while leaving the hierarchy intact.
+        entity.insert(Handle::<Mesh>::default());
+        return;
+    }
+
+    entity
         .with_children(|parent| {
             // Left eye (white globe)
             parent.spawn(PbrBundle {

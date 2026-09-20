@@ -16,6 +16,10 @@ rust-version = "1.75"
 # Game engine and physics - using 0.13 for better compatibility
 bevy = { version = "0.13", default-features = false, features = [
     "bevy_asset",
+    # Loads the generated character models. Without it `SceneBundle`'s glTF loader is absent and
+    # every .glb silently fails to load, leaving players as bare cubes.
+    "bevy_gltf",
+    "bevy_scene",
     "bevy_winit",
     "bevy_core_pipeline",
     "bevy_pbr",
