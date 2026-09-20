@@ -366,14 +366,34 @@ mod tests {
 
     #[test]
     fn creation_starts_with_the_appearance_like_the_2d_flow() {
-        assert_eq!(CreationPhase::default(), CreationPhase::PaintingAppearance);
-        assert_eq!(CreationPhase::default().slot(), Some(Slot::Appearance));
+        // The first *step* is still the appearance, exactly as the 2D screen's flow was. What
+        // changed is that it no longer begins on its own: the host says when, because the
+        // combined app opens on a lobby menu and painting behind it would read stray clicks onto
+        // the canvas. `bin/creation.rs` is only the clearing, so it steps up at startup.
+        assert_eq!(
+            CreationPhase::PaintingAppearance.slot(),
+            Some(Slot::Appearance)
+        );
+    }
+
+    #[test]
+    fn nothing_is_painted_until_the_host_steps_up_to_the_easel() {
+        let idle = CreationPhase::default();
+        assert_eq!(idle, CreationPhase::Idle);
+        assert!(idle.is_idle());
+        assert!(!idle.at_the_easel(), "no painting systems run while idle");
+        assert_eq!(idle.slot(), None, "and no stroke has anywhere to land");
     }
 
     #[test]
     fn only_painting_steps_accept_paint() {
         assert_eq!(CreationPhase::PaintingSuperpower.slot(), Some(Slot::Superpower));
-        for phase in [CreationPhase::Review, CreationPhase::Departing, CreationPhase::Finished] {
+        for phase in [
+            CreationPhase::Idle,
+            CreationPhase::Review,
+            CreationPhase::Departing,
+            CreationPhase::Finished,
+        ] {
             assert_eq!(phase.slot(), None, "{phase:?} must not take strokes");
         }
     }
