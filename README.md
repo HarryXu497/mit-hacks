@@ -35,7 +35,7 @@ from the coached tactic, so an aggressive play looks aggressive. Matches are
 high-scoring by design — there is no goalkeeper. `native/cube-soccer/src/systems/soccer_ai.rs`
 is the whole of it, and its tests play simulated matches to check that goals keep
 coming, that the ball never leaves the game for long, and that the tactic is
-visible in where the ball spends the match.
+visible in where the players spend the match.
 
 ## Run the local service only
 
