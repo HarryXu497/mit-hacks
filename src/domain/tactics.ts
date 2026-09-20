@@ -70,7 +70,7 @@ export const TACTIC_TAXONOMY = [
 ] as const;
 
 export const playerOverrideSchema = z.object({
-  playerId: z.number().int().min(1).max(5),
+  playerId: z.number().int().min(1).max(10),
   tactic: tacticKeySchema,
   evidence: z.object({ eventIds: z.array(z.string()), transcriptSegmentIds: z.array(z.string()) }),
 });

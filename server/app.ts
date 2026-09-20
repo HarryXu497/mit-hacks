@@ -1,7 +1,9 @@
+import cors from "cors";
 import express from "express";
 import { ZodError } from "zod";
 import { interpretationRequestSchema } from "../src/domain/schemas";
 import type { Session } from "../src/domain/types";
+import { lobbyRouter } from "./lobby";
 import { GroundingError } from "./normalize";
 import {
   InterpretationServiceError,
@@ -9,12 +11,16 @@ import {
   type ModelInterpretationResult,
 } from "./openaiInterpretation";
 
-type Interpreter = (session: Session) => Promise<ModelInterpretationResult>;
+type Interpreter = (session: Session, teamId?: "red" | "yellow") => Promise<ModelInterpretationResult>;
 
 export function createApp(interpreter: Interpreter = interpretSessionWithOpenAI) {
   const app = express();
   app.disable("x-powered-by");
+  // LAN-only hackathon demo: any machine on the same wifi may be the joiner,
+  // so origin is intentionally unrestricted rather than a per-deploy allowlist.
+  app.use(cors());
   app.use(express.json({ limit: "1mb" }));
+  app.use(lobbyRouter());
 
   app.get("/api/health", (_request, response) => {
     response.json({ ok: true, openaiConfigured: Boolean(process.env.OPENAI_API_KEY && process.env.OPENAI_MODEL) });
@@ -22,8 +28,8 @@ export function createApp(interpreter: Interpreter = interpretSessionWithOpenAI)
 
   app.post("/api/interpret", async (request, response) => {
     try {
-      const { session } = interpretationRequestSchema.parse(request.body);
-      const result = await interpreter(session);
+      const { session, teamId } = interpretationRequestSchema.parse(request.body);
+      const result = await interpreter(session, teamId);
       if (result.telemetry.requestId) response.setHeader("x-openai-request-id", result.telemetry.requestId);
       response.json(result.output);
     } catch (error) {

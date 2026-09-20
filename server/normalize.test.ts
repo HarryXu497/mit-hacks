@@ -116,6 +116,28 @@ describe("model interpretation assembly", () => {
     }
   });
 
+  it("assembles a yellow-team selection with overrides scoped to players 6-10", () => {
+    const session = fixtureSession();
+    session.events[0] = {
+      ...session.events[0],
+      entity: { kind: "player", id: 8 },
+    } as typeof session.events[0];
+    const candidate = semantic();
+    candidate.playerOverrides = [{ playerId: 8, tactic: "lowblock", evidence: { eventIds: ["move-1"], transcriptSegmentIds: [] } }];
+    const input = buildInterpretationInput(session, "yellow");
+    const output = assembleTacticalOutput(session, input, candidate);
+    expect(output.rlSelection.teamId).toBe("yellow");
+    expect(output.rlSelection.playerOverrides).toEqual(candidate.playerOverrides);
+  });
+
+  it("rejects a yellow-team override for a red player", () => {
+    const session = fixtureSession();
+    const candidate = semantic();
+    candidate.playerOverrides = [{ playerId: 3, tactic: "lowblock", evidence: { eventIds: ["move-1"], transcriptSegmentIds: [] } }];
+    const input = buildInterpretationInput(session, "yellow");
+    expect(() => assembleTacticalOutput(session, input, candidate)).toThrow(GroundingError);
+  });
+
   it("maps service failures to explicit API errors", () => {
     expect(apiErrorResponse(new InterpretationServiceError("OPENAI_TIMEOUT", "Timed out.", 504))).toEqual({
       status: 504,

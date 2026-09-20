@@ -23,6 +23,7 @@ export interface InterpretationInput {
   session: { id: string; title: string; durationMs: number };
   boardContext: {
     format: "fixed-5v5";
+    coachedTeam: "red" | "yellow";
     coordinateSystem: {
       normalized: true;
       x: "0=left, 1=right";
@@ -41,7 +42,15 @@ export interface InterpretationInput {
   transcriptSegments: TranscriptSegment[];
 }
 
-export function buildInterpretationInput(session: Session): InterpretationInput {
+const TEAM_ROSTERS: Record<"red" | "yellow", number[]> = {
+  red: [1, 2, 3, 4, 5],
+  yellow: [6, 7, 8, 9, 10],
+};
+
+export function buildInterpretationInput(
+  session: Session,
+  teamId: "red" | "yellow" = "red",
+): InterpretationInput {
   const replay = replaySession(session.events);
   const activeAnnotationIds = new Set(replay.board.annotations.map((annotation) => annotation.id));
   const boardEvents = replay.effectiveEvents.filter((event): event is EvidenceEvent => {
@@ -54,14 +63,15 @@ export function buildInterpretationInput(session: Session): InterpretationInput 
     session: { id: session.id, title: session.title, durationMs: session.elapsedMs },
     boardContext: {
       format: "fixed-5v5",
+      coachedTeam: teamId,
       coordinateSystem: {
         normalized: true,
         x: "0=left, 1=right",
         y: "0=top goal, 1=bottom goal",
       },
       teams: [
-        { id: "red", playerIds: [1, 2, 3, 4, 5], defends: "top", attacks: "bottom" },
-        { id: "yellow", playerIds: [6, 7, 8, 9, 10], defends: "bottom", attacks: "top" },
+        { id: "red", playerIds: TEAM_ROSTERS.red, defends: "top", attacks: "bottom" },
+        { id: "yellow", playerIds: TEAM_ROSTERS.yellow, defends: "bottom", attacks: "top" },
       ],
     },
     taxonomy: TACTIC_TAXONOMY,
@@ -77,10 +87,17 @@ export function assembleTacticalOutput(
   semantic: SemanticInterpretation,
 ): TacticalOutput {
   semantic = semanticInterpretationSchema.parse(semantic);
+  const teamId = input.boardContext.coachedTeam;
+  const roster = TEAM_ROSTERS[teamId];
   const events = new Map(input.boardEvents.map((event) => [event.id, event]));
   const transcripts = new Map(input.transcriptSegments.map((segment) => [segment.id, segment]));
   const overriddenPlayers = new Set<number>();
   for (const override of semantic.playerOverrides) {
+    if (!roster.includes(override.playerId)) {
+      throw new GroundingError(
+        `Player override ${override.playerId} is not on the coached team (${teamId}: ${roster.join(", ")}).`,
+      );
+    }
     if (overriddenPlayers.has(override.playerId)) {
       throw new GroundingError(`Duplicate player override: ${override.playerId}`);
     }
@@ -180,7 +197,7 @@ export function assembleTacticalOutput(
       sessionId: session.id,
       primaryTactic: classification.primaryTactic,
       downstreamValue: downstreamValueFor(classification.primaryTactic),
-      teamId: "red",
+      teamId,
       playerOverrides: semantic.playerOverrides,
       selectionReason: classification.selectionReason,
       evidenceStrength: classification.evidenceStrength,

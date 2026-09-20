@@ -78,7 +78,7 @@ export const tacticalOutputSchema = z.object({
     sessionId: z.string(),
     primaryTactic: tacticKeySchema,
     downstreamValue: tacticKeySchema,
-    teamId: z.literal("red"),
+    teamId: z.enum(["red", "yellow"]),
     playerOverrides: z.array(playerOverrideSchema),
     selectionReason: classificationSchema.shape.selectionReason,
     evidenceStrength: classificationSchema.shape.evidenceStrength,
@@ -95,6 +95,7 @@ const isBoardAction = (
 export function interpretSession(
   session: Session,
   mode: "deterministic-preview" | "deterministic-fallback" = "deterministic-preview",
+  teamId: "red" | "yellow" = "red",
 ): TacticalOutput {
   const replay = replaySession(session.events);
   const boardActions = replay.effectiveEvents.filter(isBoardAction);
@@ -185,7 +186,7 @@ export function interpretSession(
       sessionId: session.id,
       primaryTactic: "balanced",
       downstreamValue: downstreamValueFor("balanced"),
-      teamId: "red",
+      teamId,
       playerOverrides: [],
       selectionReason: "system_fallback",
       evidenceStrength: "weak",

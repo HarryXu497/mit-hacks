@@ -81,4 +81,5 @@ export const sessionSchema = z.object({
 export const interpretationRequestSchema = z.object({
   schemaVersion: z.literal("1.0"),
   session: sessionSchema,
+  teamId: z.enum(["red", "yellow"]).default("red"),
 });
