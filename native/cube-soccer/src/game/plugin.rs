@@ -20,6 +20,8 @@ use crate::systems::{
     trail::TrailSpawnTimer,
     superpowers::{tick_superpower_cooldowns, activate_superpowers},
     power_vfx::{animate_power_fx, load_power_fx, reset_power_fx_glow, spawn_power_fx, PowerFired},
+    power_auras::{load_auras, pulse_status_auras, sync_status_auras},
+    power_loadout::{deal_superpowers, superpower_keys},
 };
 use crate::input::keyboard::keyboard_input_system;
 use crate::rendering::lighting::setup_lighting;
@@ -76,6 +78,8 @@ impl Plugin for CubeSoccerPlugin {
             .add_event::<BallTouchedEvent>()
             .add_event::<ImpulseEvent>()
             .add_event::<PowerFired>()
+            // Once the roster exists, so a match has powers to fire at all.
+            .add_systems(PostStartup, deal_superpowers)
 
             // Physics
             .add_plugins(RapierPhysicsPlugin::<NoUserData>::default())
@@ -97,6 +101,7 @@ impl Plugin for CubeSoccerPlugin {
                 setup_power_hud,
                 setup_goal_banner,
                 load_power_fx,
+                load_auras,
             ))
 
             // The jungle is built after the pitch exists, then the static props are merged into a
@@ -123,6 +128,7 @@ impl Plugin for CubeSoccerPlugin {
             // Update systems during playing
             .add_systems(Update, (
                 keyboard_input_system,
+                superpower_keys,
                 tick_superpower_cooldowns,
                 activate_superpowers,
                 tick_status_effects,
@@ -144,6 +150,10 @@ impl Plugin for CubeSoccerPlugin {
                 reset_power_fx_glow,
                 spawn_power_fx.after(activate_superpowers),
                 animate_power_fx,
+                // The consequence, not the cast: a shell for as long as the effect lasts, so a
+                // frozen player reads as frozen once the beam is gone.
+                sync_status_auras,
+                pulse_status_auras,
             ).chain())
             .add_systems(Update, (fill_power_rail, update_power_hud).chain())
 

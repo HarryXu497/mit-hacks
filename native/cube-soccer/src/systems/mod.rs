@@ -22,6 +22,8 @@ pub mod kick;
 pub mod movement;
 pub mod physics;
 pub mod possession;
+pub mod power_auras;
+pub mod power_loadout;
 pub mod power_vfx;
 pub mod reset;
 pub mod scoring;
