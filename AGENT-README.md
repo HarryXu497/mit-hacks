@@ -16,12 +16,13 @@ together.
 ## The pipeline, at a glance
 
 The native desktop app (`native/coaching/src/bin/native-coaching.rs`) is a
-single Bevy application that moves through three phases, tracked by one
+single Bevy application that moves through four phases, tracked by one
 state enum:
 
 ```rust
 // native/coaching/src/phase.rs
 pub enum AppPhase {
+    Lobby,     // main menu: Host / Join / Play Solo
     Creation,  // draw a player
     Coaching,  // record a tactic on the board
     Game,      // play the resulting minigame
@@ -31,9 +32,9 @@ pub enum AppPhase {
 Roughly:
 
 ```
-Player Creation  →  Coaching  →  Interpretation  →  Game
- (draw a player)   (record a     (raw session      (3D soccer
-                     tactic)      → tactical JSON)   minigame)
+Lobby     →  Player Creation  →  Coaching  →  Interpretation  →  Game
+(Host/Join/   (draw a player)   (record a     (raw session      (3D soccer
+ Solo menu)                      tactic)       → tactical JSON)   minigame)
 ```
 
 The coaching → interpretation → game handoff is wired through a validated
@@ -149,14 +150,24 @@ Shape, roughly:
 - **`rlSelection`** is the game handoff. `primaryTactic` and `downstreamValue`
   use the same canonical label: `balanced`, `highpress`, `gegenpress`,
   `lowblock`, `parkthebus`, `counterattack`, `possession`, `wingplay`,
-  `narrowmidblock`, or `alloutattack`. The server interprets the red team's
-  intended behavior. Optional, unique overrides refer only to red IDs 1–5,
-  select another named preset, and cite real board/transcript evidence.
-  The model must choose the closest supported preset with `best_match`, even
-  for imperfect or mixed evidence. Balanced is allowed only when neutral shape
-  actually fits, not as an uncertainty escape hatch. Weak evidence is retained
-  as a visible low-confidence notice. Empty coaching produces a specific error.
+  `narrowmidblock`, or `alloutattack`. `teamId` is `"red"` or `"yellow"` — the
+  server interprets whichever team's session it was asked to interpret via the
+  `/api/interpret` request's `teamId` field (defaults to `"red"` for backward
+  compatibility). Optional, unique overrides refer only to that coached team's
+  own player IDs (1–5 for red, 6–10 for yellow), select another named preset,
+  and cite real board/transcript evidence. The model must choose the closest
+  supported preset with `best_match`, even for imperfect or mixed evidence.
+  Balanced is allowed only when neutral shape actually fits, not as an
+  uncertainty escape hatch. Weak evidence is retained as a visible
+  low-confidence notice. Empty coaching produces a specific error.
   User-approved fallback selects Balanced with no overrides.
+  On the Rust side, `game_handoff::CoachedTeam::from_output_for_team` parses
+  and grounds one team's output (parameterized by `TeamSide::Red`/`Yellow`);
+  `game_handoff::MatchHandoff` merges a red and a yellow `CoachedTeam` into
+  the `TeamTactics` the game controller consumes. Today only red is coached
+  through the live UI — `handle_enter_game` in `src/lib.rs` builds yellow via
+  `CoachedTeam::balanced_default` until a second machine's real yellow output
+  is available (see the "Multiplayer" section below).
 - **Versions:** new tactical output and selections use `2.0` / `tactics-v2`;
   raw sessions and `/api/interpret` request envelopes remain `1.0`. The native
   handoff accepts legacy v1 selections (`Balanced`, `HighPress`, `LowBlock`,
@@ -176,18 +187,22 @@ monkey-player presentation, field decoration, lighting, and broadcast camera.
 
 - **Handoff:** the results UI fires `EnterGame`. The handler requires a ready,
   current interpretation and validates its selection through
-  `game_handoff.rs::GameHandoff`. Invalid or stale data leaves the user in
-  coaching with an explanation. The same output is saved/exported and used
-  to construct the game directive.
+  `game_handoff.rs::CoachedTeam::from_output_for_team` (red), then merges it
+  with a yellow `CoachedTeam` into a `game_handoff.rs::MatchHandoff`. Invalid
+  or stale data leaves the user in coaching with an explanation. The same
+  output is saved/exported and used to construct the game directive.
 - **Controller:** `Tactic::from_name()` → `Tactic::params()` →
   `TeamDirective::uniform()` / `set_player()` → `TeamTactics` →
   `apply_heuristic_ai`. Each update uses live player and ball state to compute
   movement. Tactic presets affect support shape, pressing, depth, width,
   spacing, line height, and attacking commitment; they do not replay paths.
 - **Identity:** fixed 5-v-5; red IDs 1–5 map to Orange indices 0–4, yellow
-  IDs 6–10 to Blue indices 0–4. All ten players receive `AiControlled`.
-  Orange uses the coached directive, Blue uses Balanced. No keyboard player
-  movement system runs in this integrated spectator match.
+  IDs 6–10 to Blue indices 0–4. Solo play: Orange uses the coached directive,
+  Blue uses `CoachedTeam::balanced_default`. Multiplayer: both are real
+  coached directives merged from host+joiner (see "4a. Multiplayer"). All
+  non-spectator players receive `AiControlled`; a joiner spectates via
+  `game_stream.rs` instead of running AI. No keyboard player movement system
+  runs in this integrated match.
 - **Lifecycle:** normal starting positions, tactics retained through goal and
   round resets, possession cleared on resets. AI runs before movement/power
   activation. Results and the game HUD show the coached preset and overrides.
@@ -195,6 +210,113 @@ monkey-player presentation, field decoration, lighting, and broadcast camera.
   adapter. The external JSON uses coaching IDs and labels, never Bevy entities
   or controller internals. Normalized board coordinates remain in the report;
   this version does not use them to place players in the game.
+
+## 4a. Multiplayer
+
+LAN host/join multiplayer: two people on the same wifi each coach their own
+team on their own machine (host = red, joiner = yellow, fixed), then watch
+one shared AI-vs-AI match. There is no live shared-board editing — each side
+runs its own full Lobby → Creation → Coaching pipeline independently — and
+the Game phase is host-authoritative: the host runs the real physics/AI
+simulation and streams state to the joiner, which renders it as a spectator
+rather than running its own simulation (this is what avoids cross-machine
+simulation drift). Built in three phases, all complete:
+
+- **Phase A — merge plumbing:** `teamId` on `/api/interpret` and
+  `rlSelection` (`src/domain/interpret.ts`, `server/normalize.ts`,
+  `server/openaiInterpretation.ts`), and `game_handoff.rs::CoachedTeam`
+  (parameterized by `TeamSide::Red`/`Yellow`) + `MatchHandoff` (merges both
+  teams' directives) in Rust. Both teams can now be driven by real coached
+  output instead of yellow being hardcoded to Balanced.
+- **Phase B — LAN transport & lobby:** `server/index.ts` binds `0.0.0.0`
+  with CORS; `server/lobby.ts` holds one in-memory match slot with
+  `/api/lobby/join`, `/api/lobby/ready`, `/api/lobby/start`, and a
+  `/api/lobby` WebSocket that pushes connection status and, once both sides
+  have posted a ready tactical output, the merged `{red, yellow}` payload
+  (auto-starts the moment the second side posts). On the Rust side,
+  `native/coaching/src/network.rs` adds `AppPhase::Lobby` (now the app's
+  default/first phase) with a main menu (Host / Join / Play Solo),
+  `NetworkRole`/`NetworkEndpoint` resources, `LobbyRuntime` (transient
+  blocking HTTP calls for join/ready + one persistent WS listener, same
+  shape as `speech.rs`'s `SpeechRuntime`), and best-effort mDNS
+  advertise/browse via `mdns-sd` with manual `ip:port` entry always
+  available as the reliable fallback (multicast on shared wifi is not
+  trustworthy enough to be load-bearing for a live demo). A joiner's
+  `/api/interpret` and `/api/transcribe` calls are redirected to the host by
+  setting `TACTIC_LAB_API_URL`/`TACTIC_LAB_WS_URL` at connect time — both are
+  already read fresh per-call, so no other code needed to change. The
+  results screen's "Next"/"Continue anyway" buttons now fire a `MatchReady`
+  event instead of `EnterGame` directly; `network.rs::handle_match_ready`
+  branches on `NetworkRole` — solo behaves exactly as before, networked play
+  submits to the lobby and waits for the server's merged push instead.
+- **Phase C — game streaming:** `native/coaching/src/game_stream.rs`
+  defines `GameSnapshot` (10 players' position/yaw, ball position,
+  score, time remaining) and `GameStreamRuntime`, which is host-mode (runs
+  its own `tokio-tungstenite` WS *server* on port `9010`, broadcasting to
+  any connected joiner — a direct Rust↔Rust socket, not relayed through
+  Node) or joiner-mode (WS client with auto-reconnect, buffering the latest
+  snapshot for `apply_network_snapshot` to consume once per frame).
+  `game.rs::GamePlugin` splits its systems by role: visual spawn systems
+  (arena, players, ball, camera, jungle) run identically on both; the
+  physics/AI/goal-detection chain is gated `.run_if(is_not_spectator)`;
+  `configure_network_physics` sets Rapier's `physics_pipeline_active = false`
+  for the joiner so it never steps local physics at all — it only ever
+  hard-sets `Transform`/`GameState` from the network stream. Both host and
+  joiner build the same `MatchHandoff` from the server's `MatchStart` push
+  (`network.rs::build_match_handoff`), so `spawn_tactic_hud` needs no
+  role-specific handling.
+
+**Tested over real sockets** (not just unit-level): `game_stream.rs`'s
+`joiner_receives_snapshots_published_by_a_real_host_over_loopback` runs the
+actual host WS server and joiner WS client against each other over a real
+loopback TCP socket. `network.rs`'s
+`host_and_joiner_reach_match_start_over_real_sockets` spawns a real
+`server/index.ts` process and drives two independent `LobbyRuntime`s (the
+exact production networking code) through join → both-connected → both-ready
+→ merged `MatchStart`, then builds a real `MatchHandoff` from the result —
+the same code path a genuine two-machine LAN session uses, addressed at
+`127.0.0.1` instead of a routed wifi address. What this does **not** cover:
+mDNS multicast behavior on real, possibly-restrictive venue wifi (build
+around the manual IP fallback for a live demo) and true cross-machine
+latency/packet loss — verify those by actually running two machines on the
+same network before a live demo.
+
+### Running a two-machine match
+
+There is no packaged/distributable build yet — "joining" means running this
+same native Bevy binary from source, not opening a URL or installer. Both
+machines need the repo checked out at a commit with matching protocol code
+(the lobby JSON shapes, `tacticalOutputSchema`, and `GameSnapshot` wire
+format have no version negotiation — a mismatch fails validation rather than
+degrading), a working Rust 1.85+ toolchain, and node/npm installed if using
+`npm run dev:native`. Only the **host** needs `OPENAI_API_KEY`/
+`DEEPGRAM_API_KEY` configured — the joiner's `/api/interpret` and
+`/api/transcribe` calls get redirected to the host's server the moment they
+connect (`network.rs::redirect_env_to_host`), so its own keys are never used.
+
+**Host:**
+1. `npm run dev:native` (starts the local Node service *and* the native app
+   together; see `scripts/dev-native.mjs`). This binds the service to
+   `0.0.0.0` and logs a LAN-reachable address (`server/index.ts`).
+2. In the Lobby main menu, click **Host Match**. The screen shows the LAN
+   address to share and waits for a joiner; it also announces over mDNS.
+
+**Joiner:**
+1. Skip `npm run dev:native` — it would start a redundant, unused local
+   server. Run the native binary directly instead:
+   ```
+   cargo run --manifest-path native/coaching/Cargo.toml --bin native-coaching
+   ```
+2. In the Lobby main menu, click **Join Match**. If mDNS discovery finds the
+   host it's listed as a clickable option; otherwise type the host's
+   `ip:port` (as shown on the host's screen) into the manual field and click
+   **Connect**.
+
+Once connected, both sides proceed through their own independent
+Creation → Coaching pipeline for their own team (host=red, joiner=yellow).
+The match starts automatically for both the moment each side finishes and
+submits its tactical output — see "4a. Multiplayer" above for what happens
+after that.
 
 ## 5. Integration from main: implemented and remaining
 
@@ -206,7 +328,7 @@ entire main branch was merged into the coaching branch.
 |---|---|
 | Ten named tactical presets and per-player directives | Wired to coaching JSON and active during gameplay. |
 | Indexed players and team identity | Integrated; main's 1-v-1 constant changed to fixed 5-v-5. |
-| Heuristic movement, team support roles, pressing and spacing | Active for both teams; red/Orange is coached and yellow/Blue stays Balanced. |
+| Heuristic movement, team support roles, pressing and spacing | Active for both teams. In solo play, red/Orange is coached and yellow/Blue stays Balanced; in LAN multiplayer, both are real coached directives (host=red, joiner=yellow). |
 | Possession, movement, velocity limits, scoring and resets | Integrated into the native game lifecycle. |
 | Superpower activation, cooldowns and status-effect systems | Registered, but no drawing-to-power assignment exists; players without a `Superpower` component have no ability. |
 | Jungle visuals and camera | Preserved from the previous local game, including its larger arena/goal dimensions and ball CCD. Main's movement/gravity remain the gameplay basis. |
@@ -214,7 +336,8 @@ entire main branch was merged into the coaching branch.
 | PPO training/evaluation Python scripts | Included as upstream source, not launched by the app. No trained checkpoint or native policy-inference bridge is supplied. These scripts are not verified as part of the coaching demo. |
 | Tactic blends and arbitrary numeric parameter APIs | Available in upstream controller code; not exposed in coaching JSON for this phase. |
 | Drawing appearance/superpower artifacts | Still saved; not consumed to generate game appearance or assign powers. |
-| Board-position initialization, timed phase execution, coaching both teams | Not implemented in this phase. |
+| Board-position initialization, timed phase execution | Not implemented in this phase. |
+| Coaching both teams | Implemented via LAN multiplayer (see "4a. Multiplayer") rather than one person coaching both sides in a single session. |
 
 **Terminology:** the running controller is heuristic tactical AI, not a trained
 PPO policy. The `rlSelection` field name is retained for continuity. Main's
@@ -229,6 +352,50 @@ compatible without additional work.
 
 Launch with `npm run dev:native`; it starts the local API and the native app.
 No external worktree or Python process is needed for the coaching/game flow.
+
+### Quick handoff summary for the person working on main
+
+We integrated main's gameplay code from commit `f0026d8` into the coaching
+app. **What runs today is your heuristic tactical AI, not a trained PPO
+model.** Coaching already affects player behavior through the ten supported
+tactic presets and per-player overrides:
+
+`Board actions + speech → coaching JSON → TeamTactics → heuristic player behavior`
+
+**Currently wired in:** fixed 5-v-5 players, tactical AI, movement, possession,
+scoring, and resets, with the jungle visuals preserved. Superpower systems
+are included, but the user's drawing does not yet assign a power. In solo
+play, red/Orange follows the coaching and yellow/Blue stays Balanced. The
+subsequent LAN multiplayer work allows each side to supply coached directives;
+the host runs the simulation and the joiner renders streamed state.
+
+**Missing from the RL connection:**
+
+- Observation/action code, the headless environment, Python bindings, and
+  training/evaluation scripts are included, but the live game does not call a
+  trained policy to choose its actions.
+- No saved model checkpoint was committed in the inspected main revision;
+  training code and logs were present. This says nothing about checkpoints,
+  inference code, or newer changes you may have locally or elsewhere.
+- The inspected PPO inputs do not include coaching/tactic labels. Loading a
+  model alone therefore would not make it respond to the coaching JSON.
+- That main revision defaults to 1-v-1; this app uses 5-v-5. We need your actual
+  training configuration before assuming the checkpoint is compatible.
+
+**Please confirm what you have locally:**
+
+1. Do you have a trained checkpoint, or is training still in progress?
+2. Does the policy control one player or a whole team, and was it trained for
+   1-v-1 or 5-v-5?
+3. Do you already have code running model predictions inside the rendered game?
+4. Does the model accept tactical instructions, or are there separate models
+   for different tactics?
+5. Which loading script, dependencies, normalization files, and unpushed
+   commits should accompany the checkpoint?
+
+The main missing connection is **live game state → trained model → player
+actions**, plus a defined way for **coaching to influence that model**.
+The next section lists the concrete code boundaries for adding this later.
 
 ### Adding the separately trained model later
 
@@ -292,16 +459,22 @@ existing connection points rather than claiming a drop-in switch exists.
 | Player drawing | `native/player-creation/src/bin/native-player-creation.rs` | `state.rs` (flow states, `ContinueToCoaching`), `persistence.rs` (output paths), `input.rs` (coordinate mapping) |
 | Coaching session | `native/coaching/src/bin/native-coaching.rs` | `model.rs` (event/domain types), `session.rs` (recording), `replay.rs` (log → board state), `speech.rs` (transcription) |
 | Tactical JSON | — (library code, both languages) | `src/domain/interpret.ts` (`tacticalOutputSchema`, canonical contract), `server/openaiInterpretation.ts` + `server/normalize.ts` (production), `native/coaching/src/interpretation.rs` (client + Rust fallback) |
-| Game | `native/coaching/src/game.rs` | `game_handoff.rs` (JSON → directives), tracked `native/cube-soccer`, `AppPhase::Game` transition in `src/lib.rs` |
-| Local service | `server/index.ts` | `app.ts` (`/api/interpret`, `/api/health`), `transcription.ts` (`/api/transcribe` → Deepgram) |
+| Game | `native/coaching/src/game.rs` | `game_handoff.rs` (`CoachedTeam`/`MatchHandoff`: JSON → directives), `game_stream.rs` (host/joiner state streaming), tracked `native/cube-soccer`, `AppPhase::Game` transition in `src/lib.rs` |
+| Multiplayer lobby | `native/coaching/src/network.rs` | `NetworkRole`/`NetworkEndpoint`/`LobbyRuntime`, `LobbyPlugin` (main menu UI), `server/lobby.ts` (join/ready/start + WS push) |
+| Local service | `server/index.ts` | `app.ts` (`/api/interpret`, `/api/health`), `transcription.ts` (`/api/transcribe` → Deepgram), `lobby.ts` (multiplayer coordination) |
 
 ## Verification of this integration
 
-- TypeScript build and 29 deterministic tests cover output labels and override grounding.
+- TypeScript build and 36 deterministic tests cover output labels, override grounding
+  (including yellow-team assembly and roster-scoped override rejection), and the
+  lobby join/ready/auto-start protocol.
 - Two live model tests cover High Press and Low Block through the updated schema/API.
-- 111 Rust tests cover the game and coaching crates, including the production
-  game plugin starting ten AI players from a synthetic interpretation, player
-  movement, goal/round resets, and rejecting stale/invalid handoffs.
+- 26 Rust tests in the coaching crate (111+ across the game and coaching crates
+  combined) cover the production game plugin starting ten AI players from a
+  synthetic interpretation, player movement, goal/round resets, rejecting
+  stale/invalid handoffs, and — over real sockets, not mocks — a host and
+  joiner completing the full lobby handshake against a real spawned server, and
+  a joiner receiving live game snapshots from a real host WS server.
 - The native app build and the game crate's examples/all-targets check pass.
 - `native/coaching/examples/coached_match.rs` renders a synthetic coached match
   through the production adapter/plugin without touching saved sessions or
