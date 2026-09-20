@@ -25,6 +25,7 @@ pub enum AppPhase {
     Lobby,     // main menu: Host / Join / Play Solo
     Creation,  // draw a player
     Coaching,  // record a tactic on the board
+    Waiting,   // networked only: uploaded, waiting for the other coach
     Game,      // play the resulting minigame
 }
 ```
@@ -32,9 +33,9 @@ pub enum AppPhase {
 Roughly:
 
 ```
-Lobby     →  Player Creation  →  Coaching  →  Interpretation  →  Game
-(Host/Join/   (draw a player)   (record a     (raw session      (3D soccer
- Solo menu)                      tactic)       → tactical JSON)   minigame)
+Lobby     →  Player Creation  →  Coaching  →  Interpretation  →  [Waiting] →  Game
+(Host/Join/   (draw a player)   (record a     (raw session      (networked   (3D soccer
+ Solo menu)                      tactic)       → tactical JSON)   only)        minigame)
 ```
 
 The coaching → interpretation → game handoff is wired through a validated
@@ -266,20 +267,116 @@ simulation drift). Built in three phases, all complete:
   (`network.rs::build_match_handoff`), so `spawn_tactic_hud` needs no
   role-specific handling.
 
+### Match start, the waiting phase, and artifact collection
+
+Three bugs made a real LAN match impossible to finish; all are fixed, and the
+tests below are written specifically to keep them fixed:
+
+1. **The merge could never succeed.** `build_match_handoff` used to read the
+   session id from the *red* output and validate *both* teams against it. The
+   two machines coach separate sessions with separate UUIDs, so the yellow side
+   always failed with "Interpretation belongs to another session" — meaning
+   every networked match silently refused to start.
+   `CoachedTeam::from_output_for_team` now reads each payload's session id
+   *from that payload* and enforces internal self-consistency
+   (`session.id == rlSelection.sessionId`) instead of cross-payload equality.
+   Every other grounding check (taxonomy, canonical labels, per-team override
+   rosters, evidence) is unchanged. `MatchHandoff.match_id` — assigned by the
+   host's lobby — is now the only thing correlating the two sessions.
+   `CoachedTeam::from_local_session` keeps the stricter same-session check for
+   the solo path, where a stale result really is a bug.
+2. **The failure was invisible, and so was the wait.** Submitting used to fire
+   `SetCoachingActive(false)` while leaving `AppPhase` on `Coaching`, which
+   disabled every coaching UI system and despawned the board — with no other
+   UI registered for that state, the window rendered nothing but `ClearColor`
+   (the reported "black screen"), and the merge error had nowhere to display.
+   There is now an `AppPhase::Waiting` with `network.rs::waiting_screen_ui`:
+   upload progress, both players' ready state, the match id, errors, and
+   **Retry upload** / **Back to coaching** on failure. (`bevy_egui` needs no
+   camera — the Lobby screen already proved that — so this was never a camera
+   problem, purely a missing UI system.)
+3. **`start` was broadcast exactly once.** A client whose lobby WebSocket was
+   mid-reconnect at that instant would hang forever with the identical
+   symptom. The server now replays `start` to any client that connects after
+   the match has begun.
+
+**Artifact collection for later model runs.** Both machines upload their full
+session to the *host* before the match is allowed to begin, so all training
+data ends up in one place:
+
+```
+output/matches/<match-id>/
+├── match.json          (ids, teams, per-player file lists, timestamps)
+├── host/               appearance.png superpower.png manifest.json
+│                       session.json tactical-output.json
+└── joiner/             (same five files)
+```
+
+- `POST /api/lobby/artifacts` takes the bundle (base64 PNGs, the raw session
+  event log, the tactical output, the creation manifest, and both session ids
+  — the player-creation UUID and the coaching UUID are unrelated, so the
+  bundle carries both). PNGs are validated by magic bytes; the write root is
+  `TACTIC_LAB_OUTPUT_DIR` or the repo's `output/`, resolved from the server
+  file's own location rather than CWD.
+- **The upload blocks the match**: `/api/lobby/ready` returns
+  `409 ARTIFACTS_REQUIRED` until that side's bundle is stored, and the server
+  only broadcasts `start` once both bundles *and* both tactical outputs are
+  in. Losing a player's drawings to a race would cost data that can't be
+  recovered after the fact.
+- `ContinueToCoaching { session_id, manifest_path }` was previously discarded
+  by the binary; it is now captured into `network.rs::CreationArtifacts`,
+  which is what lets the coaching side find the drawings belonging to its
+  session. `express.json`'s limit went from 1mb to 25mb to fit the bundle
+  (which also fixes a latent 413 risk on `/api/interpret` for long sessions).
+
+**Spectator fixes:** `update_ui`/`update_wall_scoreboard` were gated behind
+`is_not_spectator`, so the joiner's scoreboard never reflected the streamed
+score; they are display-only readers of `GameState` and now run for both
+roles. `GameSnapshot` also carries `round_timer`, since the joiner never runs
+`update_timers` and its clock would otherwise freeze. `spawn_tactic_hud` now
+takes an `Option<Res<MatchHandoff>>` — as a hard `Res` it panicked mid-`OnEnter`
+when the handoff was missing, which also skipped `start_game_stream` and left
+the joiner with no stream at all.
+
+**Lobby polish:** `PlayerCreationPlugin` gated its UI only on its own
+`CreationFlow`, so the drawing toolbar rendered on top of the Host/Join/Solo
+menu. It now takes a `CreationEnabled` resource that the coaching app switches
+on only during `AppPhase::Creation`.
+
 **Tested over real sockets** (not just unit-level): `game_stream.rs`'s
 `joiner_receives_snapshots_published_by_a_real_host_over_loopback` runs the
 actual host WS server and joiner WS client against each other over a real
 loopback TCP socket. `network.rs`'s
-`host_and_joiner_reach_match_start_over_real_sockets` spawns a real
+`host_and_joiner_reach_match_start_with_separate_sessions` spawns a real
 `server/index.ts` process and drives two independent `LobbyRuntime`s (the
-exact production networking code) through join → both-connected → both-ready
-→ merged `MatchStart`, then builds a real `MatchHandoff` from the result —
-the same code path a genuine two-machine LAN session uses, addressed at
-`127.0.0.1` instead of a routed wifi address. What this does **not** cover:
-mDNS multicast behavior on real, possibly-restrictive venue wifi (build
-around the manual IP fallback for a live demo) and true cross-machine
-latency/packet loss — verify those by actually running two machines on the
-same network before a live demo.
+exact production networking code) through join → both-connected → upload →
+both-ready → merged `MatchStart`, then builds a real `MatchHandoff` — using
+**two different session ids**, which is what the earlier version of this test
+got wrong: it shared one fixture id between both sides and therefore could
+never have caught the bug that broke every real match.
+`artifact_bundles_land_on_the_host_before_the_match_starts` asserts the
+on-disk `output/matches/<id>/{host,joiner}/` tree, byte-for-byte PNG equality
+(catching base64 corruption), and that `match.json` records both session ids;
+`ready_without_artifacts_never_starts_the_match` proves the blocking gate.
+All of this runs the same code path a genuine two-machine LAN session uses,
+addressed at `127.0.0.1` instead of a routed wifi address.
+
+**Confirmed by a real end-to-end run** (two `native-coaching` processes, both
+driven by hand through drawing → coaching → interpretation → match): the host
+coached red into **Wing Play** and the joiner coached yellow into **All-Out
+Attack with two per-player overrides** (players 6 and 7 — correctly scoped to
+the yellow 6–10 roster), both `model-backed`, under two different coaching
+session ids. Both windows rendered the same match with the same match id in
+the HUD, the host simulating and the joiner rendering the stream. All ten
+artifacts landed on the host under one
+`output/matches/match-<uuid>/{host,joiner}/` tree, with real 24–57KB PNGs and
+a `match.json` recording both players' creation and coaching session ids.
+
+What this does **not** cover: mDNS multicast behavior on real,
+possibly-restrictive venue wifi (build around the manual IP fallback for a
+live demo), and true cross-machine latency/packet loss — both processes in
+this run were on one machine over loopback. Verify those on two physical
+machines before relying on them live.
 
 ### Running a two-machine match
 
@@ -465,16 +562,19 @@ existing connection points rather than claiming a drop-in switch exists.
 
 ## Verification of this integration
 
-- TypeScript build and 36 deterministic tests cover output labels, override grounding
-  (including yellow-team assembly and roster-scoped override rejection), and the
-  lobby join/ready/auto-start protocol.
+- TypeScript build and 40 deterministic tests cover output labels, override grounding
+  (including yellow-team assembly and roster-scoped override rejection), the lobby
+  join/ready/auto-start protocol, the artifact upload (files written, PNG validation,
+  stale match ids), and the `ARTIFACTS_REQUIRED` gate.
 - Two live model tests cover High Press and Low Block through the updated schema/API.
-- 26 Rust tests in the coaching crate (111+ across the game and coaching crates
+- 35 Rust tests in the coaching crate (111+ across the game and coaching crates
   combined) cover the production game plugin starting ten AI players from a
   synthetic interpretation, player movement, goal/round resets, rejecting
-  stale/invalid handoffs, and — over real sockets, not mocks — a host and
-  joiner completing the full lobby handshake against a real spawned server, and
-  a joiner receiving live game snapshots from a real host WS server.
+  stale/invalid handoffs, merging two independently-sessioned teams, landing on
+  the waiting phase instead of a blank screen, and — over real sockets, not
+  mocks — a host and joiner completing the full lobby handshake plus artifact
+  upload against a real spawned server, and a joiner receiving live game
+  snapshots from a real host WS server.
 - The native app build and the game crate's examples/all-targets check pass.
 - `native/coaching/examples/coached_match.rs` renders a synthetic coached match
   through the production adapter/plugin without touching saved sessions or
