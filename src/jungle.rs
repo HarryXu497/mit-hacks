@@ -139,7 +139,7 @@ fn palm_at(c: &mut Commands, k: &Kit, x: f32, z: f32, h: f32, phase: f32, ground
 /// its front faces culled, so only the far side of the shell is drawn. Growing by
 /// a fixed world offset rather than a percentage keeps the line the same weight
 /// on a head and on a fingertip.
-const INK: f32 = 0.032;
+const INK: f32 = 0.022;
 
 /// The original blocky character, restored. Kept tagged as an actor surface so
 /// the restyled shading still separates players from the field.
@@ -211,6 +211,17 @@ fn monkey(c: &mut Commands, k: &Kit, parent: Entity, team: Team) {
         c.entity(e)
             .insert(crate::rendering::stylized::ActorSurface);
         c.entity(parent).add_child(e);
+        // Ink shell around the same box, at the same place, grown by a fixed
+        // world offset: the outline treatment without touching the silhouette.
+        let shell = c
+            .spawn(PbrBundle {
+                mesh: k.cube.clone(),
+                material: k.ink.clone(),
+                transform: Transform::from_translation(p).with_scale(s + Vec3::splat(INK)),
+                ..default()
+            })
+            .id();
+        c.entity(parent).add_child(shell);
     }
 }
 

@@ -57,11 +57,10 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front: bool) -> FragmentOut
             // Tight exponent: on a part only ~20px across, a soft rim swallows the
             // whole silhouette and the kit colour stops reading. This keeps the
             // contour to the outer edge and leaves the face of each form lit.
-            // The players carry no outline geometry, so the rim is their only
-            // contour and has to do more work; the ball, which does have an ink
-            // shell, is white enough to take both.
-            let rim = pow(1.0 - facing, 3.6);
-            shaded = shaded * (1.0 - rim * 0.58);
+            // Outline geometry carries the contour again, so the rim only has to
+            // keep a form's edge from going flat rather than draw the edge itself.
+            let rim = pow(1.0 - facing, 4.0);
+            shaded = shaded * (1.0 - rim * 0.34);
             let hot = pow(facing, 7.0) * 0.30;
             shaded = shaded + vec3<f32>(hot);
         }
