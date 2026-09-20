@@ -141,103 +141,76 @@ fn palm_at(c: &mut Commands, k: &Kit, x: f32, z: f32, h: f32, phase: f32, ground
 /// on a head and on a fingertip.
 const INK: f32 = 0.032;
 
-/// A cube player's visible character. Built inside the 1.5-unit collider it
-/// represents: nothing here changes the hitbox, only what sits on top of it.
-///
-/// Forms are kept separate and outlined rather than blended into one mass --
-/// a muzzle that protrudes past the skull, ears clear of the head, a cap with a
-/// brim, a chin line above the jersey. At the size a player occupies on screen,
-/// silhouette and flat colour blocking are the only things that survive.
+/// The original blocky character, restored. Kept tagged as an actor surface so
+/// the restyled shading still separates players from the field.
 fn monkey(c: &mut Commands, k: &Kit, parent: Entity, team: Team) {
-    let kit = if team == Team::Orange {
+    let fur = if team == Team::Orange {
         k.orange.clone()
     } else {
         k.blue.clone()
     };
-    let round = k.terrain.clone();
-
-    // (material, offset, half-extents, outlined)
-    let parts: Vec<(Handle<StandardMaterial>, Vec3, Vec3, bool)> = vec![
-        // Skull, then a cap that sits on it with a brim over the brow
-        (k.fur.clone(), Vec3::new(0., 0.34, 0.), Vec3::new(0.52, 0.50, 0.48), true),
-        (kit.clone(), Vec3::new(0., 0.56, -0.02), Vec3::new(0.53, 0.30, 0.49), true),
-        (kit.clone(), Vec3::new(0., 0.50, 0.36), Vec3::new(0.40, 0.07, 0.22), true),
-        // Muzzle protrudes clear of the skull, with a nose on the end
-        (k.muzzle.clone(), Vec3::new(0., 0.22, 0.40), Vec3::new(0.30, 0.23, 0.22), true),
-        (k.fur_dark.clone(), Vec3::new(0., 0.26, 0.58), Vec3::new(0.08, 0.06, 0.05), false),
-        // Ears stand clear of the head so the silhouette has notches
-        (k.fur.clone(), Vec3::new(-0.56, 0.40, -0.02), Vec3::new(0.15, 0.17, 0.07), true),
-        (k.fur.clone(), Vec3::new(0.56, 0.40, -0.02), Vec3::new(0.15, 0.17, 0.07), true),
-        (k.muzzle.clone(), Vec3::new(-0.62, 0.40, 0.), Vec3::new(0.07, 0.09, 0.04), false),
-        (k.muzzle.clone(), Vec3::new(0.62, 0.40, 0.), Vec3::new(0.07, 0.09, 0.04), false),
-        // Eye globes proud of the skull, with big pupils
-        (k.eye_white.clone(), Vec3::new(-0.19, 0.44, 0.34), Vec3::new(0.15, 0.17, 0.14), true),
-        (k.eye_white.clone(), Vec3::new(0.19, 0.44, 0.34), Vec3::new(0.15, 0.17, 0.14), true),
-        (k.dark.clone(), Vec3::new(-0.19, 0.43, 0.45), Vec3::new(0.08, 0.10, 0.05), false),
-        (k.dark.clone(), Vec3::new(0.19, 0.43, 0.45), Vec3::new(0.08, 0.10, 0.05), false),
-        // Jersey and shorts, set low enough to leave a chin line under the head
-        (kit.clone(), Vec3::new(0., -0.28, 0.), Vec3::new(0.38, 0.32, 0.30), true),
-        (k.fur_dark.clone(), Vec3::new(0., -0.52, 0.), Vec3::new(0.32, 0.14, 0.27), true),
-        // Arms, hands, feet
-        (k.fur.clone(), Vec3::new(-0.45, -0.24, 0.04), Vec3::new(0.12, 0.24, 0.13), true),
-        (k.fur.clone(), Vec3::new(0.45, -0.24, 0.04), Vec3::new(0.12, 0.24, 0.13), true),
-        (k.muzzle.clone(), Vec3::new(-0.47, -0.46, 0.06), Vec3::new(0.11, 0.10, 0.11), true),
-        (k.muzzle.clone(), Vec3::new(0.47, -0.46, 0.06), Vec3::new(0.11, 0.10, 0.11), true),
-        (k.muzzle.clone(), Vec3::new(-0.19, -0.64, 0.12), Vec3::new(0.15, 0.09, 0.21), true),
-        (k.muzzle.clone(), Vec3::new(0.19, -0.64, 0.12), Vec3::new(0.15, 0.09, 0.21), true),
+    let parts = [
+        (
+            Vec3::new(0., 0., 0.),
+            Vec3::new(0.8, 0.8, 0.65),
+            fur.clone(),
+        ),
+        (
+            Vec3::new(0., 0.57, 0.08),
+            Vec3::new(1.05, 0.95, 0.9),
+            fur.clone(),
+        ),
+        (
+            Vec3::new(0., 0.51, 0.55),
+            Vec3::new(0.76, 0.66, 0.08),
+            k.face.clone(),
+        ),
+        (
+            Vec3::new(-0.62, 0.55, 0.05),
+            Vec3::new(0.25, 0.37, 0.25),
+            fur.clone(),
+        ),
+        (
+            Vec3::new(0.62, 0.55, 0.05),
+            Vec3::new(0.25, 0.37, 0.25),
+            fur.clone(),
+        ),
+        (
+            Vec3::new(-0.19, 0.62, 0.61),
+            Vec3::new(0.10, 0.19, 0.05),
+            k.dark.clone(),
+        ),
+        (
+            Vec3::new(0.19, 0.62, 0.61),
+            Vec3::new(0.10, 0.19, 0.05),
+            k.dark.clone(),
+        ),
+        (
+            Vec3::new(-0.48, -0.15, 0.05),
+            Vec3::new(0.25, 0.55, 0.27),
+            fur.clone(),
+        ),
+        (
+            Vec3::new(0.48, -0.15, 0.05),
+            Vec3::new(0.25, 0.55, 0.27),
+            fur.clone(),
+        ),
+        (
+            Vec3::new(-0.24, -0.55, 0.1),
+            Vec3::new(0.29, 0.34, 0.43),
+            k.face.clone(),
+        ),
+        (
+            Vec3::new(0.24, -0.55, 0.1),
+            Vec3::new(0.29, 0.34, 0.43),
+            k.face.clone(),
+        ),
     ];
-
-    for (material, offset, size, outlined) in parts {
-        let e = c
-            .spawn((
-                PbrBundle {
-                    mesh: round.clone(),
-                    material,
-                    transform: Transform::from_translation(offset).with_scale(size),
-                    ..default()
-                },
-                crate::rendering::stylized::ActorSurface,
-            ))
-            .id();
+    for (p, s, m) in parts {
+        let e = block(c, k, m, p, s);
+        c.entity(e)
+            .insert(crate::rendering::stylized::ActorSurface);
         c.entity(parent).add_child(e);
-        if outlined {
-            let shell = c
-                .spawn(PbrBundle {
-                    mesh: round.clone(),
-                    material: k.ink.clone(),
-                    transform: Transform::from_translation(offset)
-                        .with_scale(size + Vec3::splat(INK)),
-                    ..default()
-                })
-                .id();
-            c.entity(parent).add_child(shell);
-        }
-    }
-
-    // Tail: a short chain of shrinking segments curling up behind the body.
-    for i in 0..5 {
-        let t = i as f32 / 4.;
-        let a = t * 2.4;
-        let p = Vec3::new(
-            0.,
-            -0.42 + a.sin() * 0.44 - t * 0.06,
-            -0.42 - a.cos() * 0.30 + 0.30,
-        );
-        let size = Vec3::splat(0.12 - t * 0.04);
-        for (material, s) in [
-            (k.ink.clone(), size + Vec3::splat(INK)),
-            (k.fur.clone(), size),
-        ] {
-            let e = c
-                .spawn(PbrBundle {
-                    mesh: round.clone(),
-                    material,
-                    transform: Transform::from_translation(p).with_scale(s),
-                    ..default()
-                })
-                .id();
-            c.entity(parent).add_child(e);
-        }
     }
 }
 
