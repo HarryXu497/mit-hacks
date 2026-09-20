@@ -65,7 +65,6 @@ pub fn merge_static_draws(
             Without<crate::jungle::Waterfall>,
             Without<crate::jungle::WaterRipple>,
             Without<crate::systems::display::DigitSegment>,
-            Without<crate::systems::effects::CubeFragment>,
             Without<crate::rendering::stylized::ActorSurface>,
             Without<crate::entities::Ball>,
             Without<crate::entities::CubePlayer>,

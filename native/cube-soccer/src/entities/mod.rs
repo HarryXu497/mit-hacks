@@ -41,6 +41,6 @@ pub use character::{
     BlockyCharacter as CharacterSkinReplaces, CharacterSkin, PlayerVisual, WornCharacters,
     BASE_CHARACTER,
 };
-pub use cube_player::{spawn_players, get_spawn_position, CubePlayer, CubePlayerBundle, PlayerInput, GooglyPupil};
+pub use cube_player::{spawn_players, get_spawn_position, CubePlayer, CubePlayerBundle, KickRequest, PlayerInput, GooglyPupil};
 pub use field::{spawn_field, Field, FieldBorder};
 pub use goal::{spawn_goals, Goal, GoalSensor};

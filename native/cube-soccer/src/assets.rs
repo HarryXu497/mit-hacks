@@ -17,19 +17,20 @@ use std::path::PathBuf;
 /// levels below the root. `TACTIC_LAB_ASSETS` overrides it, which is the hook a packaged build
 /// would use -- there is no packaged build yet, and when there is, this is the one line it needs.
 pub fn root() -> PathBuf {
-    root_from(std::env::var("TACTIC_LAB_ASSETS").ok())
+    resolve(std::env::var("TACTIC_LAB_ASSETS").ok())
 }
 
-/// Where the assets are, given an override or none.
+/// [`root`] with the override handed in rather than read from the environment.
 ///
-/// Split from [`root`] so the override can be tested without writing to the process environment.
-/// `cargo test` runs a crate's tests as threads in one process, so a test that sets
-/// `TACTIC_LAB_ASSETS` and one that reads it race -- and did, failing or passing on interleaving.
-fn root_from(override_path: Option<String>) -> PathBuf {
-    if let Some(override_path) = override_path {
-        return PathBuf::from(override_path);
+/// Split out so the override can be tested without a test setting a process-wide variable that
+/// every other test in the binary can see. It used to, and the comment claiming the two tests
+/// were serialised was wrong -- the harness runs them in parallel, so whether the other test
+/// caught the variable mid-flight came down to how long the rest of the suite took.
+fn resolve(override_path: Option<String>) -> PathBuf {
+    match override_path {
+        Some(path) => PathBuf::from(path),
+        None => PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets")),
     }
-    PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets"))
 }
 
 /// An [`AssetPlugin`](bevy::asset::AssetPlugin) pointed at that directory.
@@ -61,13 +62,13 @@ mod tests {
     #[test]
     fn an_override_wins_so_a_packaged_build_has_somewhere_to_point() {
         assert_eq!(
-            root_from(Some("/somewhere/else".to_owned())),
+            resolve(Some("/somewhere/else".to_owned())),
             PathBuf::from("/somewhere/else")
         );
     }
 
     #[test]
-    fn with_no_override_it_falls_back_to_the_repository_assets() {
-        assert!(root_from(None).is_dir(), "the committed assets must be findable");
+    fn without_an_override_the_repos_own_assets_are_used() {
+        assert_eq!(resolve(None), root(), "no override should resolve to the repo's assets");
     }
 }

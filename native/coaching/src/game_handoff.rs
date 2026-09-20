@@ -2,7 +2,7 @@
 use anyhow::{bail, ensure, Context, Result};
 use bevy::prelude::*;
 use cube_soccer::game::Team;
-use cube_soccer::systems::heuristic_ai::{Tactic, TeamDirective, TeamTactics};
+use cube_soccer::systems::heuristic_ai::{Tactic, TacticParams, TeamDirective, TeamTactics};
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashSet;
@@ -15,8 +15,20 @@ pub struct CoachedTeam {
     pub session_id: String,
     pub team_id: TeamSide,
     pub tactic: Tactic,
+    /// Secondary shapes the model also read in the coaching, blended into the team's base at
+    /// [`SECONDARY_TRAIT_WEIGHT`]. A play is rarely purely one of the four presets — "press
+    /// high, but stay wide" is two of them — and the payload has always carried these; nothing
+    /// read them, so a play like that arrived as a plain High Press.
+    pub secondary_traits: Vec<Tactic>,
     pub overrides: Vec<(u8, Tactic)>,
 }
+
+/// How much each secondary trait counts against the primary tactic's `1.0`.
+///
+/// Deliberately small. These are traits the model saw alongside the main shape, not rival
+/// readings of it, and a weight high enough to pull the base halfway to another preset would
+/// make every coached play converge on the middle of the four.
+const SECONDARY_TRAIT_WEIGHT: f32 = 0.35;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TeamSide {
@@ -187,10 +199,32 @@ impl CoachedTeam {
             }
         }
         overrides.sort_by_key(|(id, _)| *id);
+
+        // Secondary traits are advisory, and live on the classification rather than in
+        // `rlSelection`. A payload that omits them, names one that is not in the taxonomy, or
+        // is a legacy v1 payload that predates them, simply contributes none — this must never
+        // be the thing that stops a coached play reaching the pitch.
+        let secondary_traits = if legacy {
+            Vec::new()
+        } else {
+            output["classification"]["secondaryTraits"]
+                .as_array()
+                .map(|traits| {
+                    traits
+                        .iter()
+                        .filter_map(|trait_| trait_.as_str())
+                        .filter_map(|label| canonical_tactic(label).ok())
+                        .filter(|&t| t != tactic)
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+
         Ok(Self {
             session_id: session_id.to_owned(),
             team_id: expected_side,
             tactic,
+            secondary_traits,
             overrides,
         })
     }
@@ -218,13 +252,29 @@ impl CoachedTeam {
             session_id: session_id.to_owned(),
             team_id,
             tactic: Tactic::Balanced,
+            secondary_traits: Vec::new(),
             overrides: Vec::new(),
         }
     }
 
+    /// The team's base parameters: the primary tactic, leaned toward any secondary traits.
+    fn base_params(&self) -> TacticParams {
+        if self.secondary_traits.is_empty() {
+            return self.tactic.params();
+        }
+        let mut parts = vec![(self.tactic.params(), 1.0)];
+        parts.extend(
+            self.secondary_traits
+                .iter()
+                .map(|trait_| (trait_.params(), SECONDARY_TRAIT_WEIGHT)),
+        );
+        TacticParams::blend(&parts)
+    }
+
     pub fn directive(&self) -> TeamDirective {
-        let mut directive = TeamDirective::uniform(self.tactic.params());
+        let mut directive = TeamDirective::uniform(self.base_params());
         let roster_start = *self.team_id.roster().start();
+        // A player named in the coaching gets that instruction outright, not a lean toward it.
         for &(id, tactic) in &self.overrides {
             directive.set_player((id - roster_start) as usize, tactic.params());
         }
@@ -285,6 +335,107 @@ mod tests {
         json!({"schemaVersion":"2.0", "taxonomyVersion":"tactics-v2", "session":{"id":session_id},
             "rlSelection":{"schemaVersion":"2.0", "taxonomyVersion":"tactics-v2", "sessionId":session_id,
             "teamId":team, "primaryTactic":label, "downstreamValue":label, "playerOverrides":[]}})
+    }
+
+    /// The same, with a `classification.secondaryTraits` list alongside the selection.
+    fn output_with_traits(
+        team: &str,
+        label: &str,
+        traits: &[&str],
+        session_id: &str,
+    ) -> Value {
+        let mut value = output(team, label, session_id);
+        value["classification"] = json!({ "secondaryTraits": traits });
+        value
+    }
+
+    #[test]
+    fn a_secondary_trait_leans_the_team_toward_it_without_replacing_the_play() {
+        let team = CoachedTeam::from_output_for_team(
+            &output_with_traits("red", "highpress", &["wingplay"], "s"),
+            TeamSide::Red,
+        )
+        .unwrap();
+        assert_eq!(team.tactic, Tactic::HighPress, "the primary play is unchanged");
+        assert_eq!(team.secondary_traits, vec![Tactic::WingPlay]);
+
+        let blended = team.directive().base_params();
+        let press = Tactic::HighPress.params();
+        let wing = Tactic::WingPlay.params();
+        assert_ne!(blended, press, "the trait should have moved the base");
+        assert!(
+            blended.width > press.width && blended.width < wing.width,
+            "a wing-play lean should widen it part of the way: {} between {} and {}",
+            blended.width,
+            press.width,
+            wing.width,
+        );
+        assert!(
+            blended.press > wing.press,
+            "but it is still a pressing side, not a wing-play one"
+        );
+    }
+
+    #[test]
+    fn a_play_with_no_secondary_traits_reaches_the_pitch_exactly_as_before() {
+        for label in ["balanced", "highpress", "lowblock", "wingplay"] {
+            let plain =
+                CoachedTeam::from_output_for_team(&output("red", label, "s"), TeamSide::Red)
+                    .unwrap();
+            assert!(plain.secondary_traits.is_empty());
+            assert_eq!(
+                plain.directive().base_params(),
+                Tactic::from_name(label).unwrap().params(),
+                "{label} without traits must be the untouched preset"
+            );
+            let empty = CoachedTeam::from_output_for_team(
+                &output_with_traits("red", label, &[], "s"),
+                TeamSide::Red,
+            )
+            .unwrap();
+            assert_eq!(empty.directive().base_params(), plain.directive().base_params());
+        }
+    }
+
+    /// Secondary traits are advisory, so nothing about them may reject a coached play.
+    ///
+    /// The taxonomy has been renamed once already, and the match artifacts still on disk carry
+    /// labels like `possession` and `counterattack` that no longer exist. A coach whose play
+    /// happens to include one of those has to still get their game.
+    #[test]
+    fn an_unknown_or_repeated_trait_is_ignored_rather_than_refused() {
+        let team = CoachedTeam::from_output_for_team(
+            &output_with_traits("red", "lowblock", &["possession", "lowblock", "wingplay"], "s"),
+            TeamSide::Red,
+        )
+        .expect("an unusable trait must never cost the coach their match");
+        assert_eq!(
+            team.secondary_traits,
+            vec![Tactic::WingPlay],
+            "the unknown label and the repeat of the primary should both be dropped"
+        );
+    }
+
+    #[test]
+    fn a_named_player_gets_their_instruction_outright_not_a_lean_toward_it() {
+        let mut value = output_with_traits("red", "highpress", &["wingplay"], "s");
+        value["rlSelection"]["playerOverrides"] = json!([{
+            "playerId": 3,
+            "tactic": "lowblock",
+            "evidence": {"eventIds": ["ev-0"], "transcriptSegmentIds": []},
+        }]);
+        let team = CoachedTeam::from_output_for_team(&value, TeamSide::Red).unwrap();
+        let directive = team.directive();
+        assert_eq!(
+            directive.params_for(2),
+            Tactic::LowBlock.params(),
+            "player 3 was told to sit in, so they sit in"
+        );
+        assert_ne!(
+            directive.params_for(0),
+            Tactic::LowBlock.params(),
+            "and nobody else was"
+        );
     }
 
     #[test]

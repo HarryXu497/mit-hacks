@@ -15,7 +15,6 @@ use crate::systems::{
     scoring::{detect_goals, handle_goal_scored, update_timers},
     reset::{reset_after_goal, reset_after_round, check_reset_timer, ResetTimer},
     possession::{Possession, tick_cooldowns, update_possession, clear_possession},
-    effects::animate_fragments,
     display::update_wall_scoreboard,
     eyes::animate_googly_eyes,
     trail::TrailSpawnTimer,
@@ -161,7 +160,6 @@ impl Plugin for CubeSoccerPlugin {
             // bound. `systems::trail` is still built, and `TrailSpawnTimer` still registered, so
             // the other binaries that do schedule it are unaffected.
             .add_systems(Update, (
-                animate_fragments,
                 animate_googly_eyes,
                 animate_player_visual,
                 // What each side is wearing, and showing it once it has loaded. Chained because

@@ -22,12 +22,13 @@ use cube_soccer::systems::power_vfx::{
     animate_power_fx, load_power_fx, reset_power_fx_glow, spawn_power_fx, PowerFired,
 };
 use cube_soccer::systems::{
-    activate_superpowers, apply_heuristic_ai, apply_status_forces, clamp_velocities,
-    clear_possession, tick_cooldowns, tick_status_effects, tick_superpower_cooldowns,
-    update_possession, AiControlled, ImpulseEvent, Possession, TeamTactics,
+    activate_superpowers, apply_kicks, apply_soccer_ai, apply_status_forces, clamp_velocities,
+    clear_kick_cooldowns, clear_play_memory, clear_possession, tick_cooldowns,
+    tick_kick_cooldowns, tick_status_effects, tick_superpower_cooldowns, update_possession,
+    AiControlled, ImpulseEvent, KickCooldowns, PlayMemory, Possession, TeamTactics,
 };
 use cube_soccer::systems::{
-    animate_fragments, animate_googly_eyes, apply_player_movement,
+    animate_googly_eyes, apply_player_movement,
     check_reset_timer, detect_goals, handle_goal_scored, reset_after_goal, reset_after_round,
     update_camera, update_timers,
     update_wall_scoreboard, ResetTimer, TrailSpawnTimer,
@@ -52,6 +53,8 @@ impl Plugin for GamePlugin {
             .init_resource::<TrailSpawnTimer>()
             .init_resource::<TeamTactics>()
             .init_resource::<Possession>()
+            .init_resource::<KickCooldowns>()
+            .init_resource::<PlayMemory>()
             .init_resource::<WornCharacters>()
             .init_resource::<MatchFurnished>()
             .init_resource::<PowerHudSide>()
@@ -90,13 +93,18 @@ impl Plugin for GamePlugin {
             .add_systems(
                 Update,
                 (
-                    apply_heuristic_ai,
+                    apply_soccer_ai,
                     tick_superpower_cooldowns,
                     activate_superpowers,
                     tick_status_effects,
                     apply_player_movement,
                     apply_status_forces,
                     clamp_velocities,
+                    // Kicks land after the players have moved, so a shot leaves from where the
+                    // striker actually ended the frame, and before possession is resolved, so
+                    // the ball is already travelling when the holder is decided.
+                    tick_kick_cooldowns,
+                    apply_kicks,
                     tick_cooldowns,
                     update_possession,
                     detect_goals,
@@ -138,7 +146,6 @@ impl Plugin for GamePlugin {
             .add_systems(
                 Update,
                 (
-                    animate_fragments,
                     animate_googly_eyes,
                     // Display-only, and deliberately not gated on `is_not_spectator`: the joiner
                     // has to animate too, which is why `apply_network_snapshot` recovers
@@ -189,15 +196,18 @@ impl Plugin for GamePlugin {
                     .run_if(in_state(AppPhase::Game))
                     .before(TransformSystem::TransformPropagate),
             )
+            // Roles, kick cooldowns and the stall timer all describe a position on the pitch
+            // that no longer exists once everyone is back on their spawn, so they are cleared
+            // alongside possession rather than carried into the restart.
             .add_systems(
                 OnEnter(MatchState::GoalScored),
-                (reset_after_goal, clear_possession)
+                (reset_after_goal, clear_possession, clear_kick_cooldowns, clear_play_memory)
                     .chain()
                     .run_if(in_state(AppPhase::Game)),
             )
             .add_systems(
                 OnEnter(MatchState::RoundOver),
-                (reset_after_round, clear_possession)
+                (reset_after_round, clear_possession, clear_kick_cooldowns, clear_play_memory)
                     .chain()
                     .run_if(in_state(AppPhase::Game)),
             );

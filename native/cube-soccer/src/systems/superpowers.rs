@@ -358,7 +358,7 @@ mod tests {
             Transform::from_translation(pos),
             Velocity::zero(),
             StatusEffects::default(),
-            PlayerInput { movement: Vec2::ZERO, jump: false, fire },
+            PlayerInput { movement: Vec2::ZERO, jump: false, fire, kick: None },
         )).id()
     }
 

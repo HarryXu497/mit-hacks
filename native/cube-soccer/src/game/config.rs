@@ -67,7 +67,13 @@ pub const PHYSICS_TIMESTEP: f32 = 1.0 / 30.0;  // 30Hz sim (training throughput)
 
 // === MATCH ===
 pub const MATCH_DURATION_SECS: f32 = 300.0;  // 5 minutes total
-pub const ROUND_DURATION_SECS: f32 = 15.0;   // 15 seconds per round
+/// Length of a round: positions reset to kickoff when it expires.
+///
+/// Fifteen seconds was too short to play soccer in. A move that starts with a cleared ball,
+/// works it wide and comes back for a shot takes longer than that, so the reset kept landing
+/// mid-attack and the match read as a series of scrambles rather than as play. Forty-five is
+/// long enough for an attack to finish and short enough to stay a safety net against a stall.
+pub const ROUND_DURATION_SECS: f32 = 45.0;
 pub const GOALS_TO_WIN: u32 = 10;
 pub const RESET_DELAY_SECS: f32 = 1.0;  // 1 second pause after goal
 
@@ -155,6 +161,34 @@ pub const STEAL_COOLDOWN_SECS: f32 = 0.5;
 /// How long an opponent must stay in range of a held ball before the steal
 /// succeeds (a "tackle timer"). Leaving range resets their progress.
 pub const STEAL_CONTACT_SECS: f32 = 0.4;
+
+// --- Kicking ---
+// The ball used to move only by being walked into, which is why there was no passing and no
+// shooting: a cube could push the ball but never strike it. A kick sets the ball's velocity
+// outright, the same way `apply_player_movement` sets a player's, so a pass arrives at a
+// predictable speed and a shot is worth aiming.
+
+/// How near the ball a player must be to strike it. A little beyond `TOUCH_RANGE` so a player
+/// who is dribbling -- and therefore always a touch behind the ball -- can still shoot.
+pub const KICK_RANGE: f32 = TOUCH_RANGE + 0.6;
+/// Speed of a pass to a teammate. Fast enough to beat a covering opponent to the spot, slow
+/// enough that the receiver can take it rather than watch it run away.
+pub const PASS_SPEED: f32 = 21.0;
+/// Speed of a shot on goal.
+pub const SHOT_SPEED: f32 = 33.0;
+/// Speed of a clearance out of the defensive third. Between the two: it has to travel, but a
+/// clearance that leaves the pitch entirely just hands the ball back.
+pub const CLEAR_SPEED: f32 = 27.0;
+/// Fraction of a kick's speed added upward. Small on purpose -- it lifts the ball off the
+/// surface so it is not shoved along under the cubes, but the apex stays far below
+/// `GOAL_HEIGHT`, so lofting a shot never carries it over the bar.
+pub const KICK_LOFT: f32 = 0.15;
+/// How long after striking the ball before the same player may strike it again. Without this a
+/// player in contact kicks on every frame and the ball simply vibrates.
+pub const KICK_COOLDOWN_SECS: f32 = 0.45;
+/// Speed the ball is restarted with after a goal or at a round boundary. Gentle: a kickoff is
+/// a ball rolled into play, not a shot. See `systems::reset::kickoff_velocity`.
+pub const KICKOFF_SPEED: f32 = 7.0;
 
 // === REWARDS ===
 pub const REWARD_GOAL: f32 = 30.0;
