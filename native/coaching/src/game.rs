@@ -28,7 +28,7 @@ use cube_soccer::systems::{
     AiControlled, ImpulseEvent, KickCooldowns, PlayMemory, Possession, TeamTactics,
 };
 use cube_soccer::systems::{
-    animate_fragments, animate_googly_eyes, apply_player_movement,
+    animate_googly_eyes, apply_player_movement,
     check_reset_timer, detect_goals, handle_goal_scored, reset_after_goal, reset_after_round,
     update_camera, update_timers,
     update_wall_scoreboard, ResetTimer, TrailSpawnTimer,
@@ -146,7 +146,6 @@ impl Plugin for GamePlugin {
             .add_systems(
                 Update,
                 (
-                    animate_fragments,
                     animate_googly_eyes,
                     // Display-only, and deliberately not gated on `is_not_spectator`: the joiner
                     // has to animate too, which is why `apply_network_snapshot` recovers

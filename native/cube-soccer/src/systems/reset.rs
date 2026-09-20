@@ -2,7 +2,6 @@ use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 use crate::entities::{Ball, CubePlayer, get_spawn_position, get_ball_spawn_position};
 use crate::game::{GameState, MatchState, Team, KICKOFF_SPEED, RESET_DELAY_SECS};
-use super::effects::spawn_decomposition;
 
 /// The velocity the ball is restarted with: a kickoff taken by the side that conceded.
 ///
@@ -45,23 +44,10 @@ impl Default for ResetTimer {
 /// Reset positions after a goal (with delay timer)
 pub fn reset_after_goal(
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
     mut ball_query: Query<(&mut Transform, &mut Velocity), (With<Ball>, Without<CubePlayer>)>,
     mut player_query: Query<(&mut Transform, &mut Velocity, &CubePlayer), Without<Ball>>,
     mut game_state: ResMut<GameState>,
 ) {
-    // Spawn decomposition effects for players before resetting
-    for (transform, _, player) in player_query.iter() {
-        spawn_decomposition(
-            &mut commands,
-            &mut meshes,
-            &mut materials,
-            transform.translation,
-            player.team.color(),
-        );
-    }
-
     // Restart the ball on the centre spot, moving: the side that conceded kicks off.
     if let Ok((mut transform, mut velocity)) = ball_query.get_single_mut() {
         transform.translation = get_ball_spawn_position();
@@ -85,25 +71,11 @@ pub fn reset_after_goal(
 
 /// Reset positions when round timer expires (immediate)
 pub fn reset_after_round(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
     mut ball_query: Query<(&mut Transform, &mut Velocity), (With<Ball>, Without<CubePlayer>)>,
     mut player_query: Query<(&mut Transform, &mut Velocity, &CubePlayer), Without<Ball>>,
     mut game_state: ResMut<GameState>,
     mut next_state: ResMut<NextState<MatchState>>,
 ) {
-    // Spawn decomposition effects for players before resetting
-    for (transform, _, player) in player_query.iter() {
-        spawn_decomposition(
-            &mut commands,
-            &mut meshes,
-            &mut materials,
-            transform.translation,
-            player.team.color(),
-        );
-    }
-
     // Restart the ball on the centre spot, moving, so a round boundary does not hand both
     // sides the same dead ball from the same positions every time.
     if let Ok((mut transform, mut velocity)) = ball_query.get_single_mut() {
