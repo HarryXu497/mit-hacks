@@ -10,7 +10,7 @@ use crate::game::{
 use crate::entities::{Ball, CubePlayer, get_spawn_position, get_ball_spawn_position};
 use crate::input::AIActions;
 use crate::systems::possession::Possession;
-use crate::systems::heuristic_ai::{TeamTactics, TacticParams, Tactic};
+use crate::systems::heuristic_ai::{TeamTactics, TacticParams, Tactic, HeuristicDifficulty};
 use crate::systems::superpowers::{Superpower, SuperpowerKind};
 use crate::systems::status_effects::StatusEffects;
 use crate::rl::reward::RewardCalculator;
@@ -221,6 +221,13 @@ impl CubeSoccerEnv {
         self.app.world.resource_mut::<RewardCalculator>().shaping_weight = w;
     }
 
+    /// Set the heuristic opponent's difficulty (1.0 = full strength, 0.0 = frozen).
+    /// Driven by the training loop's curriculum: start Blue weak so Orange can learn
+    /// to score, then ramp back to full strength. Persists across `reset()`.
+    pub fn set_opponent_difficulty(&mut self, d: f32) {
+        self.app.world.resource_mut::<HeuristicDifficulty>().0 = d.clamp(0.0, 1.0);
+    }
+
     pub fn get_observation_space(&self) -> (Vec<f32>, Vec<f32>, Vec<usize>) {
         let n = NUM_AGENTS * OBSERVATION_SIZE;
         (vec![f32::NEG_INFINITY; n], vec![f32::INFINITY; n], vec![NUM_AGENTS, OBSERVATION_SIZE])
@@ -368,6 +375,43 @@ mod tests {
         let lb = loadout(&mut b);
         assert_eq!(la, lb, "same seed must give the same loadout");
         assert!(la.iter().any(|(_, _, k)| k.is_some()), "expected some powers assigned for seed 7");
+    }
+
+    #[test]
+    fn opponent_difficulty_scales_blue_movement() {
+        use crate::entities::CubePlayer;
+
+        fn blue_positions(env: &mut CubeSoccerEnv) -> Vec<Vec3> {
+            let world = &mut env.app.world;
+            let mut v: Vec<(usize, Vec3)> = world
+                .query::<(&CubePlayer, &Transform)>()
+                .iter(world)
+                .filter(|(p, _)| p.team == Team::Blue)
+                .map(|(p, t)| (p.index, t.translation))
+                .collect();
+            v.sort_by_key(|(i, _)| *i);
+            v.into_iter().map(|(_, p)| p).collect()
+        }
+
+        fn blue_travel(diff: f32) -> f32 {
+            let mut env = CubeSoccerEnv::new(EnvConfig::default());
+            env.reset(Some(5));
+            env.set_opponent_difficulty(diff);
+            let start = blue_positions(&mut env);
+            let zero = vec![0.0f32; NUM_AGENTS * crate::game::ACTION_SIZE];
+            for _ in 0..40 {
+                let _ = env.step(&zero);
+            }
+            let end = blue_positions(&mut env);
+            start.iter().zip(end).map(|(a, b)| a.distance(b)).sum()
+        }
+
+        let frozen = blue_travel(0.0);
+        let full = blue_travel(1.0);
+        assert!(
+            full > frozen + 1.0,
+            "full-strength Blue should travel more than a frozen opponent: full {full} vs frozen {frozen}"
+        );
     }
 
     #[test]

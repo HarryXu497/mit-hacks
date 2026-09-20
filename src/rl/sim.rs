@@ -19,7 +19,7 @@ use crate::systems::status_effects::{tick_status_effects, apply_status_forces, I
 use crate::systems::superpowers::{tick_superpower_cooldowns, activate_superpowers};
 use crate::systems::possession::{tick_cooldowns, update_possession, Possession};
 use crate::systems::scoring::detect_goals;
-use crate::systems::heuristic_ai::{apply_heuristic_ai, AiControlled, TeamTactics};
+use crate::systems::heuristic_ai::{apply_heuristic_ai, AiControlled, TeamTactics, HeuristicDifficulty};
 use crate::game::Team;
 use crate::rl::observation::get_observations;
 use crate::rl::reward::RewardCalculator;
@@ -174,6 +174,7 @@ pub fn build_headless_app() -> App {
         .init_resource::<LatestRewards>()
         .init_resource::<RewardCalculator>()
         .init_resource::<TeamTactics>()
+        .init_resource::<HeuristicDifficulty>()
         .add_event::<GoalScoredEvent>()
         .add_event::<BallTouchedEvent>()
         .add_event::<ImpulseEvent>();

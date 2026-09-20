@@ -158,6 +158,13 @@ impl PyCubeSoccerEnv {
         self.env.set_shaping_weight(weight);
         Ok(())
     }
+
+    /// Set the heuristic opponent's difficulty (1.0 = full strength, 0.0 = frozen).
+    /// Used by the training curriculum to weaken Blue early, then ramp to full.
+    fn set_opponent_difficulty(&mut self, difficulty: f32) -> PyResult<()> {
+        self.env.set_opponent_difficulty(difficulty);
+        Ok(())
+    }
 }
 
 #[cfg(feature = "python")]

@@ -173,6 +173,20 @@ impl Default for TeamTactics {
     }
 }
 
+/// Difficulty knob for the heuristic-driven team(s): scales AI movement output and
+/// gates superpower use. `1.0` = full-strength heuristic; `0.0` = frozen. Used by
+/// training curricula to weaken the heuristic opponent early (so the RL team can
+/// discover scoring) and then ramp back to full strength. A missing resource
+/// defaults to `1.0`, so non-training consumers are unaffected.
+#[derive(Resource, Clone, Copy, Debug)]
+pub struct HeuristicDifficulty(pub f32);
+
+impl Default for HeuristicDifficulty {
+    fn default() -> Self {
+        Self(1.0)
+    }
+}
+
 /// One teammate's identity + position, used to assign team roles.
 pub struct TeamMate {
     pub index: usize,
@@ -366,9 +380,13 @@ pub fn assign_team_movements(
 pub fn apply_heuristic_ai(
     mut handlers: Local<HashMap<Team, usize>>,
     tactics: Option<Res<TeamTactics>>,
+    difficulty: Option<Res<HeuristicDifficulty>>,
     ball_query: Query<(&Transform, &Velocity), With<Ball>>,
     mut player_query: Query<(&mut PlayerInput, &Transform, &CubePlayer), With<AiControlled>>,
 ) {
+    // Difficulty scales how fast the heuristic team moves and whether it uses
+    // superpowers. Weak opponent = slow, no powers; full strength = the original.
+    let diff = difficulty.map(|d| d.0).unwrap_or(1.0).clamp(0.0, 1.0);
     let Ok((ball_t, ball_v)) = ball_query.get_single() else { return; };
     let ball_pos = ball_t.translation;
     let ball_vel = ball_v.linvel;
@@ -397,10 +415,11 @@ pub fn apply_heuristic_ai(
 
     for (mut input, _transform, player) in player_query.iter_mut() {
         if let Some((movement, jump)) = result.get(&(player.team, player.index)) {
-            input.movement = *movement;
+            input.movement = *movement * diff;
             input.jump = *jump;
         }
-        input.fire = true;
+        // Weak opponents don't use superpowers; they come online past half strength.
+        input.fire = diff > 0.5;
     }
 }
 

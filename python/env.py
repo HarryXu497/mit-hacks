@@ -84,6 +84,9 @@ class CubeSoccerEnv(gym.Env):
     def set_shaping_weight(self, w):
         self._env.set_shaping_weight(float(w))
 
+    def set_opponent_difficulty(self, d):
+        self._env.set_opponent_difficulty(float(d))
+
     def close(self):
         pass
 
@@ -182,6 +185,9 @@ class CubeSoccerTeamEnv(gym.Env):
 
     def set_shaping_weight(self, w):
         self._env.set_shaping_weight(float(w))
+
+    def set_opponent_difficulty(self, d):
+        self._env.set_opponent_difficulty(float(d))
 
     def render(self):
         if self.render_mode == "human":

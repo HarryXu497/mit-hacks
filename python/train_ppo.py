@@ -37,6 +37,36 @@ class ShapingAnnealCallback(BaseCallback):
     def _on_step(self) -> bool:
         return True
 
+
+class OpponentCurriculumCallback(BaseCallback):
+    """Ramp the heuristic opponent's difficulty from `floor` -> 1.0 over the first
+    `curriculum_frac` of training, then hold at full strength. Starts Blue weak so
+    the RL team can actually score and anchor its policy on real goals, then hardens
+    the opponent back to the real heuristic."""
+    def __init__(self, total_timesteps, curriculum_frac=0.45, floor=0.15):
+        super().__init__()
+        self.total = max(1, int(total_timesteps))
+        self.frac = max(1e-6, float(curriculum_frac))
+        self.floor = float(floor)
+
+    def _set(self, d):
+        try:
+            self.training_env.env_method("set_opponent_difficulty", float(d))
+        except Exception:
+            pass
+
+    def _on_training_start(self) -> None:
+        self._set(self.floor)
+
+    def _on_rollout_start(self) -> None:
+        progress = (self.num_timesteps / self.total) / self.frac
+        d = self.floor + (1.0 - self.floor) * min(1.0, progress)
+        self._set(d)
+
+    def _on_step(self) -> bool:
+        return True
+
+
 try:
     import wandb
     from wandb.integration.sb3 import WandbCallback
@@ -65,6 +95,14 @@ def main():
     parser.add_argument("--render-eval", action="store_true", help="Render during evaluation")
     parser.add_argument("--shaping-anneal-frac", type=float, default=0.7,
                         help="fraction of training over which dense-shaping weight decays 1->0")
+    parser.add_argument("--opponent-curriculum-frac", type=float, default=0.45,
+                        help="fraction of training over which the heuristic opponent ramps "
+                             "from weak (--opponent-floor) to full strength (1.0)")
+    parser.add_argument("--opponent-floor", type=float, default=0.15,
+                        help="starting difficulty of the heuristic opponent (0=frozen, 1=full)")
+    parser.add_argument("--ent-coef", type=float, default=0.005,
+                        help="PPO entropy coefficient (lower = less exploration pressure; "
+                             "prevents action-std runaway once the reward signal is findable)")
     parser.add_argument("--resume", type=str, default=None,
                         help="path to a saved model .zip to resume training from "
                              "(must match the current obs/action shape). Pass the same "
@@ -95,11 +133,16 @@ def main():
     eval_env = CubeSoccerTeamEnv(render_mode=eval_render_mode)
     try:
         eval_env.set_shaping_weight(0.0)
+        # Eval always measures true performance against the full-strength opponent.
+        eval_env.set_opponent_difficulty(1.0)
     except Exception:
         pass
 
     # Callbacks
     anneal_cb = ShapingAnnealCallback(args.timesteps, args.shaping_anneal_frac)
+    curriculum_cb = OpponentCurriculumCallback(
+        args.timesteps, args.opponent_curriculum_frac, args.opponent_floor
+    )
     callbacks = [
         EvalCallback(
             eval_env,
@@ -114,6 +157,7 @@ def main():
             name_prefix="ppo_cube_soccer",
         ),
         anneal_cb,
+        curriculum_cb,
     ]
 
     if use_wandb:
@@ -134,7 +178,7 @@ def main():
         gamma=0.99,
         gae_lambda=0.95,
         clip_range=0.2,
-        ent_coef=0.01,
+        ent_coef=args.ent_coef,
         policy_kwargs=dict(
             net_arch=dict(pi=[256, 256], vf=[256, 256])
         ),
