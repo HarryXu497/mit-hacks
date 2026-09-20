@@ -30,6 +30,10 @@ pub struct GameSnapshot {
     pub ball_position: [f32; 3],
     pub score: [u32; 2],
     pub time_remaining: f32,
+    /// The joiner never runs `update_timers`, so the round clock has to be
+    /// streamed or its HUD freezes at the starting value.
+    #[serde(default)]
+    pub round_timer: f32,
 }
 
 /// Host: publishes snapshots via a tokio mpsc sender (cheap, non-blocking,
@@ -207,6 +211,7 @@ pub fn publish_game_snapshot(
         ball_position: [0.0; 3],
         score: game_state.score,
         time_remaining: game_state.time_remaining,
+        round_timer: game_state.round_timer,
     };
     for (player, transform) in &players {
         snapshot.players.push(PlayerSnapshot {
@@ -256,6 +261,7 @@ pub fn apply_network_snapshot(
     }
     game_state.score = snapshot.score;
     game_state.time_remaining = snapshot.time_remaining;
+    game_state.round_timer = snapshot.round_timer;
 }
 
 #[cfg(test)]
@@ -288,6 +294,7 @@ mod tests {
             ball_position: [0.1, 0.2, 0.3],
             score: [2, 1],
             time_remaining: 42.5,
+            round_timer: 9.5,
         };
 
         // Keep publishing (not just once) since the joiner's connection may

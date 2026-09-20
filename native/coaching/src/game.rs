@@ -85,13 +85,21 @@ impl Plugin for GamePlugin {
                     detect_goals,
                     handle_goal_scored,
                     update_timers,
-                    update_ui,
-                    update_wall_scoreboard,
                 )
                     .chain()
                     .run_if(in_state(AppPhase::Game))
                     .run_if(in_state(MatchState::Playing))
                     .run_if(is_not_spectator),
+            )
+            // Display-only systems: they read `GameState` and write text and
+            // materials, so the spectator needs them too — gated off, the
+            // joiner's scoreboard never reflected the streamed score.
+            .add_systems(
+                Update,
+                (update_ui, update_wall_scoreboard)
+                    .chain()
+                    .after(apply_network_snapshot)
+                    .run_if(in_state(AppPhase::Game)),
             )
             .add_systems(
                 Update,
@@ -155,7 +163,10 @@ fn configure_network_physics(role: Option<Res<NetworkRole>>, mut config: ResMut<
     config.physics_pipeline_active = !role.map(|role| role.is_joiner()).unwrap_or(false);
 }
 
-fn spawn_tactic_hud(mut commands: Commands, handoff: Res<MatchHandoff>) {
+fn spawn_tactic_hud(mut commands: Commands, handoff: Option<Res<MatchHandoff>>) {
+    // Optional on purpose: a missing handoff used to panic mid-`OnEnter`, which
+    // silently skipped `start_game_stream` and left a joiner with no stream.
+    let Some(handoff) = handoff else { return };
     commands.spawn(TextBundle {
         text: Text::from_section(
             handoff.summary(),
