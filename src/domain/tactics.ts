@@ -1,42 +1,79 @@
 import { z } from "zod";
 
-export const TACTIC_TAXONOMY_VERSION = "tactics-v1" as const;
+export const TACTIC_TAXONOMY_VERSION = "tactics-v2" as const;
 
-export const tacticKeys = ["balanced", "high_press", "low_block", "wide"] as const;
+export const tacticKeys = ["balanced", "highpress", "gegenpress", "lowblock", "parkthebus", "counterattack", "possession", "wingplay", "narrowmidblock", "alloutattack"] as const;
 export const tacticKeySchema = z.enum(tacticKeys);
 export type TacticKey = z.infer<typeof tacticKeySchema>;
 
 export const TACTIC_TAXONOMY = [
   {
-    key: "balanced",
-    displayName: "Balanced",
-    downstreamValue: "Balanced",
-    description: "No other supported tactic clearly dominates the session.",
+    "key": "balanced",
+    "displayName": "Balanced",
+    "downstreamValue": "balanced",
+    "description": "Balanced shape when no supported tactic dominates."
   },
   {
-    key: "high_press",
-    displayName: "High Press",
-    downstreamValue: "HighPress",
-    description: "Coordinated pressure in advanced areas to recover possession.",
+    "key": "highpress",
+    "displayName": "High Press",
+    "downstreamValue": "highpress",
+    "description": "Coordinated pressure high up the field."
   },
   {
-    key: "low_block",
-    displayName: "Low Block",
-    downstreamValue: "LowBlock",
-    description: "Compact defensive organization close to the defending goal.",
+    "key": "gegenpress",
+    "displayName": "Gegenpress",
+    "downstreamValue": "gegenpress",
+    "description": "Immediate aggressive pressure after losing possession."
   },
   {
-    key: "wide",
-    displayName: "Wide",
-    downstreamValue: "Wide",
-    description: "Use of field width to stretch the opposition and create space.",
+    "key": "lowblock",
+    "displayName": "Low Block",
+    "downstreamValue": "lowblock",
+    "description": "Compact defensive organization near the own goal."
   },
-] as const satisfies ReadonlyArray<{
-  key: TacticKey;
-  displayName: string;
-  downstreamValue: string;
-  description: string;
-}>;
+  {
+    "key": "parkthebus",
+    "displayName": "Park the Bus",
+    "downstreamValue": "parkthebus",
+    "description": "Very deep defensive shape with minimal attacking commitment."
+  },
+  {
+    "key": "counterattack",
+    "displayName": "Counter-Attack",
+    "downstreamValue": "counterattack",
+    "description": "Defend deeper and break forward quickly after recovery."
+  },
+  {
+    "key": "possession",
+    "displayName": "Possession",
+    "downstreamValue": "possession",
+    "description": "Spread support and maintain passing options to keep the ball."
+  },
+  {
+    "key": "wingplay",
+    "displayName": "Wing Play",
+    "downstreamValue": "wingplay",
+    "description": "Use wide support to stretch opponents."
+  },
+  {
+    "key": "narrowmidblock",
+    "displayName": "Narrow Mid-Block",
+    "downstreamValue": "narrowmidblock",
+    "description": "Compact central shape with moderate pressure."
+  },
+  {
+    "key": "alloutattack",
+    "displayName": "All-Out Attack",
+    "downstreamValue": "alloutattack",
+    "description": "Commit most support players forward with a high line."
+  }
+] as const;
+
+export const playerOverrideSchema = z.object({
+  playerId: z.number().int().min(1).max(5),
+  tactic: tacticKeySchema,
+  evidence: z.object({ eventIds: z.array(z.string()), transcriptSegmentIds: z.array(z.string()) }),
+});
 
 export const evidenceStrengthSchema = z.enum(["strong", "moderate", "weak"]);
 export const modelSelectionReasonSchema = z.enum(["best_match", "uncertain_fallback"]);
@@ -65,6 +102,7 @@ export const semanticInterpretationSchema = z.object({
     name: z.string(),
     objective: z.string(),
   }),
+  playerOverrides: z.array(playerOverrideSchema),
   phases: z.array(
     z.object({
       id: z.string(),
@@ -82,8 +120,6 @@ export const semanticInterpretationSchema = z.object({
 
 export type SemanticInterpretation = z.infer<typeof semanticInterpretationSchema>;
 
-export function downstreamValueFor(
-  tactic: TacticKey,
-): "Balanced" | "HighPress" | "LowBlock" | "Wide" {
-  return TACTIC_TAXONOMY.find((entry) => entry.key === tactic)!.downstreamValue;
+export function downstreamValueFor(tactic: TacticKey): TacticKey {
+  return tactic;
 }

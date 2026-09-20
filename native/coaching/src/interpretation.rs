@@ -259,8 +259,8 @@ pub fn deterministic_interpretation(session: &Session, mode: &str) -> Value {
         .collect::<Vec<_>>();
 
     json!({
-        "schemaVersion": "1.0",
-        "taxonomyVersion": "tactics-v1",
+        "schemaVersion": "2.0",
+        "taxonomyVersion": "tactics-v2",
         "interpretationMode": mode,
         "session": {
             "id": session.id,
@@ -298,11 +298,13 @@ pub fn deterministic_interpretation(session: &Session, mode: &str) -> Value {
             })).collect::<Vec<_>>(),
         },
         "rlSelection": {
-            "schemaVersion": "1.0",
-            "taxonomyVersion": "tactics-v1",
+            "schemaVersion": "2.0",
+            "taxonomyVersion": "tactics-v2",
             "sessionId": session.id,
             "primaryTactic": "balanced",
-            "downstreamValue": "Balanced",
+            "downstreamValue": "balanced",
+            "teamId": "red",
+            "playerOverrides": [],
             "selectionReason": "system_fallback",
             "evidenceStrength": "weak",
         }
@@ -344,6 +346,6 @@ mod tests {
         };
         let output = deterministic_interpretation(&session, "deterministic-preview");
         assert_eq!(output["steps"][0]["movements"][0]["entityId"], "ball");
-        assert_eq!(output["schemaVersion"], "1.0");
+        assert_eq!(output["schemaVersion"], "2.0");
     }
 }

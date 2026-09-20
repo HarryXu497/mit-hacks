@@ -3,7 +3,7 @@ import { apiErrorResponse } from "./app";
 import { assembleTacticalOutput, buildInterpretationInput, GroundingError } from "./normalize";
 import { InterpretationServiceError } from "./openaiInterpretation";
 import { createSession } from "../src/domain/session";
-import type { SemanticInterpretation } from "../src/domain/tactics";
+import { tacticKeys, type SemanticInterpretation } from "../src/domain/tactics";
 
 function fixtureSession() {
   const session = createSession();
@@ -39,18 +39,19 @@ function fixtureSession() {
 function semantic(): SemanticInterpretation {
   return {
     classification: {
-      primaryTactic: "high_press",
-      secondaryTraits: ["high_press", "wide", "wide"],
+      primaryTactic: "highpress",
+      secondaryTraits: ["highpress", "wingplay", "wingplay"],
       alternativeTactics: ["balanced"],
       selectionReason: "best_match",
       evidenceStrength: "strong",
       explanation: "The demonstrated movement and instruction describe a press.",
     },
     summary: { name: "Press together", objective: "Recover the ball high." },
+    playerOverrides: [],
     phases: [
       {
         id: "phase-1",
-        primaryTactic: "high_press",
+        primaryTactic: "highpress",
         instruction: "Player three steps forward.",
         objective: "Apply pressure.",
         actors: [3],
@@ -68,8 +69,8 @@ describe("model interpretation assembly", () => {
     expect(output.steps[0].startMs).toBe(900);
     expect(output.steps[0].endMs).toBe(1_800);
     expect(output.steps[0].movements[0].to).toEqual({ x: 0.55, y: 0.4 });
-    expect(output.classification.secondaryTraits).toEqual(["wide"]);
-    expect(output.rlSelection.downstreamValue).toBe("HighPress");
+    expect(output.classification.secondaryTraits).toEqual(["wingplay"]);
+    expect(output.rlSelection.downstreamValue).toBe("highpress");
   });
 
   it("rejects invented evidence IDs", () => {
@@ -80,6 +81,39 @@ describe("model interpretation assembly", () => {
     expect(() => assembleTacticalOutput(session, buildInterpretationInput(session), candidate)).toThrow(
       GroundingError,
     );
+  });
+
+  it.each(tacticKeys)("emits a controller-compatible %s selection", (tactic) => {
+    const session = fixtureSession();
+    const candidate = semantic();
+    candidate.classification.primaryTactic = tactic;
+    const output = assembleTacticalOutput(session, buildInterpretationInput(session), candidate);
+    expect(output.schemaVersion).toBe("2.0");
+    expect(output.rlSelection).toMatchObject({ downstreamValue: tactic, teamId: "red", playerOverrides: [] });
+  });
+
+  it("preserves evidence-backed player overrides", () => {
+    const session = fixtureSession();
+    const candidate = semantic();
+    candidate.playerOverrides = [{ playerId: 3, tactic: "lowblock", evidence: { eventIds: ["move-1"], transcriptSegmentIds: [] } }];
+    const output = assembleTacticalOutput(session, buildInterpretationInput(session), candidate);
+    expect(output.rlSelection.playerOverrides).toEqual(candidate.playerOverrides);
+  });
+
+  it("rejects duplicate, opponent, unsupported and ungrounded overrides", () => {
+    const session = fixtureSession();
+    const valid = { playerId: 3, tactic: "lowblock" as const, evidence: { eventIds: ["move-1"], transcriptSegmentIds: [] } };
+    for (const overrides of [
+      [valid, valid],
+      [{ ...valid, playerId: 6 }],
+      [{ ...valid, tactic: "invented" }],
+      [{ ...valid, evidence: { eventIds: [], transcriptSegmentIds: [] } }],
+      [{ ...valid, evidence: { eventIds: ["invented"], transcriptSegmentIds: [] } }],
+      [{ ...valid, evidence: { eventIds: [], transcriptSegmentIds: ["invented"] } }],
+    ]) {
+      const candidate = { ...semantic(), playerOverrides: overrides } as SemanticInterpretation;
+      expect(() => assembleTacticalOutput(session, buildInterpretationInput(session), candidate)).toThrow();
+    }
   });
 
   it("maps service failures to explicit API errors", () => {

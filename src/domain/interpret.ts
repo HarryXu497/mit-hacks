@@ -6,6 +6,7 @@ import {
   downstreamValueFor,
   TACTIC_TAXONOMY_VERSION,
   tacticKeySchema,
+  playerOverrideSchema,
 } from "./tactics";
 import type { AnnotationAddedEvent, MoveEvent, RawSessionEvent, Session } from "./types";
 
@@ -18,7 +19,7 @@ const movementSchema = z.object({
 });
 
 export const tacticalOutputSchema = z.object({
-  schemaVersion: z.literal("1.0"),
+  schemaVersion: z.literal("2.0"),
   taxonomyVersion: z.literal(TACTIC_TAXONOMY_VERSION),
   interpretationMode: z.enum([
     "deterministic-preview",
@@ -72,11 +73,13 @@ export const tacticalOutputSchema = z.object({
     ),
   }),
   rlSelection: z.object({
-    schemaVersion: z.literal("1.0"),
+    schemaVersion: z.literal("2.0"),
     taxonomyVersion: z.literal(TACTIC_TAXONOMY_VERSION),
     sessionId: z.string(),
     primaryTactic: tacticKeySchema,
-    downstreamValue: z.enum(["Balanced", "HighPress", "LowBlock", "Wide"]),
+    downstreamValue: tacticKeySchema,
+    teamId: z.literal("red"),
+    playerOverrides: z.array(playerOverrideSchema),
     selectionReason: classificationSchema.shape.selectionReason,
     evidenceStrength: classificationSchema.shape.evidenceStrength,
   }),
@@ -150,7 +153,7 @@ export function interpretSession(
   });
 
   return tacticalOutputSchema.parse({
-    schemaVersion: "1.0",
+    schemaVersion: "2.0",
     taxonomyVersion: TACTIC_TAXONOMY_VERSION,
     interpretationMode: mode,
     session: {
@@ -177,11 +180,13 @@ export function interpretSession(
     steps,
     finalState: replay.board,
     rlSelection: {
-      schemaVersion: "1.0",
+      schemaVersion: "2.0",
       taxonomyVersion: TACTIC_TAXONOMY_VERSION,
       sessionId: session.id,
       primaryTactic: "balanced",
       downstreamValue: downstreamValueFor("balanced"),
+      teamId: "red",
+      playerOverrides: [],
       selectionReason: "system_fallback",
       evidenceStrength: "weak",
     },

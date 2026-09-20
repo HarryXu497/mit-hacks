@@ -6,6 +6,7 @@ import {
   TACTIC_TAXONOMY,
   TACTIC_TAXONOMY_VERSION,
   type SemanticInterpretation,
+  semanticInterpretationSchema,
 } from "../src/domain/tactics";
 import type {
   AnnotationAddedEvent,
@@ -75,8 +76,25 @@ export function assembleTacticalOutput(
   input: InterpretationInput,
   semantic: SemanticInterpretation,
 ): TacticalOutput {
+  semantic = semanticInterpretationSchema.parse(semantic);
   const events = new Map(input.boardEvents.map((event) => [event.id, event]));
   const transcripts = new Map(input.transcriptSegments.map((segment) => [segment.id, segment]));
+  const overriddenPlayers = new Set<number>();
+  for (const override of semantic.playerOverrides) {
+    if (overriddenPlayers.has(override.playerId)) {
+      throw new GroundingError(`Duplicate player override: ${override.playerId}`);
+    }
+    overriddenPlayers.add(override.playerId);
+    if (!override.evidence.eventIds.length && !override.evidence.transcriptSegmentIds.length) {
+      throw new GroundingError(`Player ${override.playerId} override has no evidence.`);
+    }
+    for (const id of override.evidence.eventIds) {
+      if (!events.has(id)) throw new GroundingError(`Unknown event evidence ID: ${id}`);
+    }
+    for (const id of override.evidence.transcriptSegmentIds) {
+      if (!transcripts.has(id)) throw new GroundingError(`Unknown transcript evidence ID: ${id}`);
+    }
+  }
   const steps = semantic.phases.map((phase, index) => {
     const citedEvents = phase.evidence.eventIds.map((id) => {
       const event = events.get(id);
@@ -147,7 +165,7 @@ export function assembleTacticalOutput(
   const replay = replaySession(session.events);
 
   return tacticalOutputSchema.parse({
-    schemaVersion: "1.0",
+    schemaVersion: "2.0",
     taxonomyVersion: TACTIC_TAXONOMY_VERSION,
     interpretationMode: "model-backed",
     session: input.session,
@@ -157,11 +175,13 @@ export function assembleTacticalOutput(
     steps,
     finalState: replay.board,
     rlSelection: {
-      schemaVersion: "1.0",
+      schemaVersion: "2.0",
       taxonomyVersion: TACTIC_TAXONOMY_VERSION,
       sessionId: session.id,
       primaryTactic: classification.primaryTactic,
       downstreamValue: downstreamValueFor(classification.primaryTactic),
+      teamId: "red",
+      playerOverrides: semantic.playerOverrides,
       selectionReason: classification.selectionReason,
       evidenceStrength: classification.evidenceStrength,
     },

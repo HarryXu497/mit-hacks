@@ -23,8 +23,8 @@ describe("live OpenAI tactical interpretation", () => {
     const validTranscriptIds = new Set(input.transcriptSegments.map((segment) => segment.id));
 
     expect(tacticalOutputSchema.safeParse(output).success).toBe(true);
-    expect(output.classification.primaryTactic).toBe("high_press");
-    expect(output.rlSelection.downstreamValue).toBe("HighPress");
+    expect(output.classification.primaryTactic).toBe("highpress");
+    expect(output.rlSelection.downstreamValue).toBe("highpress");
     expect(output.steps.length).toBeGreaterThan(0);
     for (const step of output.steps) {
       expect(step.evidence.eventIds.every((id) => validEventIds.has(id))).toBe(true);
@@ -41,8 +41,8 @@ describe("live OpenAI tactical interpretation", () => {
       .expect(200);
     const output = tacticalOutputSchema.parse(response.body);
 
-    expect(output.classification.primaryTactic).toBe("low_block");
-    expect(output.rlSelection.downstreamValue).toBe("LowBlock");
+    expect(output.classification.primaryTactic).toBe("lowblock");
+    expect(output.rlSelection.downstreamValue).toBe("lowblock");
     expect(output.finalState).toEqual(replaySession(session.events).board);
     expect(output.steps.flatMap((step) => step.movements).map((move) => move.to)).toEqual(
       expect.arrayContaining([{ x: 0.4, y: 0.18 }, { x: 0.6, y: 0.18 }]),
