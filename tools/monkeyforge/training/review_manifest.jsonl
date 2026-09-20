@@ -1,0 +1,5 @@
+{"id":"base/balanced","image":"output/dataset_review/base_balanced.png","role":"balanced","provenance":"team_owned","status":"baseline"}
+{"id":"base/runner","image":"output/dataset_review/base_runner.png","role":"runner","provenance":"team_owned","status":"baseline"}
+{"id":"base/defender","image":"output/dataset_review/base_defender.png","role":"defender","provenance":"team_owned","status":"baseline"}
+{"id":"base/goalkeeper","image":"output/dataset_review/base_goalkeeper.png","role":"goalkeeper","provenance":"team_owned","status":"baseline"}
+{"id":"candidate/goalkeeper-helmet","image":"output/dataset_review/candidate_goalkeeper_helmet.png","role":"goalkeeper","provenance":"procedural","prompt":"fast goalkeeper with a rounded star training helmet","status":"candidate"}

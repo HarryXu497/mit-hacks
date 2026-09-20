@@ -69,4 +69,7 @@ wandb/
 .cache/
 
 docs/
+# ...but the Python toolchain under tools/ ships its own documentation. The bare `docs/` rule
+# above matches at every depth, so without this it silently swallows tools/*/docs/ as well.
+!tools/**/docs/
 *.pem

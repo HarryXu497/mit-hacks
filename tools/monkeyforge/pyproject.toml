@@ -1,0 +1,69 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "monkeyforge"
+version = "0.1.0"
+description = "Constraint-aware compiler for generated, game-ready monkey characters"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.116,<1",
+  "httpx>=0.28,<1",
+  "pydantic>=2.11,<3",
+  "pydantic-settings>=2.10,<3",
+  "python-multipart>=0.0.20,<1",
+  "uvicorn[standard]>=0.35,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.4,<9",
+  "pytest-asyncio>=1.1,<2",
+  "ruff>=0.12,<1",
+]
+imaging = [
+  "numpy>=2.2,<3",
+  "pillow>=11.3,<12",
+]
+training = [
+  "numpy>=2.2,<3",
+  "pillow>=11.3,<12",
+  "torch>=2.7,<3",
+]
+# Sketch -> superpower -> badge icon. The registry, badge compositor and sketch masking
+# need only numpy and pillow; CLIP classification adds torch and transformers.
+powers = [
+  "numpy>=2.2,<3",
+  "pillow>=11.3,<12",
+  "torch>=2.7,<3",
+  "transformers>=4.40",
+]
+# The subject generator. Kept separate because it only runs on the CUDA box, and
+# diffusers/accelerate have no business in the lightweight API environment.
+powers-gpu = [
+  "monkeyforge[powers]",
+  "accelerate>=1.0",
+  "diffusers>=0.31",
+  "peft>=0.13",
+  "torchvision>=0.20",
+]
+
+[project.scripts]
+monkeyforge = "monkeyforge.api:run"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/monkeyforge"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["B008"]
