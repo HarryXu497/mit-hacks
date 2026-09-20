@@ -37,6 +37,7 @@ fn extract_one(
     ball_velocity: &Velocity,
     game_state: &GameState,
     poss_flags: [f32; 3],
+    goal_dist: f32,
 ) -> [f32; OBSERVATION_SIZE] {
     let flip = if observer.team == Team::Blue { -1.0 } else { 1.0 };
     let flip_v = Vec3::new(flip, 1.0, 1.0);
@@ -85,9 +86,10 @@ fn extract_one(
     push(&mut out, &mut i, norm_pos(ball_rel * flip_v));
     push(&mut out, &mut i, norm_vel(ball_velocity.linvel * flip_v));
 
-    // goal distances
-    out[i] = (self_pos.x * flip + FIELD_WIDTH / 2.0) / FIELD_WIDTH; // own goal
-    out[i + 1] = (FIELD_WIDTH / 2.0 - self_pos.x * flip) / FIELD_WIDTH; // opponent goal
+    // goal distances (goal line scales with the active roster / field-size curriculum)
+    let gd = goal_dist.max(1e-3);
+    out[i] = (self_pos.x * flip + gd) / (2.0 * gd); // own goal
+    out[i + 1] = (gd - self_pos.x * flip) / (2.0 * gd); // opponent goal
     i += 2;
 
     // match state
@@ -118,6 +120,7 @@ pub fn compute_observations(
     ball_velocity: &Velocity,
     game_state: &GameState,
     holder: Option<(Team, usize)>,
+    goal_dist: f32,
 ) -> Option<Vec<[f32; OBSERVATION_SIZE]>> {
     if agents.len() != NUM_AGENTS {
         return None;
@@ -148,7 +151,7 @@ pub fn compute_observations(
             None => [0.0, 0.0, 0.0],
         };
 
-        let obs = extract_one(observer, &teammates, &opponents, ball_transform, ball_velocity, game_state, poss_flags);
+        let obs = extract_one(observer, &teammates, &opponents, ball_transform, ball_velocity, game_state, poss_flags, goal_dist);
         result[agent_flat_index(observer.team, observer.index)] = obs;
     }
 
@@ -161,6 +164,7 @@ pub fn get_observations(
     ball_query: &Query<(&Transform, &Velocity), With<Ball>>,
     game_state: &GameState,
     possession: &crate::systems::possession::Possession,
+    goal_dist: f32,
 ) -> Option<Vec<[f32; OBSERVATION_SIZE]>> {
     let agents: Vec<AgentView> = player_query
         .iter()
@@ -188,7 +192,7 @@ pub fn get_observations(
     });
 
     let (ball_transform, ball_velocity) = ball_query.get_single().ok()?;
-    compute_observations(&agents, ball_transform, ball_velocity, game_state, holder)
+    compute_observations(&agents, ball_transform, ball_velocity, game_state, holder, goal_dist)
 }
 
 #[cfg(test)]
@@ -221,7 +225,7 @@ mod tests {
         let ball_v = v(0.0, 0.0, 0.0);
         let gs = crate::game::GameState::default();
 
-        let obs = compute_observations(&agents, &ball_t, &ball_v, &gs, None).unwrap();
+        let obs = compute_observations(&agents, &ball_t, &ball_v, &gs, None, FIELD_WIDTH / 2.0).unwrap();
         assert_eq!(obs.len(), NUM_AGENTS);
         for o in &obs {
             assert_eq!(o.len(), OBSERVATION_SIZE);
@@ -244,7 +248,7 @@ mod tests {
         let ball_v = v(0.0, 0.0, 0.0);
         let gs = crate::game::GameState::default();
 
-        let obs = compute_observations(&agents, &ball_t, &ball_v, &gs, None).unwrap();
+        let obs = compute_observations(&agents, &ball_t, &ball_v, &gs, None, FIELD_WIDTH / 2.0).unwrap();
         assert!((obs[0][0] - (-1.0)).abs() < 1e-5, "self x should normalize to -1.0");
         assert!((obs[0][1] - (ARENA_HEIGHT / ARENA_HEIGHT)).abs() < 1e-5);
     }
@@ -258,7 +262,7 @@ mod tests {
         let ball_v = v(0.0, 0.0, 0.0);
         let gs = crate::game::GameState::default();
         if NUM_AGENTS != 1 {
-            assert!(compute_observations(&agents, &ball_t, &ball_v, &gs, None).is_none());
+            assert!(compute_observations(&agents, &ball_t, &ball_v, &gs, None, FIELD_WIDTH / 2.0).is_none());
         }
     }
 
@@ -276,7 +280,7 @@ mod tests {
         let ball_v = v(0.0, 0.0, 0.0);
         let gs = crate::game::GameState::default();
 
-        let obs = compute_observations(&agents, &ball_t, &ball_v, &gs, Some((Team::Orange, 0))).unwrap();
+        let obs = compute_observations(&agents, &ball_t, &ball_v, &gs, Some((Team::Orange, 0)), FIELD_WIDTH / 2.0).unwrap();
         let last3 = |o: &[f32; OBSERVATION_SIZE]| [o[OBSERVATION_SIZE - 3], o[OBSERVATION_SIZE - 2], o[OBSERVATION_SIZE - 1]];
 
         let o0 = agent_flat_index(Team::Orange, 0);
@@ -303,7 +307,7 @@ mod tests {
         let ball_v = v(0.0, 0.0, 0.0);
         let gs = crate::game::GameState::default();
 
-        let obs = compute_observations(&agents, &ball_t, &ball_v, &gs, None).unwrap();
+        let obs = compute_observations(&agents, &ball_t, &ball_v, &gs, None, FIELD_WIDTH / 2.0).unwrap();
         for o in &obs {
             assert_eq!([o[OBSERVATION_SIZE - 3], o[OBSERVATION_SIZE - 2], o[OBSERVATION_SIZE - 1]], [0.0, 0.0, 0.0]);
         }
@@ -328,7 +332,7 @@ mod tests {
         let ball_t = t(0.0, 1.0, 0.0);
         let ball_v = v(0.0, 0.0, 0.0);
         let gs = crate::game::GameState::default();
-        let obs = compute_observations(&agents, &ball_t, &ball_v, &gs, None).unwrap();
+        let obs = compute_observations(&agents, &ball_t, &ball_v, &gs, None, FIELD_WIDTH / 2.0).unwrap();
         assert!((obs[0][OBSERVATION_SIZE - 8] - 0.25).abs() < 1e-6, "cooldown at size-8");
         assert_eq!(
             [obs[0][OBSERVATION_SIZE - 7], obs[0][OBSERVATION_SIZE - 6], obs[0][OBSERVATION_SIZE - 5], obs[0][OBSERVATION_SIZE - 4]],

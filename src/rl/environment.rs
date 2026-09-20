@@ -80,14 +80,18 @@ impl CubeSoccerEnv {
             *world.resource_mut::<AIActions>() = AIActions::from_slice(&[]);
         }
 
+        // Field-size curriculum: shrink spawns toward center for small rosters so the
+        // whole pitch scales with player count (goal lines scale to match elsewhere).
+        let fs = crate::game::field_scale(self.app.world.resource::<ActiveRoster>().0);
+
         {
             let world = &mut self.app.world;
             let mut state = world.query_filtered::<(&mut Transform, &mut Velocity, &CubePlayer), Without<Ball>>();
             for (mut t, mut v, player) in state.iter_mut(world) {
                 let base = get_spawn_position(player.team, player.index);
-                let jx = rng.gen_range(-RESET_POS_JITTER..=RESET_POS_JITTER);
-                let jz = rng.gen_range(-RESET_POS_JITTER..=RESET_POS_JITTER);
-                t.translation = base + Vec3::new(jx, 0.0, jz);
+                let jx = rng.gen_range(-RESET_POS_JITTER..=RESET_POS_JITTER) * fs;
+                let jz = rng.gen_range(-RESET_POS_JITTER..=RESET_POS_JITTER) * fs;
+                t.translation = Vec3::new(base.x * fs, base.y, base.z * fs) + Vec3::new(jx, 0.0, jz);
                 v.linvel = Vec3::ZERO;
                 v.angvel = Vec3::ZERO;
             }
@@ -97,9 +101,10 @@ impl CubeSoccerEnv {
             let world = &mut self.app.world;
             let mut state = world.query_filtered::<(&mut Transform, &mut Velocity), With<Ball>>();
             for (mut t, mut v) in state.iter_mut(world) {
-                let ox = rng.gen_range(-RESET_BALL_JITTER..=RESET_BALL_JITTER);
-                let oz = rng.gen_range(-RESET_BALL_JITTER..=RESET_BALL_JITTER);
-                t.translation = get_ball_spawn_position() + Vec3::new(ox, 0.0, oz);
+                let ox = rng.gen_range(-RESET_BALL_JITTER..=RESET_BALL_JITTER) * fs;
+                let oz = rng.gen_range(-RESET_BALL_JITTER..=RESET_BALL_JITTER) * fs;
+                let b = get_ball_spawn_position();
+                t.translation = Vec3::new(b.x * fs, b.y, b.z * fs) + Vec3::new(ox, 0.0, oz);
                 v.linvel = Vec3::ZERO;
                 v.angvel = Vec3::ZERO;
             }
@@ -488,6 +493,32 @@ mod tests {
         // z=6 is outside the regulation mouth (~2.8) but inside a wide goal.
         assert_eq!(score_with_width(GoalHalfWidth::regulation()), 0, "narrow goal: wide ball is no goal");
         assert_eq!(score_with_width(8.0), 1, "wide goal: the same wide ball scores");
+    }
+
+    #[test]
+    fn goal_line_scales_with_roster() {
+        use crate::entities::Ball;
+        if crate::game::PLAYERS_PER_TEAM < 2 {
+            return;
+        }
+        fn scores(x: f32, roster: usize) -> u32 {
+            let mut env = CubeSoccerEnv::new(EnvConfig::default());
+            env.reset(Some(0));
+            env.set_active_roster(roster);
+            {
+                let world = &mut env.app.world;
+                let mut q = world.query_filtered::<&mut Transform, With<Ball>>();
+                let mut t = q.single_mut(world);
+                t.translation = Vec3::new(x, crate::game::FIELD_HEIGHT + 0.5, 0.0);
+            }
+            let zero = vec![0.0f32; NUM_AGENTS * crate::game::ACTION_SIZE];
+            env.step(&zero).info.score[0]
+        }
+        // A ball just past the (short) 1v1 goal line scores at roster 1, but the same
+        // x is well short of the full-field goal line at roster 5.
+        let x = crate::game::effective_goal_dist(1) + 0.5;
+        assert_eq!(scores(x, 1), 1, "past the 1v1 goal line should score at roster 1");
+        assert_eq!(scores(x, 5), 0, "same x is short of the full-field line at roster 5");
     }
 
     #[test]

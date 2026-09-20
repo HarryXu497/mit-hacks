@@ -52,12 +52,15 @@ pub struct LatestRewards(pub Vec<f32>);
 /// Build the flat observation vector into `LatestObs` after the sim advances.
 fn extract_observations(
     mut latest: ResMut<LatestObs>,
+    roster: Option<Res<ActiveRoster>>,
     player_query: Query<(Entity, &Transform, &Velocity, &CubePlayer, Option<&crate::systems::superpowers::Superpower>)>,
     ball_query: Query<(&Transform, &Velocity), With<Ball>>,
     game_state: Res<GameState>,
     possession: Res<Possession>,
 ) {
-    if let Some(per_agent) = get_observations(&player_query, &ball_query, &game_state, &possession) {
+    let active = roster.map(|r| r.0).unwrap_or(crate::game::PLAYERS_PER_TEAM);
+    let goal_dist = crate::game::effective_goal_dist(active);
+    if let Some(per_agent) = get_observations(&player_query, &ball_query, &game_state, &possession, goal_dist) {
         let mut flat = Vec::with_capacity(per_agent.len() * crate::game::OBSERVATION_SIZE);
         for obs in &per_agent {
             flat.extend_from_slice(obs);
@@ -71,11 +74,15 @@ fn compute_step_rewards(
     mut calc: ResMut<RewardCalculator>,
     mut latest: ResMut<LatestRewards>,
     possession: Res<Possession>,
+    roster: Option<Res<ActiveRoster>>,
     player_query: Query<(Entity, &Transform, &CubePlayer)>,
     ball_query: Query<(&Transform, &Velocity), With<Ball>>,
     mut goal_events: EventReader<GoalScoredEvent>,
 ) {
     let Ok((ball_transform, ball_velocity)) = ball_query.get_single() else { return; };
+    // Attacking-goal distance scales with the active roster (field-size curriculum).
+    let active = roster.map(|r| r.0).unwrap_or(crate::game::PLAYERS_PER_TEAM);
+    calc.goal_dist = crate::game::effective_goal_dist(active);
     let goal_event = goal_events.read().next();
 
     // Resolve the ball holder entity to (team, index) for the possession bonus.

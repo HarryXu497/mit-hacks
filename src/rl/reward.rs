@@ -34,6 +34,9 @@ pub struct RewardCalculator {
     pub config: RewardConfig,
     pub prev_ball_pos: Vec3,
     pub shaping_weight: f32,
+    /// Distance from field center to the attacking goal line — scales with the
+    /// active roster (field-size curriculum). Defaults to the full field.
+    pub goal_dist: f32,
     /// Previous-step positions per (team, index), for the potential-based
     /// agent-approaches-ball shaping. Empty on the first step of an episode.
     prev_positions: HashMap<(Team, usize), Vec3>,
@@ -48,6 +51,7 @@ impl Default for RewardCalculator {
             config: RewardConfig::default_config(),
             prev_ball_pos: Vec3::ZERO,
             shaping_weight: 1.0,
+            goal_dist: FIELD_WIDTH / 2.0,
             prev_positions: HashMap::new(),
             has_prev: false,
         }
@@ -60,6 +64,7 @@ impl RewardCalculator {
             config,
             prev_ball_pos: Vec3::ZERO,
             shaping_weight: 1.0,
+            goal_dist: FIELD_WIDTH / 2.0,
             prev_positions: HashMap::new(),
             has_prev: false,
         }
@@ -105,7 +110,7 @@ impl RewardCalculator {
             }
         }
 
-        let goal_x = if team == Team::Orange { FIELD_WIDTH / 2.0 } else { -FIELD_WIDTH / 2.0 };
+        let goal_x = if team == Team::Orange { self.goal_dist } else { -self.goal_dist };
         let half_mouth = GOAL_DEPTH / 2.0;
         // Distance to the nearest point of the goal *mouth* (the scorable segment at
         // x = goal_x, z in [-half_mouth, half_mouth]) — NOT the goal center. A ball
