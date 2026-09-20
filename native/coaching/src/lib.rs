@@ -10,6 +10,7 @@ pub mod phase;
 pub mod replay;
 pub mod session;
 pub mod speech;
+pub mod tactics_bridge;
 pub mod ui;
 
 use bevy::prelude::*;

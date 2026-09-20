@@ -209,17 +209,22 @@ pub(crate) fn monkey(c: &mut Commands, k: &Kit, parent: Entity, team: Team) {
     for (p, s, m) in parts {
         let e = block(c, k, m, p, s);
         c.entity(e)
-            .insert(crate::rendering::stylized::ActorSurface);
+            .insert(crate::rendering::stylized::ActorSurface)
+            // Tagged so a generated model can take the whole blocky character off in one pass.
+            .insert(crate::entities::CharacterSkinReplaces);
         c.entity(parent).add_child(e);
         // Ink shell around the same box, at the same place, grown by a fixed
         // world offset: the outline treatment without touching the silhouette.
         let shell = c
-            .spawn(PbrBundle {
-                mesh: k.cube.clone(),
-                material: k.ink.clone(),
-                transform: Transform::from_translation(p).with_scale(s + Vec3::splat(INK)),
-                ..default()
-            })
+            .spawn((
+                PbrBundle {
+                    mesh: k.cube.clone(),
+                    material: k.ink.clone(),
+                    transform: Transform::from_translation(p).with_scale(s + Vec3::splat(INK)),
+                    ..default()
+                },
+                crate::entities::CharacterSkinReplaces,
+            ))
             .id();
         c.entity(parent).add_child(shell);
     }
@@ -353,7 +358,10 @@ pub fn build_jungle(
     mut meshes: ResMut<Assets<Mesh>>,
     mut mats: ResMut<Assets<StandardMaterial>>,
     mut old: Query<&mut Handle<Mesh>, (Without<DigitSegment>, Without<Ball>)>,
-    players: Query<(Entity, &CubePlayer)>,
+    players: Query<(Entity, &CubePlayer, Option<&Children>)>,
+    // The animated node each player's visuals hang from, and whether it is already wearing a
+    // generated character. See `entities::character`.
+    visuals: Query<(Entity, Has<crate::entities::CharacterSkin>), With<crate::entities::PlayerVisual>>,
     balls: Query<Entity, With<Ball>>,
     mut digits: Query<(&mut Transform, &Handle<StandardMaterial>), With<DigitSegment>>,
 ) {
@@ -616,8 +624,32 @@ pub fn build_jungle(
             ..default()
         });
     }
-    for (e, p) in &players {
-        monkey(&mut c, &k, e, p.team);
+    // Dress each player that is not already wearing a generated character.
+    //
+    // The blocks go on the player's `PlayerVisual` node rather than on the body, for the same
+    // reason everything else visible does: the body's transform belongs to Rapier and to
+    // `movement.rs`, while the visual node is free to bob, lean and squash. Hung off the body
+    // these would be the only part of the character that did not move.
+    //
+    // A player already wearing a forged model is skipped outright -- the generated character
+    // replaces this one rather than layering over it.
+    //
+    // (The mesh-blanking pass above does not touch a generated character: its meshes belong to a
+    // glTF scene that the asset server spawns asynchronously, frames after this one-shot system
+    // has run.)
+    for (body, player, children) in &players {
+        let visual = children
+            .into_iter()
+            .flatten()
+            .find_map(|child| visuals.get(*child).ok());
+
+        match visual {
+            Some((_, true)) => continue,
+            Some((node, false)) => monkey(&mut c, &k, node, player.team),
+            // No visual node at all: an app that spawned players without `spawn_player_with_eyes`.
+            // Dress the body directly, as this did before the node existed.
+            None => monkey(&mut c, &k, body, player.team),
+        }
     }
     for ball in &balls {
         c.entity(ball)
@@ -788,5 +820,95 @@ mod tests {
         );
         assert!(app.world.get::<Children>(player).unwrap().len() >= 11);
         assert!(app.world.query::<&Handle<Mesh>>().iter(&app.world).count() > 300);
+    }
+
+    /// A player with a visual node is dressed on the *node*, not on the body.
+    ///
+    /// This is what lets the blocky character bob and lean with everything else; hung off the
+    /// body it would be the only part of a player that never moved.
+    #[test]
+    fn the_blocky_character_is_dressed_onto_the_animated_node() {
+        use crate::entities::{CharacterSkinReplaces, PlayerVisual};
+
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .add_systems(Startup, build_jungle);
+
+        let visual = app
+            .world
+            .spawn((PlayerVisual::new(0., 1.), SpatialBundle::default()))
+            .id();
+        let body = app
+            .world
+            .spawn((
+                CubePlayer {
+                    team: Team::Orange,
+                    index: 0,
+                    can_jump: true,
+                },
+                SpatialBundle::default(),
+            ))
+            .id();
+        app.world.entity_mut(body).add_child(visual);
+        app.update();
+
+        let on_node = app.world.get::<Children>(visual).map_or(0, |c| c.len());
+        assert!(
+            on_node >= 11,
+            "the character should hang off the animated node, found {on_node} children"
+        );
+        // The body keeps only the node itself.
+        assert_eq!(app.world.get::<Children>(body).unwrap().len(), 1);
+
+        // And every block is tagged, so a generated model can take the whole thing off at once.
+        let tagged = app
+            .world
+            .query::<&CharacterSkinReplaces>()
+            .iter(&app.world)
+            .count();
+        assert!(tagged >= 11, "blocks must be removable as a unit, found {tagged}");
+    }
+
+    /// A player already wearing a generated model is left alone entirely.
+    #[test]
+    fn a_player_wearing_a_generated_model_is_not_dressed_again() {
+        use crate::entities::{CharacterSkin, PlayerVisual};
+
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .add_systems(Startup, build_jungle);
+
+        let visual = app
+            .world
+            .spawn((
+                PlayerVisual::new(0., 1.),
+                CharacterSkin {
+                    path: "characters/base.glb#Scene0".to_owned(),
+                    scene: Handle::default(),
+                    revealed: true,
+                },
+                SpatialBundle::default(),
+            ))
+            .id();
+        let body = app
+            .world
+            .spawn((
+                CubePlayer {
+                    team: Team::Blue,
+                    index: 0,
+                    can_jump: true,
+                },
+                SpatialBundle::default(),
+            ))
+            .id();
+        app.world.entity_mut(body).add_child(visual);
+        app.update();
+
+        assert!(
+            app.world.get::<Children>(visual).is_none(),
+            "a generated character replaces the blocky one rather than layering over it"
+        );
     }
 }

@@ -354,7 +354,12 @@ pub fn draw_mark(
         if points.len() > 1 {
             let id = session.next_id();
             let at_ms = session.elapsed_ms;
-            session.append(RawEvent::AnnotationAdded { id, points: points.clone(), at_ms });
+            session.append(RawEvent::AnnotationAdded {
+                id,
+                points: points.clone(),
+                arrow: was_arrow,
+                at_ms,
+            });
             marks.committed.push((id, points, was_arrow));
             // The head is only drawn once the stroke is finished, because only
             // then is its direction known.

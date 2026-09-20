@@ -68,7 +68,10 @@ pub enum RawEvent {
     RecordingStarted { at_ms: u64 },
     RecordingStopped { at_ms: u64 },
     EntityMoved { entity: EntityRef, from: Point, to: Point, started_at_ms: u64, at_ms: u64 },
-    AnnotationAdded { id: u32, points: Vec<Point>, at_ms: u64 },
+    /// `arrow` distinguishes the Arrow tool's stroke from the Pen's. The board knew which
+    /// it had drawn but was not recording it, so a plain line and an arrow were
+    /// indistinguishable in the log -- and the sign called both of them arrows.
+    AnnotationAdded { id: u32, points: Vec<Point>, arrow: bool, at_ms: u64 },
     AnnotationRemoved { id: u32, at_ms: u64 },
     TranscriptAdded { id: u32, text: String, at_ms: u64 },
 }
@@ -92,7 +95,9 @@ impl RawEvent {
             Self::RecordingStarted { .. } => "started recording".to_owned(),
             Self::RecordingStopped { .. } => "stopped".to_owned(),
             Self::EntityMoved { entity, .. } => format!("moved {}", entity.label()),
-            Self::AnnotationAdded { .. } => "drew an arrow".to_owned(),
+            Self::AnnotationAdded { arrow, .. } => {
+                if *arrow { "drew an arrow".to_owned() } else { "drew a line".to_owned() }
+            }
             Self::AnnotationRemoved { .. } => "removed an arrow".to_owned(),
             Self::TranscriptAdded { text, .. } => format!("said \u{201c}{text}\u{201d}"),
         }

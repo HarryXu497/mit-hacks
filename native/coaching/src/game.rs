@@ -9,8 +9,8 @@ use crate::game_stream::{
 use crate::network::{is_not_spectator, is_spectator, NetworkRole};
 use cube_soccer::entities::CubePlayer;
 use cube_soccer::entities::{
-    animate_player_visual, spawn_arena, spawn_ball, spawn_field, spawn_goals, spawn_players,
-    spawn_wall_scoreboard,
+    animate_player_visual, reveal_loaded_characters, spawn_arena, spawn_ball, spawn_field,
+    spawn_goals, spawn_players, spawn_wall_scoreboard, wear_characters, WornCharacters,
 };
 use cube_soccer::game::{
     BallTouchedEvent, GameOverEvent, GameState, GoalScoredEvent, MatchState, ResetGameEvent,
@@ -18,7 +18,7 @@ use cube_soccer::game::{
 use cube_soccer::jungle::{animate_jungle, animate_water, build_jungle};
 use cube_soccer::rendering::batching::merge_static_draws;
 use cube_soccer::rendering::setup_lighting;
-use cube_soccer::rendering::stylized::{register_shader, stylize, JungleMaterial};
+use cube_soccer::rendering::stylized::{is_rendering, register_shader, stylize, JungleMaterial};
 use cube_soccer::systems::{
     activate_superpowers, apply_heuristic_ai, apply_status_forces, clamp_velocities,
     clear_possession, tick_cooldowns, tick_status_effects, tick_superpower_cooldowns,
@@ -41,9 +41,14 @@ impl Plugin for GamePlugin {
         // The jungle's cel lighting and animated water are a material extension, so the
         // shader has to be registered on the app before anything that uses it is spawned.
         register_shader(app);
+        if is_rendering(app) {
+            // Only where there is a renderer to use it. The integration tests build a headless
+            // app with `AssetPlugin` but no `RenderPlugin`, so there is no `Assets<Shader>` and
+            // no material store; `stylize` no-ops there for the same reason.
+            app.add_plugins(MaterialPlugin::<JungleMaterial>::default());
+        }
 
         app.add_plugins(RapierPhysicsPlugin::<NoUserData>::default())
-            .add_plugins(MaterialPlugin::<JungleMaterial>::default())
             // Two samples, not four: once the static props are batched the frame is fill
             // bound, and the goal netting's sub-pixel beams sparkle with no coverage
             // sampling at all. See the note in cube-soccer's own CubeSoccerPlugin.
@@ -54,6 +59,7 @@ impl Plugin for GamePlugin {
             .init_resource::<TrailSpawnTimer>()
             .init_resource::<TeamTactics>()
             .init_resource::<Possession>()
+            .init_resource::<WornCharacters>()
             .init_resource::<SnapshotTimer>()
             .add_event::<ImpulseEvent>()
             .add_event::<GoalScoredEvent>()
@@ -154,6 +160,15 @@ impl Plugin for GamePlugin {
                     spawn_trail_particles,
                     animate_trail_particles,
                 )
+                    .run_if(in_state(AppPhase::Game)),
+            )
+            // Which model each side wears, and showing it once it has genuinely loaded. This is
+            // how a character forged from a player's drawing reaches the pitch: the forge writes
+            // the GLB and points `WornCharacters` at it, and the whole team changes.
+            .add_systems(
+                Update,
+                (wear_characters, reveal_loaded_characters)
+                    .chain()
                     .run_if(in_state(AppPhase::Game)),
             )
             .add_systems(

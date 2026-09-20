@@ -1021,8 +1021,28 @@ mod lan_simulation_tests {
     }
 
     fn spawn_server(port: u16, output_dir: &std::path::Path) -> ServerGuard {
-        let child = Command::new("npx")
-            .args(["tsx", "server/index.ts"])
+        // Run tsx's CLI directly under `node`, rather than going through `npx`.
+        //
+        // `npx` is a shell script on Unix and a `.cmd` batch file on Windows, so `Command::new`
+        // cannot even find it there (no PATHEXT resolution) — these three tests could never run
+        // on a Windows machine. Naming `npx.cmd` finds it but is worse: each spawn becomes a
+        // three-process chain (npx-cli -> the `.bin/tsx` shim -> the real server), and
+        // `ServerGuard` can only kill the first. The servers survive holding their ports, so the
+        // *next* test in the file hangs waiting for a health check that a zombie will never
+        // answer. Addressing the CLI directly makes the child the server, so dropping the guard
+        // actually stops it.
+        let root = repo_root();
+        assert!(
+            root.join("node_modules/tsx/dist/cli.mjs").exists(),
+            "node_modules/tsx is missing — run `npm ci` before the LAN tests"
+        );
+        // Both paths are given *relative* to the working directory set below, not absolute.
+        // `repo_root()` canonicalizes, which on Windows yields an extended-length path
+        // (`\?\C:\...`), and node cannot take one of those as its main module: it mis-parses it
+        // and exits with `EISDIR: illegal operation on a directory, lstat 'C:'`.
+        let child = Command::new("node")
+            .arg("node_modules/tsx/dist/cli.mjs")
+            .arg("server/index.ts")
             .current_dir(repo_root())
             .env("API_PORT", port.to_string())
             // Keep artifact writes inside the test's tempdir.
@@ -1030,7 +1050,7 @@ mod lan_simulation_tests {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .expect("failed to spawn `npx tsx server/index.ts` — is npm/node on PATH?");
+            .unwrap_or_else(|e| panic!("failed to spawn node — is it on PATH? {e}"));
         ServerGuard(child)
     }
 

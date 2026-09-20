@@ -35,7 +35,11 @@ pub mod roster;
 
 pub use arena::{spawn_arena, spawn_wall_scoreboard, Arena};
 pub use ball::{spawn_ball, get_ball_spawn_position, Ball, BallBundle};
-pub use character::{animate_player_visual, skin_path, spawn_skin, CharacterSkin, PlayerVisual};
+pub use character::{
+    animate_player_visual, reveal_loaded_characters, visual_node, wear_characters,
+    BlockyCharacter as CharacterSkinReplaces, CharacterSkin, PlayerVisual, WornCharacters,
+    BASE_CHARACTER,
+};
 pub use cube_player::{spawn_players, get_spawn_position, CubePlayer, CubePlayerBundle, PlayerInput, GooglyPupil};
 pub use field::{spawn_field, Field, FieldBorder};
 pub use goal::{spawn_goals, Goal, GoalSensor};

@@ -1,7 +1,6 @@
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 use crate::game::config::*;
-use crate::entities::character::PlayerVisual;
 
 // Player collision filter: collides with everything
 fn player_collision_groups() -> CollisionGroups {
@@ -95,7 +94,6 @@ pub fn spawn_players(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    asset_server: Res<AssetServer>,
 ) {
     // Eye materials (shared)
     let eye_white = materials.add(StandardMaterial {
@@ -115,7 +113,6 @@ pub fn spawn_players(
                 &mut commands,
                 &mut meshes,
                 &mut materials,
-                &asset_server,
                 team,
                 index,
                 get_spawn_position(team, index),
@@ -132,7 +129,6 @@ fn spawn_player_with_eyes(
     commands: &mut Commands,
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
-    asset_server: &AssetServer,
     team: Team,
     index: usize,
     position: Vec3,
@@ -146,62 +142,56 @@ fn spawn_player_with_eyes(
     let eye_y = 0.15;  // Slightly above center
     let eye_spacing = 0.3;  // Distance between eyes
 
-    // A generated character replaces the cube's *appearance* only. The bundle below -- collider,
-    // mass, damping, locked axes -- is spawned identically either way, so physics and the
-    // observation vector are unaffected and trained policies stay valid.
+    // Everything visible hangs off a `PlayerVisual` child rather than off the body itself,
+    // because the body's transform belongs to Rapier and to `movement.rs`. Animating a child
+    // leaves both alone, so the cube below animates exactly as a generated character does.
     //
-    // Everything visible hangs off a `PlayerVisual` child rather than off the body itself, because
-    // the body's transform belongs to Rapier and to `movement.rs`. Animating a child leaves both
-    // alone, and it means the cube fallback animates exactly like a generated character does.
+    // The body draws nothing of its own. `Visibility::Hidden` would take the children down with
+    // it, since visibility propagates -- so its mesh handle is swapped for the default one, which
+    // draws nothing while leaving the hierarchy intact. Only the *appearance* moves; the bundle's
+    // collider, mass, damping and locked axes are untouched, so physics and the observation
+    // vector are unaffected and trained policies stay valid.
     //
-    // The body therefore draws nothing of its own. `Visibility::Hidden` would take the children
-    // down with it, since visibility propagates -- so its mesh handle is swapped for the default
-    // one, which draws nothing while leaving the hierarchy intact.
-    let skinned = crate::entities::character::skin_path(team).is_some();
-
-    // Built only when there is no model to wear, so an unused mesh and material are not added to
-    // the asset store for every skinned player.
-    let cube_appearance = (!skinned).then(|| {
-        (
-            meshes.add(Cuboid::new(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE)),
-            materials.add(StandardMaterial {
-                base_color: team.color(),
-                metallic: 0.5,
-                perceptual_roughness: 0.4,
-                ..default()
-            }),
-        )
+    // The cube and its googly eyes are the bottom of three tiers. In the jungle they are replaced
+    // by its blocky character, and that in turn by a generated model once one has loaded -- both
+    // of which work by removing everything tagged `BlockyCharacter`, which is why these carry the
+    // tag. Bare, with no jungle and no model, the cube is what a player looks like.
+    let cube_mesh = meshes.add(Cuboid::new(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE));
+    let cube_material = materials.add(StandardMaterial {
+        base_color: team.color(),
+        metallic: 0.5,
+        perceptual_roughness: 0.4,
+        ..default()
     });
 
     let mut entity = commands.spawn(CubePlayerBundle::new(team, index, position, meshes, materials));
     entity.insert(Handle::<Mesh>::default());
 
     entity.with_children(|parent| {
-        if crate::entities::character::spawn_skin(parent, asset_server, team) {
-            return;
-        }
-
-        let (cube_mesh, cube_material) =
-            cube_appearance.expect("no skin means the cube appearance was built above");
-
         parent
-            .spawn((PlayerVisual::new(0.0, 1.0), SpatialBundle::default()))
+            .spawn(crate::entities::character::visual_node())
             .with_children(|visual| {
-                visual.spawn(PbrBundle {
-                    mesh: cube_mesh,
-                    material: cube_material,
-                    ..default()
-                });
+                visual.spawn((
+                    PbrBundle {
+                        mesh: cube_mesh,
+                        material: cube_material,
+                        ..default()
+                    },
+                    crate::entities::character::BlockyCharacter,
+                ));
 
                 // A googly eye, twice: a white globe with a pupil parked in front of it.
                 for side in [-1.0f32, 1.0] {
                     visual
-                        .spawn(PbrBundle {
-                            mesh: eye_mesh.clone(),
-                            material: eye_material.clone(),
-                            transform: Transform::from_xyz(side * eye_spacing, eye_y, eye_z),
-                            ..default()
-                        })
+                        .spawn((
+                            PbrBundle {
+                                mesh: eye_mesh.clone(),
+                                material: eye_material.clone(),
+                                transform: Transform::from_xyz(side * eye_spacing, eye_y, eye_z),
+                                ..default()
+                            },
+                            crate::entities::character::BlockyCharacter,
+                        ))
                         .with_children(|eye| {
                             eye.spawn((
                                 PbrBundle {

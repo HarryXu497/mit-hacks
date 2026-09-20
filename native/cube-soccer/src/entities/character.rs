@@ -9,36 +9,96 @@
 //! * The collider stays `Collider::cuboid(CUBE_SIZE/2, ..)`. No contact behaviour changes.
 //! * `OBSERVATION_SIZE` and the observation vector are untouched, so every existing PPO
 //!   checkpoint stays valid.
-//! * With no model file present the game falls back to the original cube, so a checkout without
-//!   assets still runs -- and the cube animates too, because the animation lives on the visual
-//!   node rather than on the model.
 //!
-//! Models are produced by MonkeyForge from a player's drawing and exported one unit tall standing
-//! on the origin, so the only scaling needed here is by `CUBE_SIZE`. The model is chosen per
-//! *team*, not per player: one person draws one character and their whole side wears it.
+//! # What a player looks like
+//!
+//! Three tiers, each replacing the one below it, all hanging off the same animated
+//! [`PlayerVisual`] node so they move identically:
+//!
+//! 1. **A generated model** — MonkeyForge turns a player's drawing into a GLB, and the whole team
+//!    wears it. Chosen per *team*, not per player: one person draws one character and their side
+//!    wears it. Shown only once the asset has genuinely loaded (see [`CharacterSkin`]).
+//! 2. **The jungle's blocky character** — `jungle::monkey`, eleven blocks with ink outlines.
+//!    Everything it spawns is tagged [`BlockyCharacter`] so tier 1 can take it off in one pass.
+//! 3. **The cube and its googly eyes** — what `cube_player.rs` spawns, and all you get with no
+//!    jungle and no model. Also tagged, for the same reason.
+//!
+//! Tier 1 starts as the undressed [`BASE_CHARACTER`], which is committed, so the fallback exists
+//! even on a machine that can reach no GPU. Models are exported one unit tall standing on the
+//! origin, so the scene child carries a `CUBE_SIZE` scale and a half-cube drop; the node itself
+//! stays neutral, because tiers 2 and 3 are already authored at body scale.
 
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::Velocity;
 
-use crate::entities::cube_player::PlayerInput;
+use crate::entities::cube_player::{CubePlayer, PlayerInput};
 use crate::game::config::{Team, CUBE_SIZE};
 use crate::systems::status_effects::ImpulseEvent;
 
-/// Path to each team's character model, relative to `assets/`.
+/// The undressed base monkey, which MonkeyForge dresses to make a character.
 ///
-/// `None` means "no model for this team": the player keeps the procedural cube. That is the
-/// default state of a fresh checkout, since the models are generated rather than committed
-/// wholesale.
-pub fn skin_path(team: Team) -> Option<&'static str> {
-    match team {
-        Team::Orange => Some("characters/orange.glb#Scene0"),
-        Team::Blue => Some("characters/blue.glb#Scene0"),
+/// Everyone wears this until something better has been forged for their team, including when the
+/// GPU box that does the forging is unreachable. It is committed to the repo precisely so that
+/// fallback always exists.
+pub const BASE_CHARACTER: &str = "characters/base.glb#Scene0";
+
+/// Which model each team is wearing, as a path under `assets/`.
+///
+/// This is a resource rather than a constant because it changes at runtime: a character forged
+/// from a player's drawing is written to disk and then pointed at here, and the whole team's
+/// appearance changes on the next frame. Setting a team to `None` puts it back in the blocky
+/// character the jungle dresses it in.
+#[derive(Resource, Debug, Clone, PartialEq, Eq)]
+pub struct WornCharacters {
+    pub orange: Option<String>,
+    pub blue: Option<String>,
+}
+
+impl Default for WornCharacters {
+    fn default() -> Self {
+        Self {
+            orange: Some(BASE_CHARACTER.to_owned()),
+            blue: Some(BASE_CHARACTER.to_owned()),
+        }
     }
 }
 
-/// Marker for a generated model hanging off a player body.
+impl WornCharacters {
+    pub fn get(&self, team: Team) -> Option<&str> {
+        match team {
+            Team::Orange => self.orange.as_deref(),
+            Team::Blue => self.blue.as_deref(),
+        }
+    }
+
+    pub fn set(&mut self, team: Team, path: Option<String>) {
+        match team {
+            Team::Orange => self.orange = path,
+            Team::Blue => self.blue = path,
+        }
+    }
+}
+
+/// A generated model hanging off a player's visual node, and how far along it is.
+///
+/// The model is *not* shown the moment it is asked for. Bevy loads a glTF asynchronously and
+/// fails silently when the file is missing — a wrong working directory would otherwise leave ten
+/// invisible players, since the jungle blanks the body's own mesh either way. So the blocky
+/// character stays up until the scene has genuinely finished loading, and only then is it taken
+/// down. A model that never arrives simply never replaces anything.
 #[derive(Component)]
-pub struct CharacterSkin;
+pub struct CharacterSkin {
+    /// What was asked for, so a change of model is noticed.
+    pub path: String,
+    pub(crate) scene: Handle<Scene>,
+    /// Whether the blocky character underneath has been taken down yet.
+    pub(crate) revealed: bool,
+}
+
+/// One block of the jungle's blocky character, so it can be removed as a unit when a generated
+/// model is ready to take its place.
+#[derive(Component)]
+pub struct BlockyCharacter;
 
 // --- Animation tuning --------------------------------------------------------------------------
 // Offsets are in cube units and are scaled by CUBE_SIZE when applied, so the cube and a generated
@@ -159,31 +219,97 @@ impl PlayerVisual {
     }
 }
 
-/// Attach the generated model to a player, returning whether one was attached.
+/// Ask each player's visual node to wear the model its team is currently assigned.
 ///
-/// The caller uses the answer to decide whether to spawn the cube and its googly eyes instead: a
-/// generated monkey has its own eyes painted into its texture, and adding spheres on top of them
-/// looks like a bug.
-pub fn spawn_skin(parent: &mut ChildBuilder, asset_server: &AssetServer, team: Team) -> bool {
-    let Some(path) = skin_path(team) else {
-        return false;
-    };
+/// Runs every frame but does work only when the answer changes, so pointing [`WornCharacters`] at
+/// a freshly forged model is all it takes to re-dress a whole side mid-match.
+pub fn wear_characters(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    worn: Res<WornCharacters>,
+    bodies: Query<&CubePlayer>,
+    visuals: Query<(Entity, &Parent, Option<&CharacterSkin>), With<PlayerVisual>>,
+) {
+    for (visual, parent, current) in &visuals {
+        let Ok(player) = bodies.get(parent.get()) else {
+            continue;
+        };
 
-    // The model is exported standing on y=0 one unit tall, while the body it hangs from is centred
-    // on its own origin -- so drop it half a cube to put its feet at the cube's bottom face rather
-    // than at its middle.
-    let visual = PlayerVisual::new(-CUBE_SIZE / 2.0, CUBE_SIZE);
-    let rest = visual.compose(0.0, 0.0);
+        // Owned, because the borrow of the resource cannot outlive this arm.
+        let wanted = worn.get(player.team).map(str::to_owned);
 
-    parent
-        .spawn((visual, CharacterSkin, SpatialBundle::from_transform(rest)))
-        .with_children(|skin| {
-            skin.spawn(SceneBundle {
-                scene: asset_server.load(path),
+        match (wanted, current) {
+            // Already wearing exactly this.
+            (Some(wanted), Some(skin)) if skin.path == wanted => {}
+
+            // A model is wanted, and either none or a different one is on.
+            (Some(wanted), _) => {
+                let scene = asset_server.load(&wanted);
+                commands.entity(visual).insert(CharacterSkin {
+                    path: wanted,
+                    scene,
+                    revealed: false,
+                });
+            }
+
+            // Back to the blocky character: drop the model and let the jungle's own blocks show.
+            (None, Some(_)) => {
+                commands.entity(visual).remove::<CharacterSkin>();
+            }
+            (None, None) => {}
+        }
+    }
+}
+
+/// Show a model once it has actually loaded, and take the blocky character down.
+///
+/// The scene is spawned only here, not when it was requested, so a model that fails to load never
+/// replaces the thing that was already working.
+pub fn reveal_loaded_characters(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    mut visuals: Query<(Entity, &mut CharacterSkin, Option<&Children>), With<PlayerVisual>>,
+    blocks: Query<(), With<BlockyCharacter>>,
+) {
+    for (visual, mut skin, children) in &mut visuals {
+        if skin.revealed || !asset_server.is_loaded_with_dependencies(&skin.scene) {
+            continue;
+        }
+
+        commands.entity(visual).with_children(|node| {
+            node.spawn(SceneBundle {
+                scene: skin.scene.clone(),
+                // The model is exported standing on y=0 one unit tall, while the node it hangs
+                // from is centred on the body's origin — so drop it half a cube to put its feet
+                // at the cube's bottom face, and scale it up to the body's size. The node itself
+                // stays unscaled, because the blocky character and the cube fallback are already
+                // authored at body scale and share it.
+                transform: Transform::from_xyz(0.0, -CUBE_SIZE / 2.0, 0.0)
+                    .with_scale(Vec3::splat(CUBE_SIZE)),
                 ..default()
             });
         });
-    true
+
+        // The generated monkey has its own face painted on, so the blocky character's blocks --
+        // and the googly eyes the cube fallback brought with it -- come off together.
+        for child in children.into_iter().flatten() {
+            if blocks.contains(*child) {
+                commands.entity(*child).despawn_recursive();
+            }
+        }
+
+        skin.revealed = true;
+    }
+}
+
+/// The animated node every player visual hangs from.
+///
+/// Deliberately a neutral pivot — no offset, no scale — because the three things that can hang
+/// from it (the jungle's blocky character, the cube fallback, and a generated model) are authored
+/// at different scales. The first two are already in body units; the model carries its own fit
+/// transform where it is spawned.
+pub fn visual_node() -> (PlayerVisual, SpatialBundle) {
+    (PlayerVisual::new(0.0, 1.0), SpatialBundle::default())
 }
 
 /// Animate every player visual from the state of the body it hangs off.
@@ -256,22 +382,44 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_team_resolves_to_a_distinct_model() {
-        assert_ne!(
-            skin_path(Team::Orange),
-            skin_path(Team::Blue),
-            "teams must be tellable apart on the pitch"
+    fn everyone_starts_in_the_base_monkey() {
+        let worn = WornCharacters::default();
+        assert_eq!(worn.get(Team::Orange), Some(BASE_CHARACTER));
+        assert_eq!(worn.get(Team::Blue), Some(BASE_CHARACTER));
+    }
+
+    #[test]
+    fn the_base_model_names_a_scene_bevy_can_find() {
+        // Both halves matter and neither is checked at compile time: without `#Scene0` the glTF
+        // loads and nothing is spawned, and the path is resolved against the working directory's
+        // `assets/`, which is the repo root the launcher runs the binary from.
+        assert!(
+            BASE_CHARACTER.ends_with("#Scene0"),
+            "bevy needs the scene label: {BASE_CHARACTER}"
+        );
+        assert!(
+            BASE_CHARACTER.starts_with("characters/"),
+            "models live in assets/characters"
         );
     }
 
     #[test]
-    fn skin_paths_name_a_scene_inside_the_gltf() {
-        for team in [Team::Orange, Team::Blue] {
-            if let Some(path) = skin_path(team) {
-                assert!(path.ends_with("#Scene0"), "bevy needs the scene label: {path}");
-                assert!(path.starts_with("characters/"), "models live in assets/characters");
-            }
-        }
+    fn forging_for_one_team_leaves_the_other_alone() {
+        let mut worn = WornCharacters::default();
+        worn.set(Team::Orange, Some("characters/forged-orange.glb#Scene0".to_owned()));
+        assert_eq!(worn.get(Team::Orange), Some("characters/forged-orange.glb#Scene0"));
+        assert_eq!(
+            worn.get(Team::Blue),
+            Some(BASE_CHARACTER),
+            "one player drawing a character must not re-dress their opponent"
+        );
+    }
+
+    #[test]
+    fn a_team_can_be_put_back_in_the_blocky_character() {
+        let mut worn = WornCharacters::default();
+        worn.set(Team::Orange, None);
+        assert_eq!(worn.get(Team::Orange), None);
     }
 
     #[test]

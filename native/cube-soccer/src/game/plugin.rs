@@ -4,7 +4,9 @@ use bevy_rapier3d::prelude::*;
 use super::state::{GameState, MatchState};
 use super::events::{GoalScoredEvent, GameOverEvent, ResetGameEvent, BallTouchedEvent};
 use crate::entities::{spawn_arena, spawn_wall_scoreboard, spawn_field, spawn_goals, spawn_players, spawn_ball};
-use crate::entities::character::animate_player_visual;
+use crate::entities::character::{
+    animate_player_visual, reveal_loaded_characters, wear_characters, WornCharacters,
+};
 use crate::systems::{
     camera::{setup_camera, update_camera},
     movement::{apply_player_movement, clamp_velocities},
@@ -29,10 +31,15 @@ pub struct CubeSoccerPlugin;
 impl Plugin for CubeSoccerPlugin {
     fn build(&self, app: &mut App) {
         crate::rendering::stylized::register_shader(app);
+        if crate::rendering::stylized::is_rendering(app) {
+            // Only where there is a renderer to use it: headless apps have no `Assets<Shader>`,
+            // and `stylize` no-ops for the same reason.
+            app.add_plugins(
+                MaterialPlugin::<crate::rendering::stylized::JungleMaterial>::default(),
+            );
+        }
 
         app
-            .add_plugins(MaterialPlugin::<crate::rendering::stylized::JungleMaterial>::default())
-
             // Four-sample anti-aliasing shades every pixel four times over.
             // Once the static props are batched the frame becomes fill bound,
             // and on integrated graphics that setting costs about a fifth of it
@@ -53,6 +60,7 @@ impl Plugin for CubeSoccerPlugin {
             .init_resource::<ResetTimer>()
             .init_resource::<TrailSpawnTimer>()
             .init_resource::<Possession>()
+            .init_resource::<WornCharacters>()
 
             // Events
             .add_event::<GoalScoredEvent>()
@@ -139,6 +147,10 @@ impl Plugin for CubeSoccerPlugin {
                 animate_fragments,
                 animate_googly_eyes,
                 animate_player_visual,
+                // What each side is wearing, and showing it once it has loaded. Chained because
+                // the reveal has to see the request the same frame it is made, and both are
+                // cheap no-ops once everyone is dressed.
+                (wear_characters, reveal_loaded_characters).chain(),
             ));
     }
 }
