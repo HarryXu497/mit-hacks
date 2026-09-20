@@ -54,6 +54,11 @@ tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"], 
 # Python bindings (optional)
 pyo3 = { version = "0.21", features = ["extension-module"], optional = true }
 numpy = { version = "0.21", optional = true }
+# Extrudes the wordmark's letters from the shipped TTF. `owned` is what lets the
+# generator take a plain byte slice; without it the API demands `&'static [u8]`,
+# which would tie the wordmark to `include_bytes!` and leave the tests unable to
+# build a mesh from a font they read off disk.
+meshtext = { version = "0.3.2", features = ["owned"] }
 
 [features]
 default = ["rendering", "speech"]

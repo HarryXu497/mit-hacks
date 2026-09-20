@@ -196,43 +196,31 @@ fn root() -> NodeBundle {
 }
 
 pub fn spawn_title(mut commands: Commands, assets: Res<AssetServer>) {
-    let display = assets.load(TITLE_FONT);
     let body = assets.load(UI_FONT);
 
     commands
         .spawn((root(), FrontEndUi))
         .with_children(|screen| {
-            // Logo block, pushed left and down off centre so it sits over the
-            // stands rather than over the pitch, which stays readable.
+            // No logo here: the wordmark is geometry standing in the scene,
+            // built by `title3d`. Only the subtitle and the prompt are flat,
+            // and both are small enough to read as captions over a picture
+            // rather than as a layer in front of it.
             screen
                 .spawn(NodeBundle {
                     style: Style {
                         flex_direction: FlexDirection::Column,
                         margin: UiRect {
-                            left: Val::Percent(8.),
-                            top: Val::Percent(11.),
+                            left: Val::Percent(8.5),
+                            top: Val::Percent(46.),
                             ..default()
                         },
-                        row_gap: Val::Px(6.),
                         ..default()
                     },
                     ..default()
                 })
                 .insert(TitleCard { age: 0. })
                 .with_children(|block| {
-                    outlined(block, "CANOPY", display.clone(), 128., BANANA, 5., ());
-                    outlined(block, "CLASH", display, 128., BANANA, 5., ());
-                    // Manual spacing: Bevy 0.13 has no letter-spacing control.
-                    block.spawn(NodeBundle {
-                        style: Style {
-                            margin: UiRect::top(Val::Px(10.)),
-                            ..default()
-                        },
-                        ..default()
-                    })
-                    .with_children(|sub| {
-                        outlined(sub, "J U N G L E   S O C C E R", body.clone(), 30., LEAF, 3., ());
-                    });
+                    outlined(block, "J U N G L E   S O C C E R", body.clone(), 30., LEAF, 3., ());
                 });
 
             // Spacer pushes the prompt to the bottom of the screen.

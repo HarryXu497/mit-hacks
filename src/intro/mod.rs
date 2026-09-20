@@ -14,10 +14,12 @@
 //!
 //! - [`director`]: camera shots, the cold-open path and the idle attract tour
 //! - [`atmosphere`]: letterbox, vignette and the golden-hour light shift
+//! - [`title3d`]: the wordmark as extruded geometry, with monkeys on it
 //! - [`ui`]: title card, mode list and the outlined text they are built from
 
 pub mod atmosphere;
 pub mod director;
+pub mod title3d;
 pub mod ui;
 
 use bevy::app::AppExit;
@@ -198,9 +200,23 @@ impl Plugin for IntroPlugin {
             .add_systems(OnEnter(AppState::ColdOpen), director::reset_shot_clock)
             .add_systems(
                 OnEnter(AppState::Title),
-                (director::reset_shot_clock, ui::spawn_title),
+                (
+                    director::reset_shot_clock,
+                    ui::spawn_title,
+                    title3d::spawn_wordmark,
+                    // Converts the fresh letters to the scene's cel shader.
+                    // Without this the wordmark is the one smoothly lit thing
+                    // in a poster-flat picture. Chained so the spawn's deferred
+                    // commands land before the conversion looks for them; the
+                    // pass skips unlit materials, so the ink shells stay black.
+                    crate::rendering::stylized::stylize,
+                )
+                    .chain(),
             )
-            .add_systems(OnExit(AppState::Title), ui::despawn_front_end_ui)
+            .add_systems(
+                OnExit(AppState::Title),
+                (ui::despawn_front_end_ui, title3d::despawn_wordmark),
+            )
             .add_systems(
                 OnEnter(AppState::Menu),
                 (director::reset_shot_clock, ui::spawn_menu),
@@ -226,7 +242,8 @@ impl Plugin for IntroPlugin {
                         .run_if(in_state(AppState::Menu)),
                     finish_drop_in.run_if(in_state(AppState::DropIn)),
                     leave_match.run_if(in_state(AppState::Playing)),
-                    (ui::animate_title, ui::pulse_prompt).run_if(in_state(AppState::Title)),
+                    (ui::animate_title, ui::pulse_prompt, title3d::animate_wordmark)
+                        .run_if(in_state(AppState::Title)),
                     ui::fade_out_ui,
                     atmosphere::blend_atmosphere,
                 ),
