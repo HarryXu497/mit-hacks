@@ -22,6 +22,7 @@ pub mod kick;
 pub mod movement;
 pub mod physics;
 pub mod possession;
+pub mod power_tactics;
 pub mod power_vfx;
 pub mod reset;
 pub mod scoring;
@@ -37,6 +38,7 @@ pub use heuristic_ai::*;
 // modules share its tactic vocabulary, so a glob here would be ambiguous at every use site.
 pub use kick::{apply_kicks, clear_kick_cooldowns, tick_kick_cooldowns, KickCooldowns};
 pub use soccer_ai::{apply_soccer_ai, clear_play_memory, PlayMemory, PlayStyle};
+pub use power_tactics::{bearer_slot, counter_to, should_fire, Actor, Cast};
 pub use possession::*;
 pub use trail::*;
 pub use eyes::*;

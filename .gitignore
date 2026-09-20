@@ -33,3 +33,7 @@ models/
 # Characters forged at runtime from a player drawing, one per team per match. Generated, not
 # authored: the committed base.glb and the pre-forged models are the tracked ones.
 assets/characters/forged-*.glb
+# The forge's live progress for the VS screen, rewritten every job: a job id, an elapsed time and
+# whichever team is mid-forge. Runtime state, not content -- committing it would ship one machine's
+# half-finished run to everyone else's checkout.
+assets/characters/forge-status.json

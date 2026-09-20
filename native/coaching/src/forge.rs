@@ -23,6 +23,7 @@ use crate::network::{CreationArtifacts, NetworkRole};
 use crate::phase::AppPhase;
 use cube_soccer::entities::CubePlayer;
 use cube_soccer::game::Team;
+use cube_soccer::systems::power_tactics::{bearer_slot, counter_to};
 use cube_soccer::systems::superpowers::{Superpower, SuperpowerKind};
 
 /// How long to wait for the classifier. The first call loads CLIP, which is not quick.
@@ -85,9 +86,22 @@ impl Plugin for ForgePlugin {
             .init_resource::<ForgedPower>()
             .add_systems(OnEnter(AppPhase::Coaching), ask_what_was_drawn)
             .add_systems(Update, receive_the_answer)
-            // Armed as the match starts, and again at every round boundary -- a player re-coached
-            // for round two keeps the power they drew.
-            .add_systems(OnEnter(AppPhase::Game), arm_the_coached_side);
+            // Armed every frame of the match rather than once at kickoff.
+            //
+            // Classification is slow -- measured at 17 seconds for a real drawing, because the
+            // classifier loads CLIP -- and the request only starts when the coach reaches the
+            // table. Sampling `ForgedPower` once, at kickoff, meant that a coach who pressed
+            // Enter before the answer came back played the whole match unarmed: the reply landed
+            // a moment later and was thrown away, since the one system that reads it had already
+            // run. No power, no badge, and nothing on screen to say why.
+            //
+            // The system settles to a no-op once the side holds what was drawn, so running it
+            // continuously costs a query and picks up both a late answer and a power redrawn for
+            // the next round.
+            .add_systems(
+                Update,
+                arm_the_coached_side.run_if(in_state(AppPhase::Game)),
+            );
     }
 }
 
@@ -229,27 +243,62 @@ fn receive_the_answer(runtime: Res<ForgeRuntime>, mut forged: ResMut<ForgedPower
     }
 }
 
-/// Give the coached side the power that was drawn for it.
+/// Give each side exactly one player with a power, and pick which player on purpose.
 ///
-/// Only that side. The opponent goes in without an ability, which is what every player did before
-/// this existed — and in a networked match both sides are coached on their own machine, so each
-/// arms itself with its own drawing.
+/// **The coached side** carries what its coach drew. **The opposition** carries
+/// [`counter_to`] it: they have no easel, and a match where one side has an ability and the other
+/// has no answer to it is not a match. The counter is deterministic and its badge sits on the HUD
+/// from the first whistle, so it is something to play around rather than an ambush. In a networked
+/// match both sides are coached on their own machine, and each arms itself from its own drawing.
+///
+/// **One carrier, not five.** This used to hand the power to every player on the coached side,
+/// which is five casters holding the fire button -- better than the ten it replaced, but the same
+/// problem: a power going off somewhere at all times is scenery, not a moment. It also made the
+/// HUD's single badge per side a polite fiction. [`bearer_slot`] picks the one player whose place
+/// in the formation suits that particular power, so the cast happens where the power is worth
+/// something.
+///
+/// Runs every frame, so it is written to settle: a player who should hold the power and already
+/// does is left alone -- re-inserting would reset the cooldown and the power could never come off
+/// it -- and a player holding one they should no longer have is disarmed, which is what makes a
+/// redrawn power move to its new carrier instead of leaving the old one armed.
 fn arm_the_coached_side(
     mut commands: Commands,
     forged: Res<ForgedPower>,
     role: Option<Res<NetworkRole>>,
-    players: Query<(Entity, &CubePlayer)>,
+    players: Query<(Entity, &CubePlayer, Option<&Superpower>)>,
 ) {
     let Some(kind) = forged.kind else {
+        // Nothing drawn, so there is no power in this match on either side. The power is the
+        // drawing; conjuring an opposing power to answer a drawing that does not exist would be
+        // conjuring the whole feature.
         return;
     };
     let coached: Team = role
         .map(|role| role.coached_side().game_team())
         .unwrap_or(Team::Orange);
 
-    for (entity, player) in &players {
-        if player.team == coached {
-            commands.entity(entity).insert(Superpower::new(kind));
+    for (team, kind) in [(coached, kind), (coached.opponent(), counter_to(kind))] {
+        let squad = players.iter().filter(|(_, player, _)| player.team == team).count();
+        let Some(slot) = bearer_slot(kind, squad) else {
+            continue;
+        };
+        for (entity, player, held) in &players {
+            if player.team != team {
+                continue;
+            }
+            match (player.index == slot, held.map(|power| power.kind)) {
+                // The carrier, already holding the right power: leave the cooldown alone.
+                (true, Some(held)) if held == kind => {}
+                (true, _) => {
+                    commands.entity(entity).insert(Superpower::new(kind));
+                }
+                // Somebody else's power from a previous drawing.
+                (false, Some(_)) => {
+                    commands.entity(entity).remove::<Superpower>();
+                }
+                (false, None) => {}
+            }
         }
     }
 }
@@ -257,6 +306,112 @@ fn arm_the_coached_side(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A pitch with five players a side and a drawn power, run through the arming system once.
+    fn armed_pitch(drawn: Option<SuperpowerKind>) -> App {
+        let mut app = App::new();
+        app.insert_resource(ForgedPower { kind: drawn, ..default() });
+        app.add_systems(Update, arm_the_coached_side);
+        for team in [Team::Orange, Team::Blue] {
+            for index in 0..5 {
+                app.world.spawn(CubePlayer { team, index, can_jump: true });
+            }
+        }
+        app.update();
+        app
+    }
+
+    /// Who on `team` is holding a power, and which.
+    fn armed(app: &mut App, team: Team) -> Vec<(usize, SuperpowerKind)> {
+        let mut found: Vec<(usize, SuperpowerKind)> = app
+            .world
+            .query::<(&CubePlayer, &Superpower)>()
+            .iter(&app.world)
+            .filter(|(player, _)| player.team == team)
+            .map(|(player, power)| (player.index, power.kind))
+            .collect();
+        found.sort_by_key(|(index, _)| *index);
+        found
+    }
+
+    #[test]
+    fn exactly_one_player_a_side_is_armed() {
+        let mut app = armed_pitch(Some(SuperpowerKind::FreezeRay));
+        assert_eq!(armed(&mut app, Team::Orange).len(), 1, "the coached side fields one caster");
+        assert_eq!(armed(&mut app, Team::Blue).len(), 1, "so does the opposition");
+    }
+
+    #[test]
+    fn the_coached_side_carries_the_drawing_and_the_other_side_its_counter() {
+        let mut app = armed_pitch(Some(SuperpowerKind::Boost));
+        assert_eq!(armed(&mut app, Team::Orange)[0].1, SuperpowerKind::Boost);
+        assert_eq!(
+            armed(&mut app, Team::Blue)[0].1,
+            counter_to(SuperpowerKind::Boost),
+            "the AI should have an answer to what was drawn"
+        );
+    }
+
+    #[test]
+    fn the_carrier_is_the_slot_the_placement_chose() {
+        for drawn in SuperpowerKind::ALL {
+            let mut app = armed_pitch(Some(drawn));
+            let expected = bearer_slot(drawn, 5).unwrap();
+            assert_eq!(
+                armed(&mut app, Team::Orange)[0].0,
+                expected,
+                "{drawn:?} should go to the slot its mechanics want"
+            );
+        }
+    }
+
+    #[test]
+    fn nothing_drawn_arms_nobody_on_either_side() {
+        let mut app = armed_pitch(None);
+        assert!(armed(&mut app, Team::Orange).is_empty());
+        assert!(armed(&mut app, Team::Blue).is_empty(), "no drawing, no counter");
+    }
+
+    #[test]
+    fn running_every_frame_does_not_keep_the_power_on_cooldown() {
+        // The system is scheduled in Update, so it sees the same state hundreds of times a match.
+        // Re-inserting `Superpower` would reset `cooldown_remaining` each time and the power could
+        // never actually recharge.
+        let mut app = armed_pitch(Some(SuperpowerKind::Slow));
+        let slot = armed(&mut app, Team::Orange)[0].0;
+        let caster = app
+            .world
+            .query::<(Entity, &CubePlayer)>()
+            .iter(&app.world)
+            .find(|(_, player)| player.team == Team::Orange && player.index == slot)
+            .map(|(entity, _)| entity)
+            .unwrap();
+
+        app.world.get_mut::<Superpower>(caster).unwrap().cooldown_remaining = 4.0;
+        app.update();
+        app.update();
+
+        assert_eq!(
+            app.world.get::<Superpower>(caster).unwrap().cooldown_remaining,
+            4.0,
+            "arming again must not re-arm a player who is already holding the right power"
+        );
+    }
+
+    #[test]
+    fn redrawing_moves_the_power_and_disarms_the_old_carrier() {
+        let mut app = armed_pitch(Some(SuperpowerKind::FreezeRay));
+        let first = armed(&mut app, Team::Orange)[0].0;
+
+        // The classifier comes back with something else -- a redraw between rounds.
+        app.world.resource_mut::<ForgedPower>().kind = Some(SuperpowerKind::Boost);
+        app.update();
+
+        let now = armed(&mut app, Team::Orange);
+        assert_eq!(now.len(), 1, "still exactly one caster, not two");
+        assert_eq!(now[0].1, SuperpowerKind::Boost);
+        assert_ne!(now[0].0, first, "Boost and Freeze Ray want different players");
+    }
 
     #[test]
     fn a_forged_power_names_its_badge() {

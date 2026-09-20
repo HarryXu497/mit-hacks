@@ -3,6 +3,8 @@ use bevy_rapier3d::prelude::*;
 use std::collections::HashMap;
 use crate::entities::{Ball, CubePlayer, PlayerInput};
 use crate::game::{Team, FIELD_WIDTH, PLAYERS_PER_TEAM, PLAYER_GROUP, BARRIER_GROUP};
+use crate::systems::power_tactics::{should_fire, Actor, Cast};
+use crate::systems::superpowers::{facing_dir, Superpower};
 
 /// Marker: cubes with this component are driven by the built-in heuristic AI.
 #[derive(Component)]
@@ -525,7 +527,10 @@ pub fn apply_heuristic_ai(
     tactics: Option<Res<TeamTactics>>,
     difficulty: Option<Res<HeuristicDifficulty>>,
     ball_query: Query<(&Transform, &Velocity), With<Ball>>,
-    mut player_query: Query<(&mut PlayerInput, &Transform, &CubePlayer), With<AiControlled>>,
+    mut player_query: Query<
+        (&mut PlayerInput, &Transform, &Velocity, &CubePlayer, Option<&Superpower>),
+        With<AiControlled>,
+    >,
 ) {
     // Difficulty scales how fast the heuristic team moves and whether it uses
     // superpowers. Weak opponent = slow, no powers; full strength = the original.
@@ -535,11 +540,19 @@ pub fn apply_heuristic_ai(
     let ball_vel = ball_v.linvel;
 
     let mut teams: HashMap<Team, Vec<TeamMate>> = HashMap::new();
-    for (_, transform, player) in player_query.iter() {
+    // Everyone on the pitch, kept alongside `teams` because a firing decision needs both sides
+    // and `TeamMate` is per-team by construction.
+    let mut everyone: Vec<(Team, usize, Actor)> = Vec::new();
+    for (_, transform, velocity, player, _) in player_query.iter() {
         teams
             .entry(player.team)
             .or_default()
             .push(TeamMate { index: player.index, pos: transform.translation });
+        everyone.push((
+            player.team,
+            player.index,
+            Actor { pos: transform.translation, vel: velocity.linvel },
+        ));
     }
 
     let mut result: HashMap<(Team, usize), (Vec2, bool)> = HashMap::new();
@@ -556,13 +569,43 @@ pub fn apply_heuristic_ai(
         }
     }
 
-    for (mut input, _transform, player) in player_query.iter_mut() {
+    for (mut input, transform, velocity, player, power) in player_query.iter_mut() {
         if let Some((movement, jump)) = result.get(&(player.team, player.index)) {
             input.movement = *movement * diff;
             input.jump = *jump;
         }
         // Weak opponents don't use superpowers; they come online past half strength.
-        input.fire = diff > 0.5;
+        //
+        // Past that, the same per-power judgement the match AI uses. This used to be a bare
+        // `diff > 0.5`, which is the fire button held down for the whole episode: every power
+        // went off the instant its cooldown expired, at whatever happened to be in front of the
+        // player. That is the scripted opponent the training runs were graded against, so it was
+        // also a free two seconds of Freeze Ray handed to whoever walked into the cone.
+        input.fire = match power {
+            Some(power) if diff > 0.5 => {
+                let mates: Vec<Actor> = everyone
+                    .iter()
+                    .filter(|(team, index, _)| *team == player.team && *index != player.index)
+                    .map(|(_, _, actor)| *actor)
+                    .collect();
+                let opponents: Vec<Actor> = everyone
+                    .iter()
+                    .filter(|(team, _, _)| *team != player.team)
+                    .map(|(_, _, actor)| *actor)
+                    .collect();
+                should_fire(&Cast {
+                    kind: power.kind,
+                    team: player.team,
+                    me: Actor { pos: transform.translation, vel: velocity.linvel },
+                    facing: facing_dir(transform.rotation),
+                    ball: ball_pos,
+                    ball_vel,
+                    mates: &mates,
+                    opponents: &opponents,
+                })
+            }
+            _ => false,
+        };
     }
 }
 

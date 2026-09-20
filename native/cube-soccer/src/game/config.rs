@@ -149,6 +149,18 @@ pub const SLOW_SECS: f32 = 3.0;
 pub const SLOW_RANGE: f32 = 12.0;
 pub const SLOW_COOLDOWN: f32 = 8.0;
 
+/// What a cast that hits nobody costs, as a fraction of the power's full cooldown.
+///
+/// A miss used to be free: `activate_superpowers` only started the cooldown when the power
+/// actually landed, so holding the fire button down cost nothing for the three powers that need a
+/// target. That made aiming optional -- the cheapest strategy was to fire constantly and let the
+/// cone find someone eventually -- and it is the reason a power had to be *decided* rather than
+/// merely permitted. Firing into space now costs a real, shorter cooldown, so a bad cast is paid
+/// for without being punished as hard as a wasted good one.
+///
+/// Boost is unaffected: it lands on the caster and so can never miss.
+pub const WHIFF_COOLDOWN_FRACTION: f32 = 0.35;
+
 // === POSSESSION / SHOOTING ===
 /// Distance at which a player can gain or steal the ball (matches the touch-reward distance).
 pub const TOUCH_RANGE: f32 = CUBE_SIZE / 2.0 + BALL_RADIUS + 0.5;

@@ -38,6 +38,8 @@ use crate::game::config::{
 };
 use crate::game::Team;
 use crate::systems::heuristic_ai::{AiControlled, HeuristicDifficulty, TacticParams, TeamTactics};
+use crate::systems::power_tactics::{should_fire, Actor, Cast};
+use crate::systems::superpowers::{facing_dir, Superpower};
 use crate::systems::kick::{ground_ball_height, within_kick_range};
 
 // === Tuning ===
@@ -219,13 +221,12 @@ pub struct Decision {
     pub role: Role,
     pub movement: Vec2,
     pub jump: bool,
-    pub fire: bool,
     pub kick: Option<KickRequest>,
 }
 
 impl Default for Decision {
     fn default() -> Self {
-        Self { role: Role::Support, movement: Vec2::ZERO, jump: false, fire: false, kick: None }
+        Self { role: Role::Support, movement: Vec2::ZERO, jump: false, kick: None }
     }
 }
 
@@ -718,7 +719,7 @@ fn carrier_decision(
         None
     };
 
-    Decision { role: Role::Carrier, movement, jump: false, fire: false, kick: touch }
+    Decision { role: Role::Carrier, movement, jump: false, kick: touch }
 }
 
 // === The whole team ===
@@ -792,7 +793,7 @@ pub fn decide_team(
         let movement = steer(me.pos, target, &crowd, style.spacing);
         out.insert(
             me.index,
-            Decision { role, movement, jump: false, fire: false, kick: None },
+            Decision { role, movement, jump: false, kick: None },
         );
     }
 
@@ -807,21 +808,10 @@ pub fn decide_team(
         }
     }
 
-    // Superpowers, aimed rather than sprayed: fire only with an opponent close and roughly
-    // where the player is heading, which is the cone every offensive power uses.
-    for me in &mates {
-        let Some(decision) = out.get_mut(&me.index) else { continue };
-        let heading = decision.movement;
-        if heading.length() < INTENT_EPSILON {
-            continue;
-        }
-        let heading = heading.normalize();
-        decision.fire = opponents.iter().any(|opp| {
-            let to_opp = xz(*opp) - xz(me.pos);
-            let d = to_opp.length();
-            d > 1e-3 && d < 9.0 && to_opp.normalize().dot(heading) > 0.65
-        });
-    }
+    // Whether to fire a superpower is deliberately *not* decided here. It is not a question about
+    // team shape -- it is a reflex that depends on which of the four powers the player is holding
+    // and on the direction the body is actually pointing, neither of which this function can see.
+    // `apply_soccer_ai` asks `power_tactics::should_fire` once the transforms are in hand.
 
     out
 }
@@ -924,7 +914,7 @@ pub fn apply_soccer_ai(
     mut memory: ResMut<PlayMemory>,
     mut ball_query: Query<(&Transform, &mut Velocity), (With<Ball>, Without<CubePlayer>)>,
     mut player_query: Query<
-        (&mut PlayerInput, &Transform, &Velocity, &CubePlayer),
+        (&mut PlayerInput, &Transform, &Velocity, &CubePlayer, Option<&Superpower>),
         With<AiControlled>,
     >,
 ) {
@@ -939,7 +929,7 @@ pub fn apply_soccer_ai(
         ball_vel,
         players: player_query
             .iter()
-            .map(|(_, transform, velocity, player)| PlayerView {
+            .map(|(_, transform, velocity, player, _)| PlayerView {
                 team: player.team,
                 index: player.index,
                 pos: transform.translation,
@@ -1013,7 +1003,7 @@ pub fn apply_soccer_ai(
         }
     }
 
-    for (mut input, transform, velocity, player) in player_query.iter_mut() {
+    for (mut input, transform, velocity, player, power) in player_query.iter_mut() {
         let Some(decision) = decisions.get(&(player.team, player.index)) else { continue };
         let speed = Vec2::new(velocity.linvel.x, velocity.linvel.z).length();
         let (movement, evade_jump) = unstick(
@@ -1023,12 +1013,41 @@ pub fn apply_soccer_ai(
             &mut memory,
             dt,
         );
-        let _ = transform;
 
         input.movement = movement * diff;
         input.jump = decision.jump || evade_jump;
         // Weak opponents don't use superpowers; they come online past half strength.
-        input.fire = decision.fire && diff > 0.5;
+        input.fire = match power {
+            Some(power) if diff > 0.5 => {
+                // Read off the transform rather than off `decision.movement`: cubes turn by
+                // angular velocity, so a player who has just been told to run somewhere else is
+                // still pointing where it was for several frames, and the cone powers are
+                // resolved against where it is *actually* pointing.
+                let mates: Vec<Actor> = snapshot
+                    .players
+                    .iter()
+                    .filter(|p| p.team == player.team && p.index != player.index)
+                    .map(|p| Actor { pos: p.pos, vel: p.vel })
+                    .collect();
+                let opponents: Vec<Actor> = snapshot
+                    .players
+                    .iter()
+                    .filter(|p| p.team != player.team)
+                    .map(|p| Actor { pos: p.pos, vel: p.vel })
+                    .collect();
+                should_fire(&Cast {
+                    kind: power.kind,
+                    team: player.team,
+                    me: Actor { pos: transform.translation, vel: velocity.linvel },
+                    facing: facing_dir(transform.rotation),
+                    ball: ball_pos,
+                    ball_vel,
+                    mates: &mates,
+                    opponents: &opponents,
+                })
+            }
+            _ => false,
+        };
         input.kick = if diff > 0.0 { decision.kick } else { None };
     }
 }
@@ -2084,5 +2103,119 @@ mod tests {
             count(&pressing) > count(&sitting),
             "high press should hunt with more players than a low block"
         );
+    }
+}
+
+/// What the superpowers actually do over a match, rather than what a single judgement does.
+///
+/// [`crate::systems::power_tactics`] pins each policy against a hand-built situation. This pins
+/// the thing those policies are for: an armed side, playing a real match, using its power a
+/// sensible number of times at moments that were not simply "the cooldown expired".
+#[cfg(test)]
+mod power_match_tests {
+    use super::harness::build_match_app;
+    use super::*;
+    use crate::game::{PHYSICS_TIMESTEP, PLAYERS_PER_TEAM};
+    use crate::systems::heuristic_ai::Tactic;
+    use crate::systems::power_tactics::bearer_slot;
+    use crate::systems::superpowers::{Superpower, SuperpowerKind};
+
+    struct Casts {
+        fired: u32,
+        /// How many casts the cooldown alone would have allowed over the same match.
+        ceiling: u32,
+    }
+
+    /// Arm one player a side the way `arm_the_coached_side` does, play, and count the casts.
+    ///
+    /// A cast is counted on the rising edge of `cooldown_remaining`, which `activate_superpowers`
+    /// only sets when the power actually landed on somebody -- so this counts powers that *did*
+    /// something, not merely intents.
+    fn play_armed(kind: SuperpowerKind, seconds: f32) -> Casts {
+        let mut app = build_match_app(Tactic::Balanced, Tactic::Balanced);
+        for _ in 0..10 {
+            app.update();
+        }
+
+        let slot = bearer_slot(kind, PLAYERS_PER_TEAM).expect("a side to arm");
+        let bearers: Vec<Entity> = {
+            let world = &mut app.world;
+            world
+                .query::<(Entity, &CubePlayer)>()
+                .iter(world)
+                .filter(|(_, player)| player.index == slot)
+                .map(|(entity, _)| entity)
+                .collect()
+        };
+        for entity in &bearers {
+            app.world.entity_mut(*entity).insert(Superpower::new(kind));
+        }
+
+        let mut fired = 0;
+        let mut previous = vec![0.0f32; bearers.len()];
+        let ticks = (seconds / PHYSICS_TIMESTEP) as usize;
+        for _ in 0..ticks {
+            app.update();
+            for (i, entity) in bearers.iter().enumerate() {
+                let now = app
+                    .world
+                    .get::<Superpower>(*entity)
+                    .map(|power| power.cooldown_remaining)
+                    .unwrap_or(0.0);
+                if now > previous[i] {
+                    fired += 1;
+                }
+                previous[i] = now;
+            }
+        }
+
+        let ceiling = (seconds / kind.cooldown()).floor() as u32 * bearers.len() as u32;
+        Casts { fired, ceiling }
+    }
+
+    #[test]
+    fn every_power_is_used_in_a_match_and_every_power_sometimes_refuses() {
+        // Two minutes is long enough for even Boost's ten-second cooldown to come round a dozen
+        // times, so a power that never fires here is a policy that never fires.
+        const SECONDS: f32 = 120.0;
+
+        // Both bounds are deliberately loose. A match is a chaotic physics simulation and these
+        // counts swing by half again between runs (Beam Blast measured 21, 33 and 34 over three
+        // runs of this test), so anything tighter than "some, but not all of them" would be a
+        // flaky test dressed up as a measurement.
+        for kind in SuperpowerKind::ALL {
+            let casts = play_armed(kind, SECONDS);
+            assert!(
+                casts.fired > 0,
+                "{kind:?} was never used in a {SECONDS}s match -- its policy never says yes"
+            );
+            // The ceiling is what the cooldown alone allows, and it is what the old rule hit: it
+            // held the fire button down, so every power went off the instant it recharged at
+            // whatever happened to be in front of the player. The cooldown was the only thing
+            // saying no. Reaching it again here would mean the policy never refuses -- and for
+            // Blast, Freeze and Slow a cast that hits nobody costs nothing, so *never refusing*
+            // is the cheap thing to do and the wrong one. What the refusals buy is not a quieter
+            // pitch, it is the cooldown still being available when a target worth it turns up.
+            assert!(
+                casts.fired < casts.ceiling,
+                "{kind:?} fired {} of a possible {} -- the cooldown is the only thing saying no,                  which means the policy never does",
+                casts.fired,
+                casts.ceiling
+            );
+            println!("{kind:?}: {} casts of a possible {}", casts.fired, casts.ceiling);
+        }
+    }
+
+    #[test]
+    fn an_unarmed_side_never_fires_anything() {
+        // The counterpart to the above: no `Superpower` component, no casts, whatever the AI
+        // writes into `PlayerInput::fire`.
+        let mut app = build_match_app(Tactic::Balanced, Tactic::Balanced);
+        for _ in 0..200 {
+            app.update();
+        }
+        let world = &mut app.world;
+        let armed = world.query::<&Superpower>().iter(world).count();
+        assert_eq!(armed, 0, "nothing should have armed itself");
     }
 }

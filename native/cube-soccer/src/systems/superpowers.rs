@@ -121,6 +121,23 @@ pub fn nearest_in_cone(caster: Vec3, facing: Vec3, points: &[Vec3], range: f32, 
     best.map(|(i, _)| i)
 }
 
+/// Index of the nearest point within `range`, ignoring facing.
+///
+/// This is Slow's targeting rule, and the only one that does not care which way the caster is
+/// pointing. It lives here beside [`nearest_in_cone`] so that the AI deciding *whether* to fire
+/// and the engine deciding *who gets hit* run the same search -- a policy that picks a different
+/// victim than the cast does is a policy that fires at the wrong player.
+pub fn nearest_within(caster: Vec3, points: &[Vec3], range: f32) -> Option<usize> {
+    let mut best: Option<(usize, f32)> = None;
+    for (i, &p) in points.iter().enumerate() {
+        let d = p.distance(caster);
+        if d <= range && best.map_or(true, |(_, bd)| d < bd) {
+            best = Some((i, d));
+        }
+    }
+    best.map(|(i, _)| i)
+}
+
 /// Horizontal impulse pushing `target` away from `caster`, magnitude `strength`.
 pub fn blast_impulse(caster: Vec3, target: Vec3, strength: f32) -> Vec3 {
     Vec3::new(target.x - caster.x, 0.0, target.z - caster.z).normalize_or_zero() * strength
@@ -202,21 +219,18 @@ pub fn activate_superpowers(
                 true
             }
             SuperpowerKind::Slow => {
-                let mut best: Option<(Entity, f32)> = None;
-                for (e, cp, tf) in others.iter() {
-                    if cp.team != caster.team {
-                        let d = tf.translation.distance(cpos);
-                        if d <= SLOW_RANGE && best.map_or(true, |(_, bd)| d < bd) {
-                            best = Some((e, d));
-                        }
-                    }
-                }
-                match best {
-                    Some((e, _)) => {
-                        if let Ok(mut se) = effects.get_mut(e) {
+                let opp: Vec<(Entity, Vec3)> = others
+                    .iter()
+                    .filter(|(_, cp, _)| cp.team != caster.team)
+                    .map(|(e, _, tf)| (e, tf.translation))
+                    .collect();
+                let pts: Vec<Vec3> = opp.iter().map(|(_, p)| *p).collect();
+                match nearest_within(cpos, &pts, SLOW_RANGE) {
+                    Some(idx) => {
+                        if let Ok(mut se) = effects.get_mut(opp[idx].0) {
                             se.add(EffectKind::SpeedFactor(SLOW_FACTOR), SLOW_SECS);
                         }
-                        struck = others.get(e).map(|(_, _, tf)| tf.translation).ok();
+                        struck = Some(opp[idx].1);
                         true
                     }
                     None => false,
@@ -224,7 +238,16 @@ pub fn activate_superpowers(
             }
         };
 
-        if fired {
+        if !fired {
+            // A cast into empty space. It costs a short cooldown rather than nothing at all: a
+            // free miss makes firing constantly the cheapest way to play, since the cone will
+            // find somebody eventually and nothing is lost while it does not. See
+            // [`WHIFF_COOLDOWN_FRACTION`].
+            sp.cooldown_remaining = sp.kind.cooldown() * WHIFF_COOLDOWN_FRACTION;
+            continue;
+        }
+
+        {
             sp.cooldown_remaining = sp.kind.cooldown();
             if let Some(events) = fired_fx.as_mut() {
                 events.send(PowerFired {
@@ -401,12 +424,44 @@ mod tests {
     }
 
     #[test]
-    fn no_target_does_not_consume_cooldown() {
+    fn a_miss_costs_a_short_cooldown_rather_than_nothing() {
         let mut app = power_app();
         let caster = spawn_cube(&mut app, Team::Orange, 0, Vec3::ZERO, true);
         app.world.entity_mut(caster).insert(Superpower::new(SuperpowerKind::FreezeRay));
         app.update();
-        assert_eq!(app.world.get::<Superpower>(caster).unwrap().cooldown_remaining, 0.0, "no target => still ready");
+        let remaining = app.world.get::<Superpower>(caster).unwrap().cooldown_remaining;
+        assert!(remaining > 0.0, "firing into space should cost something");
+        assert!(
+            remaining < FREEZE_COOLDOWN,
+            "but less than landing it: {remaining} is not shorter than {FREEZE_COOLDOWN}"
+        );
+    }
+
+    #[test]
+    fn a_miss_costs_less_than_a_hit_for_every_power_that_can_miss() {
+        for kind in [SuperpowerKind::BeamBlast, SuperpowerKind::FreezeRay, SuperpowerKind::Slow] {
+            let mut app = power_app();
+            // Alone on the pitch: nothing for any of the three to find.
+            let caster = spawn_cube(&mut app, Team::Orange, 0, Vec3::ZERO, true);
+            app.world.entity_mut(caster).insert(Superpower::new(kind));
+            app.update();
+            let remaining = app.world.get::<Superpower>(caster).unwrap().cooldown_remaining;
+            assert!(remaining > 0.0, "{kind:?} missed for free");
+            assert!(remaining < kind.cooldown(), "{kind:?} was punished as hard as a wasted hit");
+        }
+    }
+
+    #[test]
+    fn boost_cannot_miss_and_so_always_pays_in_full() {
+        let mut app = power_app();
+        let caster = spawn_cube(&mut app, Team::Orange, 0, Vec3::ZERO, true);
+        app.world.entity_mut(caster).insert(Superpower::new(SuperpowerKind::Boost));
+        app.update();
+        assert_eq!(
+            app.world.get::<Superpower>(caster).unwrap().cooldown_remaining,
+            BOOST_COOLDOWN,
+            "boost lands on the caster, so there is no such thing as a boost that missed"
+        );
     }
 
     #[test]
