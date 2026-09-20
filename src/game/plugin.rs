@@ -28,6 +28,8 @@ impl Plugin for CubeSoccerPlugin {
             // Title card, menu and the flight into kickoff. Owns the camera
             // until a match starts.
             .add_plugins(crate::intro::IntroPlugin)
+            // Two looping tracks and the one-shots, rendered by tools/compose.py.
+            .add_plugins(crate::audio::GameAudioPlugin)
             // Four-sample anti-aliasing shades every pixel four times over.
             // Once the static props are batched the frame becomes fill bound,
             // and on integrated graphics that setting costs about a fifth of it

@@ -7,6 +7,7 @@
 //! - Headless mode for training
 //! - Visual mode for debugging and evaluation
 
+pub mod audio;
 pub mod entities;
 pub mod game;
 pub mod input;

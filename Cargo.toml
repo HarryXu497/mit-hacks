@@ -27,6 +27,10 @@ bevy = { version = "0.13", default-features = false, features = [
     "x11",
     "tonemapping_luts",
     "png",
+    # Music and sound effects. `wav` because the score is rendered by
+    # tools/compose.py and there is no vorbis encoder in that toolchain.
+    "bevy_audio",
+    "wav",
     # The clearing's prompt plaque is the only text in the game; the wall
     # scoreboard is built from meshes, so no font was needed until now.
     "default_font",
