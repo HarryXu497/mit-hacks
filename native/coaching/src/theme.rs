@@ -424,7 +424,6 @@ pub fn apply(ctx: &egui::Context) {
         }
         assert!(ratio(INK, GOLD) >= 4.5, "ink on gold must stay legible");
     }
-}
 
 // ---------------------------------------------------------------------------
 // Type
