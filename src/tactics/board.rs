@@ -305,7 +305,7 @@ pub fn draw_mark(
     cameras: Query<(&Camera, &GlobalTransform), With<crate::creation::camera::CreationCamera>>,
     plane: Option<Res<BoardPlane>>,
     surfaces: Query<&Handle<StandardMaterial>, With<BoardSurface>>,
-    mats: Res<Assets<StandardMaterial>>,
+    mut mats: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
     mut marks: ResMut<Marks>,
     mut session: ResMut<Session>,
@@ -338,6 +338,7 @@ pub fn draw_mark(
             if let Some(image) = images.get_mut(&texture) {
                 repaint(image, &marks);
             }
+            let _ = mats.get_mut(handle);
         }
     }
 
@@ -364,6 +365,7 @@ pub fn draw_mark(
             // A stray click left a dot; take it back off.
             repaint(image, &marks);
         }
+        let _ = mats.get_mut(handle);
         return;
     }
     if !buttons.pressed(MouseButton::Left) {
@@ -378,6 +380,10 @@ pub fn draw_mark(
     if marks.drawing.is_empty() {
         marks.drawing_is_arrow = arrow;
     }
+    // Repainting the image is not enough on its own: the material holds the
+    // texture binding it was built with, so it has to be touched for the
+    // renderer to pick the marked-up board up. Same lesson as the canvas.
+    let _ = mats.get_mut(handle);
     let last = marks.drawing.last().copied();
     if last.map_or(true, |p| (at - p).length() > 0.004) {
         marks.drawing.push(at);

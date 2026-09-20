@@ -54,8 +54,11 @@ pub fn table_view() -> Transform {
     // the table's near edge both stay inside the same shot.
     // Square on to an upright board, from past the easel rather than behind
     // it. Aimed so the board's head and the sign's foot share the frame.
-    Transform::from_translation(place(Vec3::new(0.5, 3.9, -0.5)))
-        .looking_at(place(Vec3::new(0.2, 3.1, -7.0)), Vec3::Y)
+    // Centred between the board and the sign rather than square on the board,
+    // which pushed the sign off the right edge. Still past the easel, so the
+    // canvas is behind the camera rather than in the shot.
+    Transform::from_translation(place(Vec3::new(1.8, 3.7, 0.4)))
+        .looking_at(place(Vec3::new(1.7, 2.9, -7.6)), Vec3::Y)
 }
 
 /// Eases the camera between the painting view and the review view. The same

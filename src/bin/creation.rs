@@ -132,14 +132,17 @@ fn self_test(
     let ink = 300..360;
     let orange = 380..440;
     let blue = 540..600;
+    // A "T": a bar near the top and a stem down the middle. Deliberately
+    // asymmetric top to bottom, so a vertically mirrored canvas is obvious in
+    // the screenshot rather than hiding inside a symmetrical scribble.
     let target = if ink.contains(&f) {
         let t = along(&ink);
-        on_canvas(-0.35 + t * 0.7, 0.35 - t * 0.7)
+        on_canvas(-0.30 + t * 0.60, 0.30)
     } else if f == 370 {
         dish(2)
     } else if orange.contains(&f) {
         let t = along(&orange);
-        on_canvas(0.35 - t * 0.7, 0.35 - t * 0.7)
+        on_canvas(0.0, 0.30 - t * 0.62)
     } else if f == 530 {
         dish(3)
     } else if blue.contains(&f) {

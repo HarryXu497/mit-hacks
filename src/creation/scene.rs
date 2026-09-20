@@ -52,8 +52,11 @@ pub fn build_clearing(
     mut images: ResMut<Assets<Image>>,
 ) {
     let k = build_kit(&mut meshes, &mut mats);
+    // Pictures go on a flat quad, never on a cuboid: a cuboid's front face maps
+    // its texture bottom-up, which shows every painting upside down.
+    let quad = meshes.add(Rectangle::new(1., 1.));
 
-    let canvas = easel(&mut c, &k, &mut mats, &mut images);
+    let canvas = easel(&mut c, &k, &quad, &mut mats, &mut images);
     model_stone(&mut c, &k);
     pigment_shelf(&mut c, &k, &mut mats);
     undergrowth(&mut c, &k);
@@ -81,6 +84,7 @@ fn slab(c: &mut Commands, k: &Kit, mat: Handle<StandardMaterial>, local: Vec3, s
 fn easel(
     c: &mut Commands,
     k: &Kit,
+    quad: &Handle<Mesh>,
     mats: &mut Assets<StandardMaterial>,
     images: &mut Assets<Image>,
 ) -> Entity {
@@ -134,7 +138,7 @@ fn easel(
     let centre = base + Vec3::new(0., 0.62 + CANVAS_H * 0.5, 0.52);
     // Turned with the clearing, then tipped back on its own axis.
     let lean = facing() * Quat::from_rotation_x(-CANVAS_TILT);
-    review_board(c, k, mats, paintings.appearance.display.clone());
+    review_board(c, k, quad, mats, paintings.appearance.display.clone());
     c.insert_resource(paintings);
 
     // Ink shell behind the canvas, matching every other form in the world.
@@ -149,10 +153,10 @@ fn easel(
     // Bark frame edging, warm against the pale canvas. Sits a little proud of
     // the ink shell so the timber, not the outline, is what borders the work.
     for (off, size) in [
-        (Vec3::new(0., CANVAS_H * 0.5 + 0.1, 0.), Vec3::new(CANVAS_W + 0.34, 0.2, 0.26)),
-        (Vec3::new(0., -CANVAS_H * 0.5 - 0.1, 0.), Vec3::new(CANVAS_W + 0.34, 0.2, 0.26)),
-        (Vec3::new(-CANVAS_W * 0.5 - 0.1, 0., 0.), Vec3::new(0.2, CANVAS_H + 0.34, 0.26)),
-        (Vec3::new(CANVAS_W * 0.5 + 0.1, 0., 0.), Vec3::new(0.2, CANVAS_H + 0.34, 0.26)),
+        (Vec3::new(0., CANVAS_H * 0.5 + 0.1, 0.06), Vec3::new(CANVAS_W + 0.34, 0.2, 0.26)),
+        (Vec3::new(0., -CANVAS_H * 0.5 - 0.1, 0.06), Vec3::new(CANVAS_W + 0.34, 0.2, 0.26)),
+        (Vec3::new(-CANVAS_W * 0.5 - 0.1, 0., 0.06), Vec3::new(0.2, CANVAS_H + 0.34, 0.26)),
+        (Vec3::new(CANVAS_W * 0.5 + 0.1, 0., 0.06), Vec3::new(0.2, CANVAS_H + 0.34, 0.26)),
     ] {
         c.spawn(PbrBundle {
             mesh: k.cube.clone(),
@@ -166,11 +170,13 @@ fn easel(
 
     c.spawn((
         PbrBundle {
-            mesh: k.cube.clone(),
+            mesh: quad.clone(),
             material: surface,
-            transform: Transform::from_translation(place(centre))
+            // In front of the frame. Picking uses this entity's own transform,
+            // so the plane painted on and the plane clicked on are the same.
+            transform: Transform::from_translation(place(centre) + lean * Vec3::Z * 0.12)
                 .with_rotation(lean)
-                .with_scale(Vec3::new(CANVAS_W, CANVAS_H, 0.12)),
+                .with_scale(Vec3::new(CANVAS_W, CANVAS_H, 1.)),
             ..default()
         },
         CanvasSurface,
@@ -187,6 +193,7 @@ fn easel(
 fn review_board(
     c: &mut Commands,
     k: &Kit,
+    quad: &Handle<Mesh>,
     mats: &mut Assets<StandardMaterial>,
     appearance: Handle<Image>,
 ) {
@@ -222,11 +229,11 @@ fn review_board(
     }
     c.spawn((
         PbrBundle {
-            mesh: k.cube.clone(),
+            mesh: quad.clone(),
             material: face,
-            transform: Transform::from_translation(centre + lean * Vec3::new(0., 0., 0.12))
+            transform: Transform::from_translation(centre + lean * Vec3::new(0., 0., 0.14))
                 .with_rotation(lean)
-                .with_scale(Vec3::new(w, h, 0.1)),
+                .with_scale(Vec3::new(w, h, 1.)),
             visibility: Visibility::Hidden,
             ..default()
         },
