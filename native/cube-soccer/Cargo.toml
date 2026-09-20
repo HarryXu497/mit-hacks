@@ -1,0 +1,94 @@
+[package]
+name = "cube-soccer"
+version = "0.1.0"
+edition = "2021"
+authors = ["Cube Soccer Contributors"]
+description = "3D Cube Soccer environment for Reinforcement Learning with Bevy and Rapier3D physics"
+license = "MIT"
+repository = "https://github.com/Aijo24/Cube-soccer-3D"
+documentation = "https://github.com/Aijo24/Cube-soccer-3D#readme"
+readme = "README.md"
+keywords = ["reinforcement-learning", "game", "bevy", "physics", "gymnasium"]
+categories = ["game-development", "simulation", "science"]
+rust-version = "1.75"
+
+[dependencies]
+# Game engine and physics - using 0.13 for better compatibility
+bevy = { version = "0.13", default-features = false, features = [
+    "bevy_asset",
+    # Loads the generated character models. Without it `SceneBundle`'s glTF loader is absent and
+    # every .glb silently fails to load, leaving players as bare cubes.
+    "bevy_gltf",
+    "bevy_scene",
+    "bevy_winit",
+    "bevy_core_pipeline",
+    "bevy_pbr",
+    "bevy_render",
+    "bevy_text",
+    "bevy_ui",
+    "bevy_gizmos",
+    "multi-threaded",
+    "x11",
+    "tonemapping_luts",
+    "png",
+    # The clearing's prompt plaque is the only text in the game; the wall
+    # scoreboard is built from meshes, so no font was needed until now.
+    "default_font",
+] }
+bevy_rapier3d = { version = "0.25", features = ["simd-stable"] }
+
+# Utilities
+rand = "0.8"
+nalgebra = "0.32"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# Painting export. Same major as the one Bevy already builds, so no extra copy.
+image = { version = "0.24", default-features = false, features = ["png"] }
+humantime = "2.1"
+
+# Speech, behind the `speech` feature. Versions match the coaching app's exactly, so cargo
+# unifies them and both clients talk to the same local transcription service the same way.
+cpal = { version = "0.15", optional = true }
+crossbeam-channel = { version = "0.5", optional = true }
+futures-util = { version = "0.3", optional = true }
+base64 = { version = "0.22", optional = true }
+tokio = { version = "1.40", features = ["rt", "macros", "time", "net"], optional = true }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"], optional = true }
+
+# Python bindings (optional)
+pyo3 = { version = "0.21", features = ["extension-module"], optional = true }
+numpy = { version = "0.21", optional = true }
+
+[features]
+default = ["rendering", "speech"]
+rendering = []
+# Microphone capture for the tactics table. Optional so headless RL training does not have to
+# build an audio stack it will never open.
+speech = [
+    "dep:cpal",
+    "dep:crossbeam-channel",
+    "dep:futures-util",
+    "dep:tokio",
+    "dep:tokio-tungstenite",
+    "dep:base64",
+]
+python = ["pyo3", "numpy"]
+headless = []
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "cube-soccer"
+path = "src/main.rs"
+
+[[bin]]
+name = "creation"
+path = "src/bin/creation.rs"
+
+[profile.dev]
+opt-level = 1
+debug = 0
+
+[profile.dev.package."*"]
+opt-level = 2

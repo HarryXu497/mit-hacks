@@ -1,0 +1,43 @@
+name: Native coaching
+
+on:
+  push:
+    branches: [coaching, native-coaching]
+  pull_request:
+
+jobs:
+  native:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-2022]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      # `stable`, not an exact pin. Both workflows pinned one, and the pin is what kept breaking:
+      # 1.75 could not read the crate's own lockfile (v4 needs Cargo 1.78+), and 1.85 is refused
+      # outright by transitive deps -- `icu_*` 2.3, pulled in through `url`, requires rustc 1.88.
+      # An exact pin has to be chased every time a dependency raises its floor, and it was not
+      # being chased.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native/coaching
+      - name: Clippy
+        run: cargo clippy --manifest-path native/coaching/Cargo.toml --all-targets -- -D warnings
+      # Three of the tests are not unit tests: they spawn the real `server/index.ts` and drive two
+      # `LobbyRuntime`s through join -> upload -> both-ready -> merged match start over real
+      # sockets. That is the whole point of them -- they are what catches a protocol change -- so
+      # they need the Node service's dependencies present. Without this they fail for want of
+      # `node_modules/tsx` rather than for any reason to do with the code.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install the local service's dependencies
+        run: npm ci
+      - name: Test
+        run: cargo test --manifest-path native/coaching/Cargo.toml

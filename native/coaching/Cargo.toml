@@ -1,0 +1,54 @@
+[package]
+name = "tactic-lab-native"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+
+[lib]
+name = "tactic_lab_native"
+path = "src/lib.rs"
+
+[[bin]]
+name = "native-coaching"
+path = "src/bin/native-coaching.rs"
+
+[dependencies]
+anyhow = "1.0"
+base64 = "0.22"
+bevy = { version = "0.13.2", default-features = false, features = [
+  "bevy_asset",
+  "bevy_core_pipeline",
+  "bevy_gizmos",
+  "bevy_pbr",
+  "bevy_render",
+  "bevy_sprite",
+  "bevy_text",
+  "bevy_ui",
+  "bevy_winit",
+  "default_font",
+  "multi-threaded",
+  "png",
+  "tonemapping_luts",
+  "x11",
+] }
+bevy_egui = { version = "0.25.0", default-features = false, features = ["default_fonts", "manage_clipboard", "render"] }
+bevy_rapier3d = { version = "0.25", features = ["simd-stable"] }
+cube-soccer = { path = "../cube-soccer" }
+cpal = "0.15"
+crossbeam-channel = "0.5"
+dirs = "5.0"
+futures-util = "0.3"
+humantime = "2.1"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tactic-lab-player-creation = { path = "../player-creation" }
+tokio = { version = "1.40", features = ["rt-multi-thread", "macros", "sync", "time", "net"] }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
+url = "2.5"
+uuid = { version = "1.10", features = ["v4", "serde"] }
+mdns-sd = "0.21.3"
+local-ip-address = "0.6.13"
+
+[dev-dependencies]
+tempfile = "3.12"

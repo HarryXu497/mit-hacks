@@ -1,72 +1,22 @@
-# Rust
-/target
-Cargo.lock
-
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-.venv/
-venv/
-ENV/
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
-.project
-.classpath
-.settings/
-
-# OS
+node_modules/
+target/
+.npm-cache/
+output/sessions/
+output/player-creations/
+output/matches/
 .DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
+*.tsbuildinfo
 
-# Build artifacts
-*.dll
-*.dylib
-*.pdb
+# Local secrets and environment overrides
+.env
+.env.*
+!.env.example
 
-# Logs
-*.log
-logs/
+# Native test runs write session artifacts relative to the crate directory.
+/native/coaching/output/
 
-# Models and checkpoints
-*.pt
-*.pth
-*.onnx
-checkpoints/
-models/
-wandb/
-
-# Temporary files
-*.tmp
-*.temp
-.cache/
-
-docs/
-*.pem
+# Scratch renders from CANOPY_CAPTURE / screenshot debugging.
+*.png
+!assets/**/*.png
+!tools/**/*.png
+!docs/**/*.png
