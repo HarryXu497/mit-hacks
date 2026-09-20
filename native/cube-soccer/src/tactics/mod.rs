@@ -15,6 +15,8 @@
 pub mod board;
 pub mod scene;
 pub mod sign;
+#[cfg(feature = "speech")]
+pub mod speech;
 
 use crate::creation::CreationPhase;
 use bevy::prelude::*;
@@ -152,8 +154,10 @@ pub struct Transcript {
     pub pending: Vec<String>,
     /// The partial sentence currently being spoken, if any.
     pub partial: String,
-    /// True once a host has claimed the seam, whether or not words have arrived.
+    /// True once something is listening, whether or not words have arrived.
     pub live: bool,
+    /// A line for the sign about the microphone itself.
+    pub status: String,
 }
 
 /// The result of interpreting the session, filled in by whatever can do it.
@@ -257,6 +261,15 @@ impl Plugin for TacticsPlugin {
                 )
                     .run_if(in_state(CreationPhase::Coaching)),
             );
+        // The microphone follows the clock: it opens when recording starts and
+        // closes when it stops, so speech covers exactly the recorded stretch.
+        #[cfg(feature = "speech")]
+        app.init_resource::<speech::SpeechRuntime>().add_systems(
+            Update,
+            (speech::drive_speech, speech::receive_speech)
+                .chain()
+                .run_if(in_state(CreationPhase::Coaching)),
+        );
     }
 }
 

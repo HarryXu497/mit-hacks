@@ -3,8 +3,9 @@ use bevy_rapier3d::prelude::*;
 use crate::entities::{Ball, GoalSensor};
 use crate::game::{
     GoalScoredEvent, GameState, MatchState, Team, GOALS_TO_WIN,
-    FIELD_WIDTH, FIELD_HEIGHT, GOAL_HEIGHT, GOAL_DEPTH,
+    FIELD_HEIGHT, GOAL_HEIGHT, GOAL_DEPTH, effective_goal_dist,
 };
+use crate::systems::heuristic_ai::ActiveRoster;
 
 /// Runtime scorable half-width in Z (the goal-size curriculum knob). Regulation is
 /// `GOAL_DEPTH/2 - 0.2` (matches the physical sensor); the curriculum starts this
@@ -36,13 +37,16 @@ pub fn detect_goals_by_position(
     mut goal_events: EventWriter<GoalScoredEvent>,
     ball_query: Query<&Transform, With<Ball>>,
     half_width: Option<Res<GoalHalfWidth>>,
+    roster: Option<Res<ActiveRoster>>,
 ) {
     let Ok(ball) = ball_query.get_single() else {
         return;
     };
     let p = ball.translation;
     let hw = half_width.map(|h| h.0).unwrap_or_else(GoalHalfWidth::regulation);
-    let line = FIELD_WIDTH / 2.0;
+    // Goal line scales with the active roster (field-size curriculum).
+    let active = roster.map(|r| r.0).unwrap_or(crate::game::PLAYERS_PER_TEAM);
+    let line = effective_goal_dist(active);
     let y_base = FIELD_HEIGHT;
     if p.z.abs() > hw || p.y < y_base || p.y > y_base + GOAL_HEIGHT {
         return;

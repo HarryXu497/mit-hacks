@@ -248,10 +248,10 @@ pub fn update_sign(
         if lines.is_empty() {
             // Say plainly that nothing is listening, rather than showing an
             // empty panel that looks like a feature waiting to work.
-            section.value = if transcript.live {
-                "Listening...".to_owned()
+            section.value = if transcript.status.is_empty() {
+                "No microphone in this build.\nSpeech arrives from the coaching app.".to_owned()
             } else {
-                "No microphone attached to this build.\nSpeech arrives from the coaching app.".to_owned()
+                transcript.status.clone()
             };
             section.style.color = MUTED;
         } else {

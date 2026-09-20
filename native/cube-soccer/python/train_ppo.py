@@ -38,6 +38,39 @@ class ShapingAnnealCallback(BaseCallback):
         return True
 
 
+class EntropyAnnealCallback(BaseCallback):
+    """Decay `ent_coef` from `start` to `end` over the first `anneal_frac` of
+    training, then hold. Keyed on absolute `num_timesteps`, so it resumes correctly
+    (picks up wherever the step counter is). Sets `model.ent_coef` each rollout —
+    keeps exploration adequate early, then sharpens the policy (lowers std) as the
+    curriculum reaches the harder, precision-demanding scales."""
+    def __init__(self, total_timesteps, start_coef, end_coef, anneal_frac=0.5):
+        super().__init__()
+        self.total = max(1, int(total_timesteps))
+        self.start = float(start_coef)
+        self.end = float(end_coef)
+        self.frac = max(1e-6, float(anneal_frac))
+
+    def _coef(self):
+        p = min(1.0, (self.num_timesteps / self.total) / self.frac)
+        return self.start + (self.end - self.start) * p
+
+    def _apply(self):
+        try:
+            self.model.ent_coef = self._coef()
+        except Exception:
+            pass
+
+    def _on_training_start(self) -> None:
+        self._apply()
+
+    def _on_rollout_start(self) -> None:
+        self._apply()
+
+    def _on_step(self) -> bool:
+        return True
+
+
 class OpponentCurriculumCallback(BaseCallback):
     """Ramp the heuristic opponent's difficulty from `floor` -> 1.0 over the first
     `curriculum_frac` of training, then hold at full strength. Starts Blue weak so
@@ -181,6 +214,12 @@ def main():
     parser.add_argument("--ent-coef", type=float, default=0.005,
                         help="PPO entropy coefficient (lower = less exploration pressure; "
                              "prevents action-std runaway once the reward signal is findable)")
+    parser.add_argument("--ent-coef-end", type=float, default=None,
+                        help="if set, anneal ent_coef from --ent-coef down to this over "
+                             "--ent-anneal-frac of training (keyed on absolute timesteps; "
+                             "resumes correctly). Sharpens the policy as scales get harder.")
+    parser.add_argument("--ent-anneal-frac", type=float, default=0.5,
+                        help="fraction of training over which ent_coef anneals to --ent-coef-end")
     parser.add_argument("--resume", type=str, default=None,
                         help="path to a saved model .zip to resume training from "
                              "(must match the current obs/action shape). Pass the same "
@@ -251,6 +290,10 @@ def main():
     # Goal-size curriculum (wide -> regulation). Skip when start == end.
     if abs(args.goal_width_start - args.goal_width_end) > 1e-6:
         callbacks.append(goal_width_cb)
+    # Entropy annealing (sharpen the policy as scales harden). Enabled by --ent-coef-end.
+    if args.ent_coef_end is not None:
+        callbacks.append(EntropyAnnealCallback(
+            args.timesteps, args.ent_coef, args.ent_coef_end, args.ent_anneal_frac))
 
     if use_wandb:
         callbacks.append(WandbCallback(
@@ -281,6 +324,10 @@ def main():
     if args.resume:
         print(f"Resuming from checkpoint: {args.resume}")
         model = PPO.load(args.resume, env=env, tensorboard_log=f"./runs/{run_id}")
+        # Override the entropy coefficient on resume (the checkpoint restores the old
+        # one). Lets us dial exploration down once scoring is found, to stop std runaway.
+        model.ent_coef = args.ent_coef
+        print(f"Overriding ent_coef -> {args.ent_coef}")
 
     # Train. On resume, keep the global step counter (so TB logs + the shaping
     # anneal schedule continue) instead of restarting at 0.

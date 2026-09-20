@@ -19,7 +19,7 @@ pub const WALL_COLOR: Color = Color::rgb(0.95, 0.95, 0.95);  // Off-white
 pub const GRID_COLOR: Color = Color::rgb(0.85, 0.85, 0.85);  // Grey lines
 
 // === FIELD (Grey play area) ===
-pub const FIELD_WIDTH: f32 = 48.0;      // X
+pub const FIELD_WIDTH: f32 = 48.0;      // X  (full/real size = max; curriculum scales down at runtime)
 pub const FIELD_DEPTH: f32 = 32.0;      // Z
 pub const FIELD_HEIGHT: f32 = 1.0;      // Y - platform thickness
 pub const FIELD_COLOR: Color = Color::rgb(0.25, 0.25, 0.25);  // Dark grey
@@ -78,6 +78,27 @@ pub const MAX_EPISODE_STEPS: u32 = 1000;
 pub const PLAYERS_PER_TEAM: usize = 5;
 /// Total number of agents across both teams.
 pub const NUM_AGENTS: usize = 2 * PLAYERS_PER_TEAM;
+
+/// Smallest effective field scale (1v1 plays on ~this fraction of the full field).
+pub const FIELD_SCALE_MIN: f32 = 0.22;
+
+/// Effective field scale for a given active roster (1..=PLAYERS_PER_TEAM): grows
+/// linearly from `FIELD_SCALE_MIN` (1v1) to 1.0 (full roster). Couples pitch size to
+/// player count — the curriculum shrinks the whole field for small rosters so short
+/// finishes are learnable, then grows it to the real size as players are added.
+pub fn field_scale(active: usize) -> f32 {
+    if PLAYERS_PER_TEAM <= 1 {
+        return 1.0;
+    }
+    let a = active.clamp(1, PLAYERS_PER_TEAM);
+    let t = (a - 1) as f32 / (PLAYERS_PER_TEAM - 1) as f32;
+    FIELD_SCALE_MIN + (1.0 - FIELD_SCALE_MIN) * t
+}
+
+/// Effective distance from field center to a goal line, given the active roster.
+pub fn effective_goal_dist(active: usize) -> f32 {
+    field_scale(active) * FIELD_WIDTH / 2.0
+}
 
 /// Per-agent observation length.
 /// Layout: self pos+vel (6) + teammates (6*(N-1)) + opponents (6*N)
