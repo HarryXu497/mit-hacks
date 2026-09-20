@@ -99,11 +99,25 @@ fn slab_corners(rect: egui::Rect, grow: f32) -> [egui::Pos2; 4] {
 /// forward and brightened, which is worth keeping because it is the only thing telling you where
 /// you are in a list of identical shapes.
 pub fn slab(ui: &mut egui::Ui, label: &str, tone: Tone, chosen: bool) -> egui::Response {
+    slab_sized(ui, label, tone, chosen, SLAB_HEIGHT, 19.0)
+}
+
+/// The same slab at HUD scale, for a control that sits over live play rather than on a screen of
+/// its own. Same form and palette, so it still reads as one of these controls.
+pub fn slab_compact(ui: &mut egui::Ui, label: &str, tone: Tone, chosen: bool) -> egui::Response {
+    slab_sized(ui, label, tone, chosen, 30.0, 12.5)
+}
+
+fn slab_sized(
+    ui: &mut egui::Ui,
+    label: &str,
+    tone: Tone,
+    chosen: bool,
+    height: f32,
+    font: f32,
+) -> egui::Response {
     let width = ui.available_width().min(SLAB_MAX_WIDTH);
-    let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(width, SLAB_HEIGHT),
-        egui::Sense::click(),
-    );
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::click());
 
     if ui.is_rect_visible(rect) {
         let hovered = response.hovered() || chosen;
@@ -135,10 +149,13 @@ pub fn slab(ui: &mut egui::Ui, label: &str, tone: Tone, chosen: bool) -> egui::R
         ));
 
         painter.text(
-            egui::pos2(rect.left() + SLAB_HEIGHT * SLAB_LEAN + 18.0, rect.center().y),
+            egui::pos2(
+                rect.left() + height * SLAB_LEAN + height * 0.39,
+                rect.center().y,
+            ),
             egui::Align2::LEFT_CENTER,
             label.to_uppercase(),
-            egui::FontId::proportional(19.0),
+            egui::FontId::proportional(font),
             if hovered { CLOTH } else { CLOTH_DIM },
         );
     }
@@ -211,6 +228,8 @@ pub const SCRIM_FRACTION: f32 = 0.46;
 /// existing coaching panel -- inherits this, so nothing has to be restyled widget by widget for
 /// the app to stop looking like two different programs.
 pub fn apply(ctx: &egui::Context) {
+    install_fonts(ctx);
+
     let mut style = (*ctx.style()).clone();
     let v = &mut style.visuals;
 
@@ -331,4 +350,174 @@ mod tests {
         }
         assert!(ratio(INK, GOLD) >= 4.5, "ink on gold must stay legible");
     }
+}
+
+// ---------------------------------------------------------------------------
+// Type
+// ---------------------------------------------------------------------------
+
+/// The wordmark face and the UI face, in that order.
+///
+/// M PLUS Rounded 1c: the open rounded gothic that stands in for the Fontworks
+/// Rodin that Animal Crossing sets its wordmark in. Subset to Latin, which is
+/// why two weights cost 135 KB rather than 7 MB. See `assets/fonts/README.md`.
+const DISPLAY_TTF: &[u8] = include_bytes!("../assets/fonts/MPLUSRounded1c-Black.ttf");
+const BODY_TTF: &[u8] = include_bytes!("../assets/fonts/MPLUSRounded1c-Bold.ttf");
+
+pub const DISPLAY: &str = "canopy-display";
+pub const BODY: &str = "canopy-body";
+
+/// Registers both faces and makes the bold one egui's default.
+///
+/// Called once, before anything draws. egui keeps its own default stack as the
+/// fallback tail so anything outside the Latin subset still renders rather than
+/// coming out as blank boxes.
+pub fn install_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+    fonts.font_data.insert(
+        DISPLAY.to_owned(),
+        egui::FontData::from_static(DISPLAY_TTF),
+    );
+    fonts
+        .font_data
+        .insert(BODY.to_owned(), egui::FontData::from_static(BODY_TTF));
+
+    fonts
+        .families
+        .entry(egui::FontFamily::Name(DISPLAY.into()))
+        .or_default()
+        .insert(0, DISPLAY.to_owned());
+
+    // Proportional is what every unstyled label in the app already asks for, so
+    // putting the body face at the front of it restyles the whole UI at once
+    // rather than one call site at a time.
+    fonts
+        .families
+        .entry(egui::FontFamily::Proportional)
+        .or_default()
+        .insert(0, BODY.to_owned());
+
+    ctx.set_fonts(fonts);
+}
+
+fn display_font(size: f32) -> egui::FontId {
+    egui::FontId::new(size, egui::FontFamily::Name(DISPLAY.into()))
+}
+
+/// Offsets for the faked text outline.
+///
+/// egui has no text stroke, so the string is painted eight times in ink behind
+/// one copy in the fill colour. Eight directions rather than four because at
+/// this weight a four-way outline leaves visible notches on the diagonals of
+/// letters like A and Y -- the same reason the game's own UI does it this way.
+const OUTLINE: [(f32, f32); 8] = [
+    (-1., -1.),
+    (0., -1.),
+    (1., -1.),
+    (-1., 0.),
+    (1., 0.),
+    (-1., 1.),
+    (0., 1.),
+    (1., 1.),
+];
+
+/// Paints `text` with an ink contour, and returns the box it filled.
+fn paint_outlined(
+    painter: &egui::Painter,
+    at: egui::Pos2,
+    text: &str,
+    font: egui::FontId,
+    fill: egui::Color32,
+    weight: f32,
+) -> egui::Rect {
+    for (dx, dy) in OUTLINE {
+        painter.text(
+            at + egui::vec2(dx * weight, dy * weight),
+            egui::Align2::LEFT_TOP,
+            text,
+            font.clone(),
+            INK,
+        );
+    }
+    painter.text(at, egui::Align2::LEFT_TOP, text, font, fill)
+}
+
+/// The wordmark, for the top of the lobby.
+pub fn wordmark(ui: &mut egui::Ui, text: &str) {
+    const SIZE: f32 = 40.0;
+    let galley = ui.fonts(|f| {
+        f.layout_no_wrap(text.to_owned(), display_font(SIZE), GOLD)
+    });
+    let (rect, _) = ui.allocate_exact_size(
+        galley.size() + egui::vec2(8.0, 8.0),
+        egui::Sense::hover(),
+    );
+    paint_outlined(
+        ui.painter(),
+        rect.left_top() + egui::vec2(4.0, 4.0),
+        text,
+        display_font(SIZE),
+        GOLD,
+        3.0,
+    );
+}
+
+/// The line under the wordmark.
+///
+/// Outlined like everything else on this screen. Dim cloth on its own was fine
+/// over the wash and vanished the moment the wash came off -- it was sitting on
+/// open sky at almost its own value.
+pub fn caption(ui: &mut egui::Ui, text: &str) {
+    const SIZE: f32 = 17.0;
+    let galley = ui.fonts(|f| {
+        f.layout_no_wrap(text.to_owned(), display_font(SIZE), CLOTH)
+    });
+    let (rect, _) = ui.allocate_exact_size(
+        galley.size() + egui::vec2(6.0, 6.0),
+        egui::Sense::hover(),
+    );
+    paint_outlined(
+        ui.painter(),
+        rect.left_top() + egui::vec2(3.0, 3.0),
+        text,
+        display_font(SIZE),
+        CLOTH,
+        2.0,
+    );
+}
+
+/// A menu entry: outlined type over the scenery, with no slab behind it.
+///
+/// The slab was carrying the contrast before the type had an outline of its
+/// own. Now that it does, a filled shape behind every row is one layer too
+/// many -- it hides the stadium the lobby is deliberately standing in front of.
+/// The row that is hovered or chosen goes gold and grows; the rest stay cloth.
+pub fn menu_row(ui: &mut egui::Ui, label: &str, chosen: bool) -> egui::Response {
+    const SIZE: f32 = 40.0;
+    const GROWN: f32 = 46.0;
+
+    let hovered_size = if chosen { GROWN } else { SIZE };
+    let galley = ui.fonts(|f| {
+        f.layout_no_wrap(label.to_owned(), display_font(GROWN), CLOTH)
+    });
+    // Sized to the grown text either way, so the column does not reflow as the
+    // cursor moves down it.
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(galley.size().x + 12.0, GROWN + 10.0),
+        egui::Sense::click(),
+    );
+
+    if ui.is_rect_visible(rect) {
+        let lit = chosen || response.hovered();
+        let size = if response.hovered() { GROWN } else { hovered_size };
+        paint_outlined(
+            ui.painter(),
+            rect.left_top() + egui::vec2(4.0, (rect.height() - size) * 0.5),
+            label,
+            display_font(size),
+            if lit { GOLD } else { CLOTH },
+            4.0,
+        );
+    }
+    response
 }

@@ -10,7 +10,8 @@
     "build": "tsc -b",
     "test": "vitest run",
     "test:live": "vitest run --config vitest.live.config.ts",
-    "typecheck": "tsc -b --pretty false"
+    "typecheck": "tsc -b --pretty false",
+    "dev:shout": "node scripts/dev-native.mjs --shout-preview"
   },
   "dependencies": {
     "cors": "^2.8.6",

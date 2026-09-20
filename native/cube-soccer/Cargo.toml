@@ -36,6 +36,9 @@ bevy = { version = "0.13", default-features = false, features = [
     "default_font",
 ] }
 bevy_rapier3d = { version = "0.25", features = ["simd-stable"] }
+# Extrudes the wordmark's letters from the shipped TTF. `owned` is what lets the
+# generator take a plain byte slice; without it the API demands `&'static [u8]`.
+meshtext = { version = "0.3.2", features = ["owned"] }
 
 # Utilities
 rand = "0.8"

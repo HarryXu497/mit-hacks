@@ -7,6 +7,7 @@
 //!
 //! - [`batching`]: One-time merge of static props into shared draws
 //! - [`lighting`]: Scene lighting setup (ambient, directional)
+//! - [`wordmark`]: The title as extruded geometry, with monkeys on it
 //! - [`materials`]: Shared material definitions
 //! - [`post_process`]: Post-processing effects (bloom, etc.)
 
@@ -15,6 +16,7 @@ pub mod lighting;
 pub mod materials;
 pub mod post_process;
 pub mod stylized;
+pub mod wordmark;
 
 pub use lighting::*;
 pub use materials::*;

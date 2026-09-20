@@ -574,11 +574,13 @@ fn lobby_menu_ui(
         .frame(egui::Frame::none())
         .show(ctx, |ui| {
             let screen = ui.max_rect();
-            let washed = egui::Rect::from_min_size(
-                screen.left_top(),
-                egui::vec2(screen.width() * crate::theme::SCRIM_FRACTION, screen.height()),
-            );
-            crate::theme::scrim(ui.painter(), washed, 225, 0);
+            if ui_state.screen != LobbyScreen::MainMenu {
+                let washed = egui::Rect::from_min_size(
+                    screen.left_top(),
+                    egui::vec2(screen.width() * crate::theme::SCRIM_FRACTION, screen.height()),
+                );
+                crate::theme::scrim(ui.painter(), washed, 225, 0);
+            }
 
             // Laid out from the left, as the reference does, rather than centred: the menu is a
             // column down one side and the scenery has the rest of the frame.
@@ -588,11 +590,9 @@ fn lobby_menu_ui(
             );
             ui.allocate_ui_at_rect(column, |ui| {
         {
-            crate::theme::title(
-                ui,
-                "Canopy Clash",
-                Some("Draw a player. Coach a play. Watch it happen."),
-            );
+            // The title is geometry now, built by `world::raise_the_wordmark`.
+            crate::theme::caption(ui, "Draw a player. Coach a play. Watch it happen.");
+            ui.add_space(26.0);
 
             match ui_state.screen {
                 LobbyScreen::MainMenu => {
@@ -942,15 +942,16 @@ fn redirect_env_to_host(host_addr: &str) {
 
 /// One row of the menu.
 ///
-/// A slab rather than a rectangle: see `theme`. `primary` marks the entry most people want, which
-/// is the only reason to make one row look different from another.
+/// Outlined type over the scenery rather than a slab: see `theme::menu_row`.
+/// `primary` marks the entry most people want, which is the only reason to make
+/// one row look different from another.
 fn big_button(ui: &mut egui::Ui, label: &str) -> bool {
-    crate::theme::slab(ui, label, crate::theme::Tone::Plain, false).clicked()
+    crate::theme::menu_row(ui, label, false).clicked()
 }
 
 /// The menu row that is probably what you came for.
 fn primary_button(ui: &mut egui::Ui, label: &str) -> bool {
-    crate::theme::slab(ui, label, crate::theme::Tone::Primary, false).clicked()
+    crate::theme::menu_row(ui, label, true).clicked()
 }
 
 #[cfg(test)]
