@@ -39,7 +39,11 @@ impl TeamSide {
         }
     }
 
-    fn game_team(self) -> Team {
+    /// The engine's team for this coaching side.
+    ///
+    /// Public because the fixed mapping is needed outside the handoff too — `forge.rs` arms the
+    /// coached side with the power that was drawn for it, and has to know which side that is.
+    pub fn game_team(self) -> Team {
         match self {
             TeamSide::Red => Team::Orange,
             TeamSide::Yellow => Team::Blue,

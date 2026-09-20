@@ -1,6 +1,7 @@
 pub mod board;
 pub mod game;
 pub mod game_handoff;
+pub mod forge;
 pub mod game_stream;
 pub mod interpretation;
 pub mod model;

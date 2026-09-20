@@ -3,6 +3,7 @@ import express from "express";
 import { ZodError } from "zod";
 import { interpretationRequestSchema } from "../src/domain/schemas";
 import type { Session } from "../src/domain/types";
+import { forgeRouter } from "./forge";
 import { lobbyRouter } from "./lobby";
 import { GroundingError } from "./normalize";
 import {
@@ -23,6 +24,9 @@ export function createApp(interpreter: Interpreter = interpretSessionWithOpenAI)
   // a long coaching session's /api/interpret body can also pass 1mb.
   app.use(express.json({ limit: "25mb" }));
   app.use(lobbyRouter());
+  // Turns a drawn superpower into one of the game's four. Shells out to MonkeyForge, so a
+  // joining machine gets the host's Python toolchain by redirecting here.
+  app.use(forgeRouter());
 
   app.get("/api/health", (_request, response) => {
     response.json({ ok: true, openaiConfigured: Boolean(process.env.OPENAI_API_KEY && process.env.OPENAI_MODEL) });

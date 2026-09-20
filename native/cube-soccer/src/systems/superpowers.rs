@@ -27,6 +27,53 @@ impl SuperpowerKind {
             SuperpowerKind::Slow => 3,
         }
     }
+
+    /// The name MonkeyForge calls this power.
+    ///
+    /// These four powers are the whole list, and this is the string its classifier answers with
+    /// (`monkeyforge.powers.registry`, which asserts the same order at import). Keeping the
+    /// spelling here rather than in the host means one place to look when a drawn superpower has
+    /// to become a real one.
+    pub fn slug(self) -> &'static str {
+        match self {
+            SuperpowerKind::BeamBlast => "beam_blast",
+            SuperpowerKind::FreezeRay => "freeze_ray",
+            SuperpowerKind::Boost => "boost",
+            SuperpowerKind::Slow => "slow",
+        }
+    }
+
+    /// The power a slug names, or `None` if it names nothing.
+    ///
+    /// Deliberately not lenient. An unrecognised slug means the classifier and this enum have
+    /// drifted apart, and quietly falling back to a default power would hide that — the drawn
+    /// superpower would simply come out wrong, with nothing to say why.
+    pub fn from_slug(slug: &str) -> Option<Self> {
+        [
+            SuperpowerKind::BeamBlast,
+            SuperpowerKind::FreezeRay,
+            SuperpowerKind::Boost,
+            SuperpowerKind::Slow,
+        ]
+        .into_iter()
+        .find(|kind| kind.slug() == slug)
+    }
+
+    /// The badge for this power, relative to `assets/`.
+    ///
+    /// Rendered by MonkeyForge and committed, so the HUD has an icon whether or not anything has
+    /// been forged this session.
+    pub fn badge_path(self) -> String {
+        format!("icons/powers/{}.png", self.slug())
+    }
+
+    /// Every power, in observation order.
+    pub const ALL: [SuperpowerKind; 4] = [
+        SuperpowerKind::BeamBlast,
+        SuperpowerKind::FreezeRay,
+        SuperpowerKind::Boost,
+        SuperpowerKind::Slow,
+    ];
 }
 
 /// Optional component: a cube that has a power. Attach to give a power.
@@ -164,6 +211,60 @@ pub fn activate_superpowers(
 
         if fired {
             sp.cooldown_remaining = sp.kind.cooldown();
+        }
+    }
+}
+
+#[cfg(test)]
+mod slug_tests {
+    use super::*;
+
+    #[test]
+    fn every_power_round_trips_through_its_slug() {
+        for kind in SuperpowerKind::ALL {
+            assert_eq!(
+                SuperpowerKind::from_slug(kind.slug()),
+                Some(kind),
+                "{kind:?} does not survive its own slug"
+            );
+        }
+    }
+
+    #[test]
+    fn the_slugs_are_the_four_the_classifier_answers_with() {
+        // Pinned literally, because these strings cross a process boundary: MonkeyForge's
+        // classifier prints them and this is what reads them back. A rename on either side has to
+        // break a test rather than silently produce the wrong power.
+        let slugs: Vec<&str> = SuperpowerKind::ALL.iter().map(|k| k.slug()).collect();
+        assert_eq!(slugs, vec!["beam_blast", "freeze_ray", "boost", "slow"]);
+    }
+
+    #[test]
+    fn an_unknown_slug_is_refused_rather_than_defaulted() {
+        assert_eq!(SuperpowerKind::from_slug("teleport"), None);
+        assert_eq!(SuperpowerKind::from_slug(""), None);
+        assert_eq!(SuperpowerKind::from_slug("BeamBlast"), None, "slugs are snake_case");
+    }
+
+    #[test]
+    fn the_slug_order_is_the_observation_order() {
+        // The one-hot index is written into the observation vector, so reordering `ALL` would
+        // invalidate every trained checkpoint. This pins the two together.
+        for (index, kind) in SuperpowerKind::ALL.iter().enumerate() {
+            assert_eq!(kind.onehot_index(), index);
+        }
+    }
+
+    #[test]
+    fn every_badge_points_at_a_committed_asset() {
+        for kind in SuperpowerKind::ALL {
+            let path = kind.badge_path();
+            assert!(path.starts_with("icons/powers/"), "{path}");
+            assert!(path.ends_with(".png"), "{path}");
+            // Relative to the repo root, which is the working directory the app is launched from
+            // and therefore the asset root.
+            let on_disk = std::path::Path::new("../../assets").join(&path);
+            assert!(on_disk.exists(), "{} is missing", on_disk.display());
         }
     }
 }

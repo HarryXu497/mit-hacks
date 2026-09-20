@@ -2,7 +2,8 @@ use bevy::prelude::*;
 use bevy::window::{PresentMode, WindowResolution};
 use bevy_egui::EguiPlugin;
 use tactic_lab_native::{
-    game::GamePlugin, network::LobbyPlugin, phase::AppPhase, world::WorldPlugin, CoachingPlugin,
+    forge::ForgePlugin, game::GamePlugin, network::LobbyPlugin, phase::AppPhase,
+    world::WorldPlugin, CoachingPlugin,
 };
 
 fn main() {
@@ -36,5 +37,7 @@ fn main() {
         // Recording, speech, interpretation and the handoff into a match.
         .add_plugins(CoachingPlugin)
         .add_plugins(GamePlugin)
+        // Turns the painted superpower into one of the game's four, and arms the coached side.
+        .add_plugins(ForgePlugin)
         .run();
 }
