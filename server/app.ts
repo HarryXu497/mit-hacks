@@ -19,7 +19,9 @@ export function createApp(interpreter: Interpreter = interpretSessionWithOpenAI)
   // LAN-only hackathon demo: any machine on the same wifi may be the joiner,
   // so origin is intentionally unrestricted rather than a per-deploy allowlist.
   app.use(cors());
-  app.use(express.json({ limit: "1mb" }));
+  // Artifact bundles carry two base64 1024x1024 PNGs plus a full event log, and
+  // a long coaching session's /api/interpret body can also pass 1mb.
+  app.use(express.json({ limit: "25mb" }));
   app.use(lobbyRouter());
 
   app.get("/api/health", (_request, response) => {

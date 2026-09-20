@@ -3,6 +3,7 @@ target/
 .npm-cache/
 output/sessions/
 output/player-creations/
+output/matches/
 .DS_Store
 *.tsbuildinfo
 
