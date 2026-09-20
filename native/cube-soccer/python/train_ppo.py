@@ -220,11 +220,31 @@ def main():
                              "resumes correctly). Sharpens the policy as scales get harder.")
     parser.add_argument("--ent-anneal-frac", type=float, default=0.5,
                         help="fraction of training over which ent_coef anneals to --ent-coef-end")
+    parser.add_argument("--learning-rate", type=float, default=3e-4,
+                        help="PPO learning rate. Lower (e.g. 1e-4) to tame large updates "
+                             "(high approx_kl / clip_fraction) once the policy is sharp.")
     parser.add_argument("--resume", type=str, default=None,
                         help="path to a saved model .zip to resume training from "
                              "(must match the current obs/action shape). Pass the same "
                              "--timesteps/--shaping-anneal-frac as the original run.")
+    parser.add_argument("--warm-start", type=str, default=None,
+                        help="path to a saved model .zip to warm-start a NEW training "
+                             "phase from (loads the weights but RESETS the step counter, "
+                             "so this phase's curricula run from scratch). Use for the "
+                             "tactic-conditioned policy produced by transplant_tactic.py. "
+                             "Pair with --roster-start-full --goal-width-start==end and "
+                             "--randomize-tactics.")
+    parser.add_argument("--randomize-tactics", action="store_true",
+                        help="randomize Orange's tactic each episode on the TRAINING envs "
+                             "(tactic domain-randomization). Off on the eval env.")
+    parser.add_argument("--tactic-weight", type=float, default=None,
+                        help="override the per-tactic positional-imitation reward weight "
+                             "on the training envs (higher = more visibly distinct styles). "
+                             "Default: the engine's built-in TACTIC_WEIGHT.")
     args = parser.parse_args()
+
+    if args.resume and args.warm_start:
+        parser.error("pass only one of --resume / --warm-start")
 
     # Wandb logging
     use_wandb = WANDB_AVAILABLE and not args.no_wandb
@@ -244,6 +264,16 @@ def main():
     # Vectorized environment
     env = SubprocVecEnv([make_env(i) for i in range(args.num_envs)])
     env = VecMonitor(env)
+
+    # Tactic-conditioning on the TRAINING envs only. Randomization forces the policy
+    # to read the tactic in its obs to predict reward; the weight tunes how strongly
+    # tactics shape positioning. The eval env is left at defaults (no randomization).
+    if args.randomize_tactics:
+        env.env_method("set_tactic_randomization", True)
+        print("Tactic randomization: ON (training envs)")
+    if args.tactic_weight is not None:
+        env.env_method("set_tactic_weight", float(args.tactic_weight))
+        print(f"Tactic weight -> {args.tactic_weight} (training envs)")
 
     # Eval environment
     eval_render_mode = "human" if args.render_eval else None
@@ -306,7 +336,7 @@ def main():
         "MlpPolicy",
         env,
         verbose=1,
-        learning_rate=3e-4,
+        learning_rate=args.learning_rate,
         n_steps=2048,
         batch_size=256,
         n_epochs=10,
@@ -320,14 +350,26 @@ def main():
         tensorboard_log=f"./runs/{run_id}",
     )
 
-    # Resume from a checkpoint if requested (replaces the fresh model above).
-    if args.resume:
-        print(f"Resuming from checkpoint: {args.resume}")
-        model = PPO.load(args.resume, env=env, tensorboard_log=f"./runs/{run_id}")
-        # Override the entropy coefficient on resume (the checkpoint restores the old
-        # one). Lets us dial exploration down once scoring is found, to stop std runaway.
+    # Resume (continue the step counter) or warm-start (load weights, fresh counter).
+    # Both replace the fresh model above and re-apply the CLI ent_coef / learning_rate,
+    # since the checkpoint restores the saved optimizer state.
+    load_path = args.resume or args.warm_start
+    if load_path:
+        kind = "Resuming from" if args.resume else "Warm-starting from"
+        print(f"{kind} checkpoint: {load_path}")
+        model = PPO.load(load_path, env=env, tensorboard_log=f"./runs/{run_id}")
+        # Override the entropy coefficient (the checkpoint restores the old one). Lets
+        # us dial exploration down once scoring is found, to stop std runaway.
         model.ent_coef = args.ent_coef
         print(f"Overriding ent_coef -> {args.ent_coef}")
+        # Override the learning rate (checkpoint restores the optimizer's old lr). Lower
+        # it to tame large updates (high approx_kl / clip_fraction).
+        from stable_baselines3.common.utils import get_schedule_fn
+        model.learning_rate = args.learning_rate
+        model.lr_schedule = get_schedule_fn(args.learning_rate)
+        for pg in model.policy.optimizer.param_groups:
+            pg["lr"] = args.learning_rate
+        print(f"Overriding learning_rate -> {args.learning_rate}")
 
     # Train. On resume, keep the global step counter (so TB logs + the shaping
     # anneal schedule continue) instead of restarting at 0.

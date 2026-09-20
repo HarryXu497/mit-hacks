@@ -10,7 +10,7 @@ use crate::game::{
 use crate::entities::{Ball, CubePlayer, get_spawn_position, get_ball_spawn_position};
 use crate::input::AIActions;
 use crate::systems::possession::Possession;
-use crate::systems::heuristic_ai::{TeamTactics, TacticParams, Tactic, HeuristicDifficulty, ActiveRoster};
+use crate::systems::heuristic_ai::{TeamTactics, TacticParams, Tactic, TacticRandomization, HeuristicDifficulty, ActiveRoster};
 use crate::systems::scoring::GoalHalfWidth;
 use crate::systems::superpowers::{Superpower, SuperpowerKind};
 use crate::systems::status_effects::StatusEffects;
@@ -140,6 +140,18 @@ impl CubeSoccerEnv {
             }
         }
 
+        // Tactic domain-randomization (training only; off by default so a coach's
+        // explicitly-set tactic persists across resets). Sampled last from the same
+        // seeded RNG so it doesn't disturb the reproducible spawn/loadout draws above.
+        // Restricted to the shippable, clearly-distinct presets so conditioned
+        // behaviors are maximally separable while we validate tactic-conditioning.
+        if self.app.world.resource::<TacticRandomization>().0 {
+            const PRESETS: [Tactic; 4] =
+                [Tactic::Balanced, Tactic::HighPress, Tactic::LowBlock, Tactic::WingPlay];
+            let t = PRESETS[rng.gen_range(0..PRESETS.len())];
+            self.app.world.resource_mut::<TeamTactics>().orange.set_base(t.params());
+        }
+
         self.current_step = 0;
         self.app.update();
         self.app.world.resource::<LatestObs>().0.clone()
@@ -219,6 +231,19 @@ impl CubeSoccerEnv {
             Team::Orange => tt.orange.clear_overrides(),
             Team::Blue => tt.blue.clear_overrides(),
         }
+    }
+
+    /// Enable/disable per-episode tactic randomization for Orange. On = the env
+    /// samples a fresh Orange tactic each `reset()` (training domain-randomization).
+    /// Off (default) = an explicitly-set tactic persists across resets (coaching/eval).
+    pub fn set_tactic_randomization(&mut self, on: bool) {
+        self.app.world.resource_mut::<TacticRandomization>().0 = on;
+    }
+
+    /// Set the weight on the per-tactic positional-imitation reward (Orange only).
+    /// Higher = more visibly distinct behaviors per tactic (at some scoring cost).
+    pub fn set_tactic_weight(&mut self, w: f32) {
+        self.app.world.resource_mut::<RewardCalculator>().tactic_weight = w;
     }
 
     /// Set the dense-shaping weight (1.0 = full shaping, 0.0 = pure goal objective).
@@ -317,6 +342,45 @@ mod tests {
             Tactic::HighPress.params(),
             "tactic must persist across reset()"
         );
+    }
+
+    #[test]
+    fn tactic_randomization_samples_a_shippable_preset_and_varies() {
+        use crate::systems::heuristic_ai::{TeamTactics, Tactic};
+        let presets = [Tactic::Balanced, Tactic::HighPress, Tactic::LowBlock, Tactic::WingPlay];
+        let mut env = CubeSoccerEnv::new(EnvConfig::default());
+        env.set_tactic_randomization(true);
+        let mut seen = std::collections::HashSet::new();
+        for seed in 0..16u64 {
+            env.reset(Some(seed));
+            let got = env.app.world.resource::<TeamTactics>().orange.base_params();
+            let which = presets.iter().position(|p| p.params() == got);
+            assert!(which.is_some(), "seed {seed}: orange {got:?} is not a shippable preset");
+            seen.insert(which.unwrap());
+        }
+        assert!(seen.len() >= 2, "randomization should vary the tactic across seeds, saw {}", seen.len());
+    }
+
+    #[test]
+    fn tactic_randomization_off_keeps_orange_fixed_across_reset() {
+        use crate::systems::heuristic_ai::{TeamTactics, Tactic};
+        let mut env = CubeSoccerEnv::new(EnvConfig::default()); // randomization off by default
+        env.reset(Some(0));
+        env.set_team_preset(Team::Orange, Tactic::LowBlock);
+        env.reset(Some(1));
+        assert_eq!(
+            env.app.world.resource::<TeamTactics>().orange.base_params(),
+            Tactic::LowBlock.params(),
+            "with randomization off, an explicitly-set Orange tactic must persist"
+        );
+    }
+
+    #[test]
+    fn set_tactic_weight_updates_calculator() {
+        let mut env = CubeSoccerEnv::new(EnvConfig::default());
+        env.reset(Some(0));
+        env.set_tactic_weight(0.42);
+        assert_eq!(env.app.world.resource::<RewardCalculator>().tactic_weight, 0.42);
     }
 
     #[test]

@@ -91,16 +91,7 @@ fn canonical_tactic(label: &str) -> Result<Tactic> {
     ensure!(
         matches!(
             label,
-            "balanced"
-                | "highpress"
-                | "gegenpress"
-                | "lowblock"
-                | "parkthebus"
-                | "counterattack"
-                | "possession"
-                | "wingplay"
-                | "narrowmidblock"
-                | "alloutattack"
+            "balanced" | "highpress" | "lowblock" | "wingplay"
         ),
         "Unknown tactic label: {label}"
     );
@@ -298,18 +289,7 @@ mod tests {
 
     #[test]
     fn all_presets_reach_the_controller_for_red() {
-        for label in [
-            "balanced",
-            "highpress",
-            "gegenpress",
-            "lowblock",
-            "parkthebus",
-            "counterattack",
-            "possession",
-            "wingplay",
-            "narrowmidblock",
-            "alloutattack",
-        ] {
+        for label in ["balanced", "highpress", "lowblock", "wingplay"] {
             let red =
                 CoachedTeam::from_output_for_team(&output("red", label, "s"), TeamSide::Red)
                     .unwrap();

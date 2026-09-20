@@ -16,6 +16,10 @@ pub struct AgentView<'a> {
     pub velocity: &'a Velocity,
     pub cooldown_ready: f32,
     pub power_onehot: [f32; 4],
+    /// This agent's active tactic params, normalized to ~[-1, 1] (see
+    /// `TacticParams::normalized`). Appended to the observation so the policy can
+    /// condition its behavior on the coach's directive.
+    pub tactic: [f32; 7],
 }
 
 /// Build the per-agent observation vector for a single observer.
@@ -28,7 +32,8 @@ pub struct AgentView<'a> {
 ///   ball rel pos(3), ball rel vel(3),
 ///   dist_to_own_goal, dist_to_opponent_goal,
 ///   score_diff, time_remaining,
-///   possession flags [self_has_ball, teammate_has_ball, opponent_has_ball]
+///   possession flags [self_has_ball, teammate_has_ball, opponent_has_ball],
+///   active tactic params (7, normalized)
 fn extract_one(
     observer: &AgentView,
     teammates: &[&AgentView],
@@ -103,10 +108,15 @@ fn extract_one(
     out[i + 5] = observer.power_onehot[2];
     out[i + 6] = observer.power_onehot[3];
 
-    // possession flags [self, teammate, opponent]  (kept last-3)
+    // possession flags [self, teammate, opponent]
     out[i + 7] = poss_flags[0];
     out[i + 8] = poss_flags[1];
     out[i + 9] = poss_flags[2];
+
+    // active tactic (normalized) — the directive this agent is coached to execute
+    for (k, t) in observer.tactic.iter().enumerate() {
+        out[i + 10 + k] = *t;
+    }
 
     out
 }
@@ -158,12 +168,15 @@ pub fn compute_observations(
     Some(result)
 }
 
-/// Bevy adapter: pull agent state from the ECS and build observations.
+/// Bevy adapter: pull agent state from the ECS and build observations. Each agent's
+/// observation includes its own active tactic (from `tactics`), so per-role combos
+/// are supported (each player sees the params it is coached to execute).
 pub fn get_observations(
     player_query: &Query<(Entity, &Transform, &Velocity, &CubePlayer, Option<&crate::systems::superpowers::Superpower>)>,
     ball_query: &Query<(&Transform, &Velocity), With<Ball>>,
     game_state: &GameState,
     possession: &crate::systems::possession::Possession,
+    tactics: &crate::systems::heuristic_ai::TeamTactics,
     goal_dist: f32,
 ) -> Option<Vec<[f32; OBSERVATION_SIZE]>> {
     let agents: Vec<AgentView> = player_query
@@ -173,6 +186,10 @@ pub fn get_observations(
             if let Some(p) = power {
                 oh[p.kind.onehot_index()] = 1.0;
             }
+            let directive = match player.team {
+                Team::Orange => &tactics.orange,
+                Team::Blue => &tactics.blue,
+            };
             AgentView {
                 team: player.team,
                 index: player.index,
@@ -180,6 +197,7 @@ pub fn get_observations(
                 velocity,
                 cooldown_ready: power.map(|p| p.ready_fraction()).unwrap_or(1.0),
                 power_onehot: oh,
+                tactic: directive.params_for(player.index).normalized(),
             }
         })
         .collect();
@@ -217,7 +235,7 @@ mod tests {
             .map(|i| {
                 let team = if i < PLAYERS_PER_TEAM { Team::Orange } else { Team::Blue };
                 let index = i % PLAYERS_PER_TEAM;
-                AgentView { team, index, transform: &transforms[i], velocity: &vels[i], cooldown_ready: 1.0, power_onehot: [0.0; 4] }
+                AgentView { team, index, transform: &transforms[i], velocity: &vels[i], cooldown_ready: 1.0, power_onehot: [0.0; 4], tactic: [0.0; 7] }
             })
             .collect();
 
@@ -241,7 +259,7 @@ mod tests {
         let agents: Vec<AgentView> = (0..NUM_AGENTS)
             .map(|i| {
                 let team = if i < PLAYERS_PER_TEAM { Team::Orange } else { Team::Blue };
-                AgentView { team, index: i % PLAYERS_PER_TEAM, transform: &transforms[i], velocity: &vels[i], cooldown_ready: 1.0, power_onehot: [0.0; 4] }
+                AgentView { team, index: i % PLAYERS_PER_TEAM, transform: &transforms[i], velocity: &vels[i], cooldown_ready: 1.0, power_onehot: [0.0; 4], tactic: [0.0; 7] }
             })
             .collect();
         let ball_t = t(0.0, 1.0, 0.0);
@@ -257,7 +275,7 @@ mod tests {
     fn wrong_agent_count_returns_none() {
         let tr = t(0.0, 1.0, 0.0);
         let ve = v(0.0, 0.0, 0.0);
-        let agents = vec![AgentView { team: Team::Orange, index: 0, transform: &tr, velocity: &ve, cooldown_ready: 1.0, power_onehot: [0.0; 4] }];
+        let agents = vec![AgentView { team: Team::Orange, index: 0, transform: &tr, velocity: &ve, cooldown_ready: 1.0, power_onehot: [0.0; 4], tactic: [0.0; 7] }];
         let ball_t = t(0.0, 1.0, 0.0);
         let ball_v = v(0.0, 0.0, 0.0);
         let gs = crate::game::GameState::default();
@@ -273,7 +291,7 @@ mod tests {
         let agents: Vec<AgentView> = (0..NUM_AGENTS)
             .map(|i| {
                 let team = if i < PLAYERS_PER_TEAM { Team::Orange } else { Team::Blue };
-                AgentView { team, index: i % PLAYERS_PER_TEAM, transform: &transforms[i], velocity: &vels[i], cooldown_ready: 1.0, power_onehot: [0.0; 4] }
+                AgentView { team, index: i % PLAYERS_PER_TEAM, transform: &transforms[i], velocity: &vels[i], cooldown_ready: 1.0, power_onehot: [0.0; 4], tactic: [0.0; 7] }
             })
             .collect();
         let ball_t = t(0.0, 1.0, 0.0);
@@ -281,7 +299,8 @@ mod tests {
         let gs = crate::game::GameState::default();
 
         let obs = compute_observations(&agents, &ball_t, &ball_v, &gs, Some((Team::Orange, 0)), FIELD_WIDTH / 2.0).unwrap();
-        let last3 = |o: &[f32; OBSERVATION_SIZE]| [o[OBSERVATION_SIZE - 3], o[OBSERVATION_SIZE - 2], o[OBSERVATION_SIZE - 1]];
+        // Possession flags sit just before the 7 trailing tactic params.
+        let last3 = |o: &[f32; OBSERVATION_SIZE]| [o[OBSERVATION_SIZE - 10], o[OBSERVATION_SIZE - 9], o[OBSERVATION_SIZE - 8]];
 
         let o0 = agent_flat_index(Team::Orange, 0);
         assert_eq!(last3(&obs[o0]), [1.0, 0.0, 0.0]);
@@ -300,7 +319,7 @@ mod tests {
         let agents: Vec<AgentView> = (0..NUM_AGENTS)
             .map(|i| {
                 let team = if i < PLAYERS_PER_TEAM { Team::Orange } else { Team::Blue };
-                AgentView { team, index: i % PLAYERS_PER_TEAM, transform: &transforms[i], velocity: &vels[i], cooldown_ready: 1.0, power_onehot: [0.0; 4] }
+                AgentView { team, index: i % PLAYERS_PER_TEAM, transform: &transforms[i], velocity: &vels[i], cooldown_ready: 1.0, power_onehot: [0.0; 4], tactic: [0.0; 7] }
             })
             .collect();
         let ball_t = t(0.0, 1.0, 0.0);
@@ -309,7 +328,33 @@ mod tests {
 
         let obs = compute_observations(&agents, &ball_t, &ball_v, &gs, None, FIELD_WIDTH / 2.0).unwrap();
         for o in &obs {
-            assert_eq!([o[OBSERVATION_SIZE - 3], o[OBSERVATION_SIZE - 2], o[OBSERVATION_SIZE - 1]], [0.0, 0.0, 0.0]);
+            assert_eq!([o[OBSERVATION_SIZE - 10], o[OBSERVATION_SIZE - 9], o[OBSERVATION_SIZE - 8]], [0.0, 0.0, 0.0]);
+        }
+    }
+
+    #[test]
+    fn tactic_params_appear_in_trailing_block() {
+        let transforms: Vec<Transform> = (0..NUM_AGENTS).map(|i| t(i as f32, 1.0, 0.0)).collect();
+        let vels: Vec<Velocity> = (0..NUM_AGENTS).map(|_| v(0.0, 0.0, 0.0)).collect();
+        let tac = [0.1, -0.2, 0.3, -0.4, 0.5, -0.6, 0.7];
+        let agents: Vec<AgentView> = (0..NUM_AGENTS)
+            .map(|i| AgentView {
+                team: if i < PLAYERS_PER_TEAM { Team::Orange } else { Team::Blue },
+                index: i % PLAYERS_PER_TEAM,
+                transform: &transforms[i],
+                velocity: &vels[i],
+                cooldown_ready: 1.0,
+                power_onehot: [0.0; 4],
+                tactic: tac,
+            })
+            .collect();
+        let ball_t = t(0.0, 1.0, 0.0);
+        let ball_v = v(0.0, 0.0, 0.0);
+        let gs = crate::game::GameState::default();
+        let obs = compute_observations(&agents, &ball_t, &ball_v, &gs, None, FIELD_WIDTH / 2.0).unwrap();
+        for k in 0..7 {
+            assert!((obs[0][OBSERVATION_SIZE - 7 + k] - tac[k]).abs() < 1e-6,
+                "tactic param {k} should be at the tail of the obs");
         }
     }
 
@@ -327,17 +372,19 @@ mod tests {
                 velocity: &vels[i],
                 cooldown_ready: 0.25,
                 power_onehot: oh,
+                tactic: [0.0; 7],
             })
             .collect();
         let ball_t = t(0.0, 1.0, 0.0);
         let ball_v = v(0.0, 0.0, 0.0);
         let gs = crate::game::GameState::default();
         let obs = compute_observations(&agents, &ball_t, &ball_v, &gs, None, FIELD_WIDTH / 2.0).unwrap();
-        assert!((obs[0][OBSERVATION_SIZE - 8] - 0.25).abs() < 1e-6, "cooldown at size-8");
+        // The 7 tactic params trail the vector, so cooldown/power shift back by 7.
+        assert!((obs[0][OBSERVATION_SIZE - 15] - 0.25).abs() < 1e-6, "cooldown at size-15");
         assert_eq!(
-            [obs[0][OBSERVATION_SIZE - 7], obs[0][OBSERVATION_SIZE - 6], obs[0][OBSERVATION_SIZE - 5], obs[0][OBSERVATION_SIZE - 4]],
+            [obs[0][OBSERVATION_SIZE - 14], obs[0][OBSERVATION_SIZE - 13], obs[0][OBSERVATION_SIZE - 12], obs[0][OBSERVATION_SIZE - 11]],
             [0.0, 0.0, 1.0, 0.0],
-            "power one-hot (Boost) at size-7..size-4"
+            "power one-hot (Boost) at size-14..size-11"
         );
     }
 }

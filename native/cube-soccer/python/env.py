@@ -201,6 +201,20 @@ class CubeSoccerTeamEnv(gym.Env):
     def set_goal_half_width(self, hw):
         self._env.set_goal_half_width(float(hw))
 
+    def set_tactic_randomization(self, on):
+        """Enable per-episode Orange tactic randomization (training). Off keeps an
+        explicitly-set tactic fixed across resets (eval/coaching)."""
+        self._env.set_tactic_randomization(bool(on))
+
+    def set_tactic_weight(self, w):
+        """Weight on the per-tactic positional-imitation reward (Orange). Higher =
+        more visibly distinct behaviors per tactic."""
+        self._env.set_tactic_weight(float(w))
+
+    def set_team_preset(self, team, name):
+        """Set a team's tactic from a preset name, e.g. ('orange', 'High Press')."""
+        self._env.set_team_preset(str(team), str(name))
+
     def render(self):
         if self.render_mode == "human":
             self._env.render()

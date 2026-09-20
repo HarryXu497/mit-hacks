@@ -75,6 +75,23 @@ pub struct TacticParams {
 }
 
 impl TacticParams {
+    /// The 7 fields normalized to ~[-1, 1] for the observation vector. Each axis is
+    /// affine-mapped around its neutral value so the preset range lands near the unit
+    /// box (like the other obs features); blends interpolate within it. Order matches
+    /// the struct: defender_depth, attacker_push, width, spacing, press, line_height,
+    /// commitment.
+    pub fn normalized(&self) -> [f32; 7] {
+        [
+            (self.defender_depth - 0.5) * 2.0,
+            (self.attacker_push - 0.5) * 2.0,
+            (self.width - 1.0) / 0.5,
+            (self.spacing - 1.0) / 0.5,
+            (self.press - 0.5) * 2.0,
+            self.line_height / 0.5,
+            (self.commitment - 0.5) * 2.0,
+        ]
+    }
+
     /// Weighted blend of several param sets ("70% Low Block, 30% Wide").
     /// Weights are normalized by their sum; empty input or zero total weight
     /// returns `Balanced`.
@@ -104,15 +121,12 @@ impl TacticParams {
 /// The named tactic presets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tactic {
-    Balanced, HighPress, Gegenpress, LowBlock, ParkTheBus,
-    CounterAttack, Possession, WingPlay, NarrowMidBlock, AllOutAttack,
+    Balanced, HighPress, LowBlock, WingPlay,
 }
 
 impl Tactic {
-    pub const ALL: [Tactic; 10] = [
-        Tactic::Balanced, Tactic::HighPress, Tactic::Gegenpress, Tactic::LowBlock,
-        Tactic::ParkTheBus, Tactic::CounterAttack, Tactic::Possession, Tactic::WingPlay,
-        Tactic::NarrowMidBlock, Tactic::AllOutAttack,
+    pub const ALL: [Tactic; 4] = [
+        Tactic::Balanced, Tactic::HighPress, Tactic::LowBlock, Tactic::WingPlay,
     ];
 
     pub fn params(self) -> TacticParams {
@@ -120,14 +134,8 @@ impl Tactic {
         match self {
             Tactic::Balanced       => TacticParams { defender_depth: 0.50, attacker_push: 0.40, width: 1.0, spacing: 1.0, press: 0.00, line_height:  0.00, commitment: 0.50 },
             Tactic::HighPress      => TacticParams { defender_depth: 0.30, attacker_push: 0.65, width: 1.0, spacing: 1.1, press: 0.70, line_height:  0.30, commitment: 0.60 },
-            Tactic::Gegenpress     => TacticParams { defender_depth: 0.25, attacker_push: 0.60, width: 0.9, spacing: 1.2, press: 0.95, line_height:  0.35, commitment: 0.70 },
             Tactic::LowBlock       => TacticParams { defender_depth: 0.85, attacker_push: 0.15, width: 0.8, spacing: 0.9, press: 0.00, line_height: -0.30, commitment: 0.25 },
-            Tactic::ParkTheBus     => TacticParams { defender_depth: 0.95, attacker_push: 0.10, width: 0.7, spacing: 0.8, press: 0.00, line_height: -0.45, commitment: 0.10 },
-            Tactic::CounterAttack  => TacticParams { defender_depth: 0.75, attacker_push: 0.70, width: 1.1, spacing: 1.1, press: 0.10, line_height: -0.20, commitment: 0.40 },
-            Tactic::Possession     => TacticParams { defender_depth: 0.45, attacker_push: 0.45, width: 1.2, spacing: 1.4, press: 0.20, line_height:  0.10, commitment: 0.50 },
             Tactic::WingPlay       => TacticParams { defender_depth: 0.50, attacker_push: 0.50, width: 1.6, spacing: 1.3, press: 0.10, line_height:  0.00, commitment: 0.55 },
-            Tactic::NarrowMidBlock => TacticParams { defender_depth: 0.55, attacker_push: 0.35, width: 0.7, spacing: 0.9, press: 0.35, line_height:  0.00, commitment: 0.40 },
-            Tactic::AllOutAttack   => TacticParams { defender_depth: 0.40, attacker_push: 0.75, width: 1.3, spacing: 1.2, press: 0.45, line_height:  0.40, commitment: 0.85 },
         }
     }
 
@@ -141,14 +149,8 @@ impl Tactic {
         match self {
             Tactic::Balanced => "Balanced",
             Tactic::HighPress => "High Press",
-            Tactic::Gegenpress => "Gegenpress",
             Tactic::LowBlock => "Low Block",
-            Tactic::ParkTheBus => "Park the Bus",
-            Tactic::CounterAttack => "Counter-Attack",
-            Tactic::Possession => "Possession",
             Tactic::WingPlay => "Wing Play",
-            Tactic::NarrowMidBlock => "Narrow Mid-Block",
-            Tactic::AllOutAttack => "All-Out Attack",
         }
     }
 
@@ -157,14 +159,8 @@ impl Tactic {
         match s.trim().to_lowercase().replace([' ', '-'], "").as_str() {
             "balanced" => Some(Tactic::Balanced),
             "highpress" => Some(Tactic::HighPress),
-            "gegenpress" => Some(Tactic::Gegenpress),
             "lowblock" => Some(Tactic::LowBlock),
-            "parkthebus" => Some(Tactic::ParkTheBus),
-            "counterattack" => Some(Tactic::CounterAttack),
-            "possession" => Some(Tactic::Possession),
             "wingplay" => Some(Tactic::WingPlay),
-            "narrowmidblock" => Some(Tactic::NarrowMidBlock),
-            "alloutattack" => Some(Tactic::AllOutAttack),
             _ => None,
         }
     }
@@ -239,6 +235,13 @@ impl Default for ActiveRoster {
         Self(PLAYERS_PER_TEAM)
     }
 }
+
+/// Training knob: when `true`, the env samples a fresh Orange tactic on every
+/// `reset()` (tactic domain-randomization, so the policy must *read* the tactic in
+/// its observation to predict reward). Off by default so an explicitly-set coaching
+/// tactic persists across resets (see `CubeSoccerEnv::set_tactic_randomization`).
+#[derive(Resource, Clone, Copy, Debug, Default)]
+pub struct TacticRandomization(pub bool);
 
 /// One teammate's identity + position, used to assign team roles.
 pub struct TeamMate {
@@ -437,6 +440,56 @@ pub fn assign_team_movements(
     }
 
     (out, handler_index)
+}
+
+/// The position each player is *supposed* to occupy under `directive`, given the
+/// ball. Mirrors the role assignment in [`assign_team_movements`] (sticky-less: the
+/// handler is picked fresh from proximity) but returns target **positions** rather
+/// than movement directions — the reusable engine for the per-tactic positional
+/// -imitation reward (`shape_match`). Result is aligned with the input `players`
+/// order. The handler's target is the ball itself; each support's target is its
+/// [`support_target`] after the press-lerp toward the ball.
+pub fn prescribed_positions(
+    team: Team,
+    players: &[TeamMate],
+    ball_pos: Vec3,
+    directive: &TeamDirective,
+) -> Vec<Vec3> {
+    let n = players.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    let handler_index = pick_handler(players, ball_pos, None);
+
+    let mut support_order: Vec<usize> =
+        (0..n).filter(|&k| players[k].index != handler_index).collect();
+    support_order.sort_by_key(|&k| players[k].index);
+    let commitment = directive.base_params().commitment;
+    let is_att = attacker_positions(support_order.len(), commitment);
+    let mut defender_of = vec![false; n];
+    for (s, &k) in support_order.iter().enumerate() {
+        defender_of[k] = !is_att[s];
+    }
+
+    let nearest_support = support_order.iter().copied().min_by(|&a, &b| {
+        players[a].pos.distance_squared(ball_pos)
+            .partial_cmp(&players[b].pos.distance_squared(ball_pos))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let mut out = vec![Vec3::ZERO; n];
+    for i in 0..n {
+        out[i] = if players[i].index == handler_index {
+            ball_pos
+        } else {
+            let p = directive.params_for(players[i].index);
+            let mut target = support_target(team, defender_of[i], ball_pos, &p);
+            let press_w = p.press * if Some(i) == nearest_support { 1.0 } else { SECONDARY_PRESS_FACTOR };
+            target = target.lerp(ball_pos, press_w);
+            target
+        };
+    }
+    out
 }
 
 /// System: gate collision by the player-count curriculum. Players with
@@ -682,20 +735,20 @@ mod tests {
     }
 
     #[test]
-    fn all_ten_presets_roundtrip_names() {
-        assert_eq!(Tactic::ALL.len(), 10);
+    fn all_four_presets_roundtrip_names() {
+        assert_eq!(Tactic::ALL.len(), 4);
         for t in Tactic::ALL {
             assert_eq!(Tactic::from_name(t.name()), Some(t), "{} must roundtrip", t.name());
         }
-        assert_eq!(Tactic::from_name("counter-attack"), Some(Tactic::CounterAttack));
-        assert_eq!(Tactic::from_name("PARK THE BUS"), Some(Tactic::ParkTheBus));
+        assert_eq!(Tactic::from_name("wing play"), Some(Tactic::WingPlay));
+        assert_eq!(Tactic::from_name("HIGH PRESS"), Some(Tactic::HighPress));
         assert_eq!(Tactic::from_name("nonsense"), None);
     }
 
     #[test]
     fn blend_averages_all_seven_axes() {
         let a = Tactic::Balanced.params();
-        let b = Tactic::AllOutAttack.params();
+        let b = Tactic::HighPress.params();
         let m = TacticParams::blend(&[(a, 1.0), (b, 1.0)]);
         assert!((m.press       - (a.press + b.press) / 2.0).abs() < 1e-6);
         assert!((m.line_height - (a.line_height + b.line_height) / 2.0).abs() < 1e-6);
@@ -703,8 +756,8 @@ mod tests {
     }
 
     #[test]
-    fn gegenpress_presses_harder_than_high_press() {
-        assert!(Tactic::Gegenpress.params().press > Tactic::HighPress.params().press);
+    fn high_press_presses_harder_than_balanced() {
+        assert!(Tactic::HighPress.params().press > Tactic::Balanced.params().press);
     }
 
     #[test]
@@ -779,6 +832,64 @@ mod tests {
         let (m0, _) = assign_team_movements(Team::Orange, &players, ball, Vec3::ZERO, Some(2), &base);
         let (m1, _) = assign_team_movements(Team::Orange, &players, ball, Vec3::ZERO, Some(2), &dir);
         assert!(m1[0].0.x > m0[0].0.x, "press should pull the nearest support toward the ball: {} vs {}", m1[0].0.x, m0[0].0.x);
+    }
+
+    #[test]
+    fn normalized_balanced_is_near_zero_center() {
+        let n = Tactic::Balanced.params().normalized();
+        // defender_depth 0.5, width 1.0, spacing 1.0, line_height 0.0, commitment 0.5
+        // all sit at their neutral -> 0.
+        assert!((n[0]).abs() < 1e-6, "defender_depth centered");
+        assert!((n[2]).abs() < 1e-6, "width centered");
+        assert!((n[3]).abs() < 1e-6, "spacing centered");
+        assert!((n[5]).abs() < 1e-6, "line_height centered");
+        assert!((n[6]).abs() < 1e-6, "commitment centered");
+        // press 0.0 maps to -1.0 (its floor).
+        assert!((n[4] - (-1.0)).abs() < 1e-6, "press floor -> -1");
+    }
+
+    #[test]
+    fn normalized_stays_roughly_in_unit_box() {
+        for t in Tactic::ALL {
+            for (axis, v) in t.params().normalized().iter().enumerate() {
+                assert!(v.abs() <= 1.3, "{} axis {axis} out of range: {v}", t.name());
+            }
+        }
+    }
+
+    #[test]
+    fn prescribed_low_block_defender_sits_deeper_than_balanced() {
+        if PLAYERS_PER_TEAM < 2 { return; }
+        // Two supports + a far handler; the ball is central. Low Block must pull the
+        // Orange support(s) deeper (smaller x, toward the -x own goal) than Balanced.
+        let players = vec![
+            TeamMate { index: 0, pos: Vec3::new(-3.0, 1.0, 1.0) },
+            TeamMate { index: 1, pos: Vec3::new(-3.0, 1.0, -1.0) },
+            TeamMate { index: 2, pos: Vec3::new(0.2, 1.0, 0.0) }, // nearest -> handler
+        ];
+        let ball = Vec3::new(0.0, 1.0, 0.0);
+        let bal = prescribed_positions(Team::Orange, &players, ball, &TeamDirective::uniform(Tactic::Balanced.params()));
+        let low = prescribed_positions(Team::Orange, &players, ball, &TeamDirective::uniform(Tactic::LowBlock.params()));
+        // Handler (index 2) target is the ball in both.
+        assert!((bal[2] - ball).length() < 1e-6);
+        // At least one support sits deeper under Low Block.
+        let deeper = (0..2).any(|i| low[i].x < bal[i].x - 1e-3);
+        assert!(deeper, "low block should pull a support deeper: {bal:?} vs {low:?}");
+    }
+
+    #[test]
+    fn prescribed_wingplay_is_wider_than_balanced() {
+        if PLAYERS_PER_TEAM < 2 { return; }
+        let players = vec![
+            TeamMate { index: 0, pos: Vec3::new(-3.0, 1.0, 3.0) },
+            TeamMate { index: 1, pos: Vec3::new(-3.0, 1.0, -3.0) },
+            TeamMate { index: 2, pos: Vec3::new(0.2, 1.0, 0.0) },
+        ];
+        let ball = Vec3::new(0.0, 1.0, 4.0);
+        let bal = prescribed_positions(Team::Orange, &players, ball, &TeamDirective::uniform(Tactic::Balanced.params()));
+        let wide = prescribed_positions(Team::Orange, &players, ball, &TeamDirective::uniform(Tactic::WingPlay.params()));
+        let spread = |v: &[Vec3]| (0..2).map(|i| v[i].z.abs()).sum::<f32>();
+        assert!(spread(&wide) > spread(&bal), "wing play should be wider: {bal:?} vs {wide:?}");
     }
 
     #[test]
