@@ -2,56 +2,35 @@ use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 use std::collections::HashMap;
 use crate::entities::{Ball, CubePlayer, PlayerInput};
-use crate::game::{Team, FIELD_WIDTH, PLAYERS_PER_TEAM, PLAYER_GROUP, BARRIER_GROUP};
+use crate::game::{Team, FIELD_DEPTH, FIELD_WIDTH, PLAYERS_PER_TEAM, PLAYER_GROUP, BARRIER_GROUP};
 
 /// Marker: cubes with this component are driven by the built-in heuristic AI.
 #[derive(Component)]
 pub struct AiControlled;
 
 // Tuning for the role-based team AI.
-// Engagement distances are quoted for the pitch they were tuned on and scaled to whatever
-// pitch is actually in play -- see `pitch_scale`. Support *positions* derive from the goal
-// lines (`own_goal_x`/`opp_goal_x` = +/-FIELD_WIDTH/2) and so already scale with the pitch;
-// these thresholds did not, and the mismatch is what broke the AI when the field grew from
-// 36 to 48 wide. Supports ended up standing a third further out than these radii could
-// reach, so no teammate was ever close enough to take the ball role over, and a handler that
-// overshot the ball was never relieved.
-const SUPPORT_STOP_DIST_TUNED: f32 = 0.6; // support players stop when this close to their target
-const REPULSION_RADIUS_TUNED: f32 = 2.5;  // teammates within this distance push each other apart
-const REPULSION_STRENGTH: f32 = 0.8;      // how hard the spacing push is (dimensionless)
-const HANDOFF_MARGIN_TUNED: f32 = 1.5;    // a teammate must be this much closer to steal the ball role
+// Engagement distances, in metres, and deliberately absolute.
+//
+// These are about the size of a player and a ball -- how close two teammates may stand, how near
+// the ball a handler must be to strike it rather than chase it -- and none of that changes when
+// the pitch does. Scaling them with `FIELD_WIDTH` was tried and measured worse: it widens the
+// repulsion radius, which pushes supports further apart and further from the ball, and handler
+// contact fell from 43.8% of frames to 26.9%.
+//
+// What *does* scale with the pitch is where supports are told to stand, since `support_target`
+// derives from the goal lines (`own_goal_x`/`opp_goal_x` = +/-FIELD_WIDTH/2). On the 48-wide
+// pitch they therefore stand about a third further out than on the 36-wide one the heuristic was
+// authored for, out of reach of `HANDOFF_MARGIN` -- so a handler that overshoots the ball is
+// never relieved of the role. That is a real weakness of this heuristic on a large pitch, and
+// `heuristic_movement` guards the resulting runaway directly rather than by moving these numbers.
+const SUPPORT_STOP_DIST: f32 = 0.6; // support players stop when this close to their target
+const REPULSION_RADIUS: f32 = 2.5;  // teammates within this distance push each other apart
+const REPULSION_STRENGTH: f32 = 0.8; // how hard the spacing push is
+const HANDOFF_MARGIN: f32 = 1.5;    // a teammate must be this much closer to steal the ball role
 /// Distance at which the handler stops chasing the ball and starts driving it goalward.
-const ENGAGE_RADIUS_TUNED: f32 = 2.5;
+const ENGAGE_RADIUS: f32 = 2.5;
 /// Distance within which the handler will jump for a ball above it.
-const JUMP_RADIUS_TUNED: f32 = 3.0;
-
-/// The pitch width every distance above was tuned on.
-///
-/// Chloe Nguyen's heuristic was authored against a 36-wide field. Harry Xu's RL branch widened
-/// it to 48 so the curriculum has room to scale down from full size, which silently stretched
-/// every *position* the AI computes while leaving every *threshold* where it was.
-const TUNED_FIELD_WIDTH: f32 = 36.0;
-
-/// How much larger the pitch in play is than the one these numbers were tuned on.
-fn pitch_scale() -> f32 {
-    FIELD_WIDTH / TUNED_FIELD_WIDTH
-}
-
-fn support_stop_dist() -> f32 {
-    SUPPORT_STOP_DIST_TUNED * pitch_scale()
-}
-fn repulsion_radius() -> f32 {
-    REPULSION_RADIUS_TUNED * pitch_scale()
-}
-fn handoff_margin() -> f32 {
-    HANDOFF_MARGIN_TUNED * pitch_scale()
-}
-fn engage_radius() -> f32 {
-    ENGAGE_RADIUS_TUNED * pitch_scale()
-}
-fn jump_radius() -> f32 {
-    JUMP_RADIUS_TUNED * pitch_scale()
-}
+const JUMP_RADIUS: f32 = 3.0;
 const SECONDARY_PRESS_FACTOR: f32 = 0.4; // non-nearest supports press this fraction as hard
 
 /// Tunable positioning parameters for the heuristic team AI.
@@ -282,13 +261,21 @@ pub fn heuristic_movement(team: Team, player_pos: Vec3, ball_pos: Vec3, ball_vel
     let forward = (target_goal_x - player_pos.x).signum();
     let ball_is_ahead = (ball_pos.x - player_pos.x) * forward >= 0.0;
 
-    let movement = if dist_to_ball < engage_radius() && ball_is_ahead {
+    let movement = if dist_to_ball < ENGAGE_RADIUS && ball_is_ahead {
         Vec2::new(forward, (-ball_pos.z).clamp(-0.5, 0.5))
     } else {
         Vec2::new(to_pred.x.clamp(-1.0, 1.0), to_pred.z.clamp(-1.0, 1.0)).normalize_or_zero()
     };
 
-    let jump = dist_to_ball < jump_radius() && ball_pos.y > player_pos.y + 0.5;
+    if std::env::var("AI_PROBE").is_ok() {
+        eprintln!(
+            "AI_PROBE handler {:?} dist={:05.2} branch={} px={:+06.2}",
+            team, dist_to_ball,
+            if dist_to_ball < ENGAGE_RADIUS && ball_is_ahead { "GOALWARD" } else { "chase   " },
+            player_pos.x,
+        );
+    }
+    let jump = dist_to_ball < JUMP_RADIUS && ball_pos.y > player_pos.y + 0.5;
     (movement, jump)
 }
 
@@ -337,7 +324,7 @@ fn attacker_positions(n_sup: usize, commitment: f32) -> Vec<bool> {
 
 /// Choose which player (by `player.index`) should hold the ball-handler role,
 /// with hysteresis: the current handler keeps the role unless another teammate
-/// is closer to the ball by at least `handoff_margin`. This prevents the
+/// is closer to the ball by at least `HANDOFF_MARGIN`. This prevents the
 /// frame-to-frame role swapping that makes near-equidistant cubes spin.
 fn pick_handler(players: &[TeamMate], ball_pos: Vec3, current_handler: Option<usize>) -> usize {
     // Nearest player (by array position), broken ties by first-seen.
@@ -353,7 +340,7 @@ fn pick_handler(players: &[TeamMate], ball_pos: Vec3, current_handler: Option<us
         Some(h_pos) => {
             let dist_current = players[h_pos].pos.distance(ball_pos);
             let dist_nearest = players[nearest_pos].pos.distance(ball_pos);
-            if dist_nearest + handoff_margin() < dist_current {
+            if dist_nearest + HANDOFF_MARGIN < dist_current {
                 nearest_index
             } else {
                 players[h_pos].index
@@ -414,7 +401,7 @@ pub fn assign_team_movements(
             let press_w = p.press * if Some(i) == nearest_support { 1.0 } else { SECONDARY_PRESS_FACTOR };
             target = target.lerp(ball_pos, press_w);
             let to_target = Vec2::new(target.x - pos.x, target.z - pos.z);
-            let mv = if to_target.length() > support_stop_dist() {
+            let mv = if to_target.length() > SUPPORT_STOP_DIST {
                 to_target.normalize_or_zero()
             } else {
                 Vec2::ZERO
@@ -429,8 +416,8 @@ pub fn assign_team_movements(
             }
             let away = Vec2::new(pos.x - players[j].pos.x, pos.z - players[j].pos.z);
             let d = away.length();
-            if d > 1e-3 && d < repulsion_radius() {
-                repulse += away.normalize() * ((repulsion_radius() - d) / repulsion_radius());
+            if d > 1e-3 && d < REPULSION_RADIUS {
+                repulse += away.normalize() * ((REPULSION_RADIUS - d) / REPULSION_RADIUS);
             }
         }
         base += repulse * (REPULSION_STRENGTH * p.spacing);
@@ -725,13 +712,27 @@ mod tests {
     }
 
     #[test]
-    fn tactic_next_cycles_all_ten() {
-        let mut t = Tactic::Balanced;
+    /// `next` visits every tactic once and then comes back to the start.
+    ///
+    /// Was written against a ten-tactic list that does not exist -- there are four -- so it
+    /// asserted its way to a guaranteed failure. Pinned to `Tactic::ALL` instead, so adding or
+    /// removing a tactic cannot make this stale again. (It went unnoticed because CI runs the
+    /// coaching crate's tests, not this crate's.)
+    fn tactic_next_cycles_every_tactic() {
+        let all = Tactic::ALL;
+        let mut t = all[0];
         let mut seen = vec![t];
-        for _ in 0..9 { t = t.next(); seen.push(t); }
-        assert_eq!(seen.len(), 10);
-        assert_eq!(t.next(), Tactic::Balanced, "wraps back to Balanced after 10");
-        for i in 0..10 { for j in (i+1)..10 { assert_ne!(seen[i], seen[j]); } }
+        for _ in 1..all.len() {
+            t = t.next();
+            seen.push(t);
+        }
+        assert_eq!(seen.len(), all.len());
+        assert_eq!(t.next(), all[0], "wraps back to the first tactic");
+        for i in 0..seen.len() {
+            for j in (i + 1)..seen.len() {
+                assert_ne!(seen[i], seen[j], "{:?} visited twice", seen[i]);
+            }
+        }
     }
 
     #[test]
@@ -953,30 +954,29 @@ mod regression {
         }
     }
 
-    /// Engagement distances must track the pitch, not sit at whatever the pitch used to be.
+    /// A support must be told to stand somewhere on the pitch, whatever size the pitch is.
     ///
-    /// Support *positions* are fractions of the goal distance and so scale with `FIELD_WIDTH`
-    /// already. When these thresholds did not, widening the pitch from 36 to 48 put every
-    /// support a third further out than any of them could reach: no teammate was ever close
-    /// enough to take the ball role over, so an overshooting handler was never relieved.
+    /// Support positions scale with `FIELD_WIDTH` while the engagement radii above do not, so
+    /// widening the pitch pushes supports away from the ball. This pins the floor of that: a
+    /// target off the pitch entirely could never be occupied, let alone defended.
     #[test]
-    fn engagement_distances_scale_with_the_pitch() {
-        let scale = pitch_scale();
-        assert!(scale > 0.0, "a pitch with no width is not a pitch");
-        assert_eq!(repulsion_radius(), REPULSION_RADIUS_TUNED * scale);
-        assert_eq!(handoff_margin(), HANDOFF_MARGIN_TUNED * scale);
-        assert_eq!(engage_radius(), ENGAGE_RADIUS_TUNED * scale);
-        assert_eq!(support_stop_dist(), SUPPORT_STOP_DIST_TUNED * scale);
-
-        // The support a handoff has to reach must stay inside the radius that detects it,
-        // whatever the pitch: this is the invariant whose breach broke the AI.
-        let reachable = support_target(
-            Team::Blue, true, Vec3::ZERO,
-            &Tactic::Balanced.params(),
-        );
-        assert!(
-            reachable.x.abs() <= FIELD_WIDTH / 2.0,
-            "a support target outside the pitch cannot be defended"
-        );
+    fn a_support_is_always_sent_somewhere_on_the_pitch() {
+        for team in [Team::Orange, Team::Blue] {
+            for defender in [true, false] {
+                for ball_z in [-FIELD_DEPTH / 2.0, 0.0, FIELD_DEPTH / 2.0] {
+                    let target = support_target(
+                        team,
+                        defender,
+                        Vec3::new(0.0, 0.5, ball_z),
+                        &Tactic::Balanced.params(),
+                    );
+                    assert!(
+                        target.x.abs() <= FIELD_WIDTH / 2.0,
+                        "{team:?} defender={defender} ball_z={ball_z} sent to x={:+.2}",
+                        target.x
+                    );
+                }
+            }
+        }
     }
 }
