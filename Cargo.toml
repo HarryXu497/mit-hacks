@@ -88,3 +88,8 @@ debug = 0
 
 [profile.dev.package."*"]
 opt-level = 2
+
+[dev-dependencies]
+# Already in the tree via bevy_text; named here so the font test can check
+# glyph coverage directly.
+ab_glyph = "0.2"

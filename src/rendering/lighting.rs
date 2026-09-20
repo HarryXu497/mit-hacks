@@ -1,5 +1,10 @@
 use bevy::prelude::*;
 
+/// The one shadow-casting light in the scene. Tagged so the front end can shift
+/// it to a low afternoon sun for the menu and back for kickoff.
+#[derive(Component)]
+pub struct KeyLight;
+
 pub fn setup_lighting(mut commands: Commands) {
     // Ambient fill is what flattens chroma fastest, so it stays low: the authored
     // material colours are already the saturated cartoon palette we want on
@@ -12,7 +17,7 @@ pub fn setup_lighting(mut commands: Commands) {
     });
 
     // Key light. Casts the only shadows in the scene.
-    commands.spawn(DirectionalLightBundle {
+    commands.spawn((KeyLight, DirectionalLightBundle {
         directional_light: DirectionalLight {
             illuminance: 4800.0,
             color: Color::rgb(1.0, 0.89, 0.70),
@@ -36,7 +41,7 @@ pub fn setup_lighting(mut commands: Commands) {
         }
         .into(),
         ..default()
-    });
+    }));
 
     // Additional fill light from the opposite side
     commands.spawn(DirectionalLightBundle {

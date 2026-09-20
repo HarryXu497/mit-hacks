@@ -25,6 +25,9 @@ impl Plugin for CubeSoccerPlugin {
     fn build(&self, app: &mut App) {
         crate::rendering::stylized::register_shader(app);
         app.add_plugins(MaterialPlugin::<crate::rendering::stylized::JungleMaterial>::default())
+            // Title card, menu and the flight into kickoff. Owns the camera
+            // until a match starts.
+            .add_plugins(crate::intro::IntroPlugin)
             // Four-sample anti-aliasing shades every pixel four times over.
             // Once the static props are batched the frame becomes fill bound,
             // and on integrated graphics that setting costs about a fifth of it
@@ -80,6 +83,7 @@ impl Plugin for CubeSoccerPlugin {
             .add_systems(
                 PostUpdate,
                 crate::systems::camera::update_camera
+                    .run_if(crate::intro::playing)
                     .before(bevy::transform::TransformSystem::TransformPropagate),
             )
             // Update systems during playing
@@ -94,13 +98,16 @@ impl Plugin for CubeSoccerPlugin {
                     update_ui,
                     update_wall_scoreboard,
                 )
-                    .run_if(in_state(MatchState::Playing)),
+                    .run_if(in_state(MatchState::Playing))
+                    .run_if(crate::intro::playing),
             )
             // Reset after goal (with 1 second delay)
             .add_systems(OnEnter(MatchState::GoalScored), reset_after_goal)
             .add_systems(
                 Update,
-                check_reset_timer.run_if(in_state(MatchState::GoalScored)),
+                check_reset_timer
+                    .run_if(in_state(MatchState::GoalScored))
+                    .run_if(crate::intro::playing),
             )
             // Reset after round timeout (immediate)
             .add_systems(OnEnter(MatchState::RoundOver), reset_after_round)

@@ -66,3 +66,6 @@ wandb/
 *.tmp
 *.temp
 .cache/
+
+# Agent worktrees: full checkouts, never part of a commit
+.claude/worktrees/

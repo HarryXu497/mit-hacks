@@ -10,6 +10,7 @@
 pub mod entities;
 pub mod game;
 pub mod input;
+pub mod intro;
 pub mod rendering;
 pub mod rl;
 pub mod systems;
@@ -23,6 +24,7 @@ pub mod python;
 
 // Re-export main types
 pub use game::{CubeSoccerPlugin, GameState, MatchState, Team};
+pub use intro::AppState;
 pub use rl::{CubeSoccerEnv, EnvConfig, StepResult};
 
 #[cfg(test)]
