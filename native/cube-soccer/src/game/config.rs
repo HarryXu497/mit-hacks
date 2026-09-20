@@ -71,11 +71,18 @@ pub const MATCH_DURATION_SECS: f32 = 300.0;  // 5 minutes total
 ///
 /// Fifteen seconds was too short to play soccer in. A move that starts with a cleared ball,
 /// works it wide and comes back for a shot takes longer than that, so the reset kept landing
-/// mid-attack and the match read as a series of scrambles rather than as play. Forty-five is
-/// long enough for an attack to finish and short enough to stay a safety net against a stall.
-pub const ROUND_DURATION_SECS: f32 = 45.0;
+/// mid-attack and the match read as a series of scrambles rather than as play.
+///
+/// Twenty keeps that clear of the shortest attacks while putting the ball back on the centre
+/// spot often enough that a stalled match never sits still for long -- at forty-five a side that
+/// lost the ball in its own half spent most of the round chasing it.
+pub const ROUND_DURATION_SECS: f32 = 20.0;
 pub const GOALS_TO_WIN: u32 = 10;
-pub const RESET_DELAY_SECS: f32 = 1.0;  // 1 second pause after goal
+/// How long play is held after a goal, before the kickoff.
+///
+/// The match and round clocks both stop here -- `update_timers` only runs while
+/// `MatchState::Playing` -- so this is time added to the match rather than taken out of it.
+pub const RESET_DELAY_SECS: f32 = 20.0;
 
 // === RL PARAMETERS ===
 pub const MAX_EPISODE_STEPS: u32 = 1000;

@@ -195,7 +195,7 @@ mod integration_tests {
     use bevy::scene::ScenePlugin;
     use bevy::time::TimeUpdateStrategy;
     use cube_soccer::entities::{Ball, CubePlayer};
-    use cube_soccer::game::{GameState, GoalScoredEvent, MatchState, Team};
+    use cube_soccer::game::{GameState, GoalScoredEvent, MatchState, Team, RESET_DELAY_SECS};
     use cube_soccer::systems::{AiControlled, Tactic, TeamTactics};
     use std::time::Duration;
 
@@ -375,7 +375,12 @@ mod integration_tests {
         app.world.send_event(GoalScoredEvent {
             scoring_team: Team::Orange,
         });
-        for _ in 0..90 {
+        // Long enough for the post-goal pause to elapse, whatever it is set to, at the fixed
+        // 1/60s step this test drives the app with. Derived rather than counted out, because a
+        // hardcoded number of frames quietly stops testing the restart the moment
+        // `RESET_DELAY_SECS` is changed -- which is exactly what happened when it went from one
+        // second to twenty.
+        for _ in 0..(RESET_DELAY_SECS * 60.0).ceil() as u32 + 30 {
             app.update();
         }
         assert!(app.world.resource::<GameState>().score[0] >= 1);
