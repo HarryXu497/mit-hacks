@@ -165,13 +165,17 @@ fn wedge_mesh() -> Mesh {
 
 /// The colour each power reads as.
 ///
-/// Chosen to be unmistakable at a glance and against jungle green: a hot orange blast, a cold
-/// cyan ray, gold for the boost, violet for the slow. These are the same hues the drawn badges
-/// use, so the icon on the HUD and the burst on the pitch agree.
+/// Chosen to be unmistakable at a glance and against jungle green: a red-hot blast, a cold cyan
+/// ray, gold for the boost, violet for the slow. These are the same hues the drawn badges use, so
+/// the icon on the HUD and the burst on the pitch agree.
+///
+/// The blast is deliberately red rather than orange. Orange put it within a shade of the boost's
+/// gold -- `every_power_has_a_colour_of_its_own` caught it -- and two powers that look alike are
+/// two powers a player cannot tell apart mid-match. Red also matches its badge more closely.
 fn palette(kind: SuperpowerKind) -> (Color, Color) {
     match kind {
         // (core, edge)
-        SuperpowerKind::BeamBlast => (Color::rgb(1.0, 0.94, 0.72), Color::rgb(1.0, 0.44, 0.10)),
+        SuperpowerKind::BeamBlast => (Color::rgb(1.0, 0.90, 0.74), Color::rgb(0.98, 0.22, 0.08)),
         SuperpowerKind::FreezeRay => (Color::rgb(0.86, 0.99, 1.0), Color::rgb(0.24, 0.72, 1.0)),
         SuperpowerKind::Boost => (Color::rgb(1.0, 0.96, 0.80), Color::rgb(1.0, 0.70, 0.16)),
         SuperpowerKind::Slow => (Color::rgb(0.90, 0.80, 1.0), Color::rgb(0.52, 0.26, 0.92)),

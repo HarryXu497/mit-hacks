@@ -209,7 +209,12 @@ pub fn build_headless_app() -> App {
         .init_resource::<GoalHalfWidth>()
         .add_event::<GoalScoredEvent>()
         .add_event::<BallTouchedEvent>()
-        .add_event::<ImpulseEvent>();
+        .add_event::<ImpulseEvent>()
+        // Registered though nothing headless reads it: `activate_superpowers` announces every
+        // cast so the visible game can draw a burst, and an `EventWriter` whose `Events` resource
+        // is missing panics the system outright. Unread events are drained by Bevy each frame,
+        // so the sim pays a queue it never looks at and nothing more.
+        .add_event::<crate::systems::power_vfx::PowerFired>();
 
     app.add_systems(
         Update,

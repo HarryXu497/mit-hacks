@@ -17,7 +17,16 @@ use std::path::PathBuf;
 /// levels below the root. `TACTIC_LAB_ASSETS` overrides it, which is the hook a packaged build
 /// would use -- there is no packaged build yet, and when there is, this is the one line it needs.
 pub fn root() -> PathBuf {
-    if let Ok(override_path) = std::env::var("TACTIC_LAB_ASSETS") {
+    root_from(std::env::var("TACTIC_LAB_ASSETS").ok())
+}
+
+/// Where the assets are, given an override or none.
+///
+/// Split from [`root`] so the override can be tested without writing to the process environment.
+/// `cargo test` runs a crate's tests as threads in one process, so a test that sets
+/// `TACTIC_LAB_ASSETS` and one that reads it race -- and did, failing or passing on interleaving.
+fn root_from(override_path: Option<String>) -> PathBuf {
+    if let Some(override_path) = override_path {
         return PathBuf::from(override_path);
     }
     PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets"))
@@ -51,10 +60,14 @@ mod tests {
 
     #[test]
     fn an_override_wins_so_a_packaged_build_has_somewhere_to_point() {
-        // Serialised against the other test only by not being run concurrently with it in the
-        // same process for the same variable; `root()` reads the variable each call.
-        std::env::set_var("TACTIC_LAB_ASSETS", "/somewhere/else");
-        assert_eq!(root(), PathBuf::from("/somewhere/else"));
-        std::env::remove_var("TACTIC_LAB_ASSETS");
+        assert_eq!(
+            root_from(Some("/somewhere/else".to_owned())),
+            PathBuf::from("/somewhere/else")
+        );
+    }
+
+    #[test]
+    fn with_no_override_it_falls_back_to_the_repository_assets() {
+        assert!(root_from(None).is_dir(), "the committed assets must be findable");
     }
 }

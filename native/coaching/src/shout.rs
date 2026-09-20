@@ -388,7 +388,7 @@ fn badges(
         egui::Order::Background,
         egui::Id::new("player-numbers"),
     ));
-    let scale = settings.scale_factor as f32;
+    let scale = settings.scale_factor;
     let mut placed = Vec::new();
     for (entity, player, transform) in &players {
         if player.team != team {
@@ -958,7 +958,6 @@ mod tests {
                 }),
             })
             .unwrap();
-        drop(shout);
         app.update();
         let shout = app.world.resource::<ShoutRuntime>();
         assert!(shout.reply.is_empty());

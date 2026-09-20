@@ -341,7 +341,7 @@ fn leave_the_island(
 /// `MainCamera` and starts following the ball from exactly where the flight left it.
 fn hand_the_camera_to_the_match(
     mut commands: Commands,
-    mut camera: Query<(Entity, &mut Transform), (With<CreationCamera>, Without<MainCamera>)>,
+    mut camera: Query<CameraHandover, (With<CreationCamera>, Without<MainCamera>)>,
 ) {
     for (entity, mut transform) in &mut camera {
         // Placed, not merely marked. `update_camera` will drive it from here, but it runs in
@@ -401,6 +401,9 @@ fn kick_off(
     }
 }
 
+/// What `hand_the_camera_to_the_match` needs of the camera it is taking over.
+type CameraHandover = (Entity, &'static mut Transform);
+
 /// Whether the coach has already had their half-time interval this match.
 ///
 /// One break per match, so this has to outlive the round it is taken in.
@@ -427,6 +430,7 @@ pub struct HalfTime {
 /// Solo only. In networked play the lobby merges both coaches' output once per match, so
 /// re-coaching mid-match would mean re-synchronising two machines over a protocol that has no
 /// version negotiation. A networked match keeps its opening play throughout.
+#[allow(clippy::too_many_arguments)]
 fn half_time(
     role: Option<Res<NetworkRole>>,
     state: Res<GameState>,

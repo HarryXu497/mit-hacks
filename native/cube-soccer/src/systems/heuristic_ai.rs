@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 use std::collections::HashMap;
 use crate::entities::{Ball, CubePlayer, PlayerInput};
-use crate::game::{Team, FIELD_DEPTH, FIELD_WIDTH, PLAYERS_PER_TEAM, PLAYER_GROUP, BARRIER_GROUP};
+use crate::game::{Team, FIELD_WIDTH, PLAYERS_PER_TEAM, PLAYER_GROUP, BARRIER_GROUP};
 
 /// Marker: cubes with this component are driven by the built-in heuristic AI.
 #[derive(Component)]
@@ -963,7 +963,8 @@ mod regression {
     fn a_support_is_always_sent_somewhere_on_the_pitch() {
         for team in [Team::Orange, Team::Blue] {
             for defender in [true, false] {
-                for ball_z in [-FIELD_DEPTH / 2.0, 0.0, FIELD_DEPTH / 2.0] {
+                let depth = crate::game::FIELD_DEPTH;
+                for ball_z in [-depth / 2.0, 0.0, depth / 2.0] {
                     let target = support_target(
                         team,
                         defender,

@@ -345,6 +345,9 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(TimePlugin);
         app.add_event::<ImpulseEvent>();
+        // `activate_superpowers` announces each cast for the visual effects to draw. Nothing in
+        // these tests reads it, but an `EventWriter` with no `Events` resource panics the system.
+        app.add_event::<crate::systems::power_vfx::PowerFired>();
         app.add_systems(Update, (tick_superpower_cooldowns, activate_superpowers).chain());
         app
     }

@@ -45,18 +45,17 @@ use crate::systems::status_effects::ImpulseEvent;
 /// Everyone wears this until something better has been forged for their team, including when the
 /// GPU box that does the forging is unreachable. It is committed to the repo precisely so that
 /// fallback always exists.
-pub const BASE_CHARACTER: &str = "characters/base.glb#Scene0";
-
-/// The rigged MonkeyForge characters, one per position.
+/// The base monkey, with the skeleton `tools/rig_dartmonkey.py` gave it.
 ///
-/// These are what a side actually fields. Unlike `base.glb` -- which is a single rigid mesh with
-/// no skeleton, and so can only ever be bounced around whole -- each of these carries a 21-joint
-/// humanoid rig, which is what lets [`rig::animate_rig`](super::rig::animate_rig) give them a
-/// real walk cycle. They ship with no animation clips, so the cycle is authored in code.
-pub const RIGGED_GOALKEEPER: &str = "characters/monkeyforge_goalkeeper.glb#Scene0";
-pub const RIGGED_DEFENDER: &str = "characters/monkeyforge_defender.glb#Scene0";
-pub const RIGGED_RUNNER: &str = "characters/monkeyforge_runner.glb#Scene0";
-pub const RIGGED_BALANCED: &str = "characters/monkeyforge_balanced.glb#Scene0";
+/// `base.glb` beside it is the original export: the same artwork, but a single rigid mesh with no
+/// skin and no joints, so nothing could animate it beyond bouncing the whole body. This is that
+/// mesh bound to a 21-joint humanoid armature, same vertices, same textures, same 1.4-unit
+/// height and origin -- which is what lets [`rig`](super::rig) walk it.
+pub const BASE_CHARACTER: &str = "characters/base_rigged.glb#Scene0";
+
+/// The original, unrigged export. Kept as the source the rig is built from.
+pub const BASE_CHARACTER_UNRIGGED: &str = "characters/base.glb#Scene0";
+
 
 /// The monkey a side takes the field in until its coach forges one of their own.
 ///
@@ -161,36 +160,40 @@ pub struct BlockyCharacter;
 
 /// Radians of gait phase per metre travelled. Phase advances with distance, not wall time, so the
 /// step rate follows the speed instead of sliding against it.
-// Amplitudes are deliberately large. The model has no skeleton -- no skins, no clips -- so
-// there are no limbs to swing: every bit of life has to come out of what the whole body does.
-// Read at broadcast distance a subtle bob is no bob at all, and these are tuned to be legible
-// there rather than to be correct up close.
+// Amplitudes are deliberately small, and they used to be five times this.
+//
+// They were raised when the character was a single rigid mesh: with no limbs to swing, the only
+// way to show life was to throw the whole body around. `base.glb` is rigged now
+// (`tools/rig_dartmonkey.py`), so `rig::animate_rig` steps the legs and swings the arms, and the
+// body motion's job changes completely -- it is there to support the gait, not to be it. Left
+// large it did the opposite: a 0.26-unit hop on a 1.5-unit character moved the whole monkey
+// further than its legs did, so the stride was lost inside the bounce and it read as hopping.
 const GAIT_PER_METRE: f32 = 1.8;
 /// Horizontal speed at which the gait reaches full amplitude.
 const FULL_STRIDE_SPEED: f32 = 6.0;
 /// Peak bob height at full stride.
-const BOB_HEIGHT: f32 = 0.26;
+const BOB_HEIGHT: f32 = 0.055;
 /// Shoulder roll that rides along with the stride.
-const SWAY: f32 = 0.20;
+const SWAY: f32 = 0.05;
 /// Amplitude and rate of the standing-still breath.
-const IDLE_RISE: f32 = 0.045;
+const IDLE_RISE: f32 = 0.018;
 const IDLE_RATE: f32 = 1.6;
 /// Forward pitch at full speed, and bank per rad/s of turn.
-const LEAN_PITCH: f32 = 0.42;
+const LEAN_PITCH: f32 = 0.20;
 const LEAN_BANK: f32 = 0.06;
 /// How fast lean eases toward its target, per second.
 const LEAN_EASE: f32 = 8.0;
 /// Downward speed past which an arrested fall counts as a landing.
 const LANDING_SPEED: f32 = 3.0;
 /// How far a landing flattens the visual, and how fast that recovers.
-const SQUASH_DEPTH: f32 = 0.34;
+const SQUASH_DEPTH: f32 = 0.12;
 const SQUASH_DECAY: f32 = 6.0;
 /// The kick: forward pitch, forward reach, and decay.
-const KICK_PITCH: f32 = 0.70;
-const KICK_REACH: f32 = 0.30;
+const KICK_PITCH: f32 = 0.26;
+const KICK_REACH: f32 = 0.10;
 const KICK_DECAY: f32 = 4.5;
 /// Taking a hit: recoil rotation, shake amplitude and rate, and decay.
-const HIT_RECOIL: f32 = 0.75;
+const HIT_RECOIL: f32 = 0.34;
 const HIT_SHAKE: f32 = 0.09;
 const HIT_SHAKE_RATE: f32 = 34.0;
 const HIT_DECAY: f32 = 3.0;
@@ -237,6 +240,24 @@ impl PlayerVisual {
     /// the bounce.
     pub fn gait(&self) -> f32 {
         self.gait
+    }
+
+    /// How far through a kick this player is: 1.0 the instant they strike, decaying to 0.
+    ///
+    /// Exposed for the same reason as [`Self::gait`] -- the rig swings the leg that does the
+    /// kicking, and it has to be the same kick the body is leaning into.
+    pub fn kick(&self) -> f32 {
+        self.kick
+    }
+
+    /// How far through a knockback reaction this player is, 1.0 down to 0.
+    pub fn hit(&self) -> f32 {
+        self.hit
+    }
+
+    /// Local-space direction the last hit came from.
+    pub fn hit_from(&self) -> Vec3 {
+        self.hit_from
     }
 }
 

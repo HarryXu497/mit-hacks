@@ -89,6 +89,9 @@ fn autoplay(
 }
 
 /// Print what the app actually believes, rather than what it was asked to do.
+// A diagnostic that reports on everything at once, which is what makes it useful and also what
+// makes it wide. Not a shipped system.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn autoplay_report(
     mut frames: Local<u32>,
     phase: Res<State<AppPhase>>,
