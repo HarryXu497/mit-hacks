@@ -57,8 +57,11 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front: bool) -> FragmentOut
             // Tight exponent: on a part only ~20px across, a soft rim swallows the
             // whole silhouette and the kit colour stops reading. This keeps the
             // contour to the outer edge and leaves the face of each form lit.
-            let rim = pow(1.0 - facing, 3.6);
-            shaded = shaded * (1.0 - rim * 0.72);
+            // Real outline geometry now carries the contour, so this only has to
+            // keep the form's own edge from going flat -- a gradient here competes
+            // with the ink line instead of helping it.
+            let rim = pow(1.0 - facing, 4.0);
+            shaded = shaded * (1.0 - rim * 0.34);
             let hot = pow(facing, 7.0) * 0.30;
             shaded = shaded + vec3<f32>(hot);
         }

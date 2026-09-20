@@ -7,6 +7,16 @@ pub struct CameraRig {
     target: Vec3,
 }
 
+/// Set CANOPY_CLOSEUP to inspect the characters at model scale. Presentation
+/// only: it moves the camera and nothing else, so physics and controls are
+/// unaffected and the normal broadcast view is what ships.
+fn closeup_transform(target: Vec3) -> Option<Transform> {
+    std::env::var("CANOPY_CLOSEUP").ok().map(|_| {
+        Transform::from_translation(target + Vec3::new(-2.6, 3.4, 7.0))
+            .looking_at(target + Vec3::new(0., 1.4, 0.), Vec3::Y)
+    })
+}
+
 fn broadcast_transform(target: Vec3) -> Transform {
     // Summit broadcast: the pitch fills the lower frame while the aim point sits
     // above the turf, so the horizon, the ranges behind it and a band of sky stay
@@ -21,7 +31,7 @@ pub struct MainCamera;
 pub fn setup_camera(mut commands: Commands) {
     commands.spawn((
         Camera3dBundle {
-            transform: broadcast_transform(Vec3::ZERO),
+            transform: closeup_transform(Vec3::ZERO).unwrap_or(broadcast_transform(Vec3::ZERO)),
             projection: Projection::Perspective(PerspectiveProjection {
                 fov: 42.0_f32.to_radians(),
                 ..default()
@@ -63,6 +73,6 @@ pub fn update_camera(
             let alpha = 1. - (-3.0 * time.delta_seconds()).exp();
             rig.target = rig.target.lerp(desired, alpha);
         }
-        *transform = broadcast_transform(rig.target);
+        *transform = closeup_transform(rig.target).unwrap_or(broadcast_transform(rig.target));
     }
 }
