@@ -349,82 +349,6 @@ pub fn apply(ctx: &egui::Context) {
     ctx.set_style(style);
 }
 
-
-    fn rect() -> egui::Rect {
-        egui::Rect::from_min_size(egui::pos2(100.0, 200.0), egui::vec2(320.0, SLAB_HEIGHT))
-    }
-
-    #[test]
-    fn a_slab_leans_without_leaving_the_space_it_was_given() {
-        let r = rect();
-        for corner in slab_corners(r, 0.0) {
-            assert!(corner.x >= r.left() - 0.01, "{corner:?} is left of the widget");
-            assert!(corner.x <= r.right() + 0.01, "{corner:?} is right of the widget");
-            assert!(corner.y >= r.top() - 0.01 && corner.y <= r.bottom() + 0.01);
-        }
-    }
-
-    #[test]
-    fn the_lean_is_visible_but_not_a_wedge() {
-        let corners = slab_corners(rect(), 0.0);
-        let lean = corners[0].x - corners[3].x;
-        assert!(lean > 6.0, "the angle should read at a glance, got {lean}");
-        // A lean approaching the slab's own width would make it a triangle rather than a slab.
-        assert!(lean < rect().width() * 0.25, "too steep to hold a label: {lean}");
-    }
-
-    #[test]
-    fn the_ink_shell_surrounds_the_face_on_every_side() {
-        let face = slab_corners(rect(), 0.0);
-        let ink = slab_corners(rect(), SLAB_INK);
-        // Top-right and bottom-left are the two corners that are not shifted by the lean, so
-        // they are where an off-by-one in `expand` would show up first.
-        assert!(ink[1].x > face[1].x && ink[1].y < face[1].y);
-        assert!(ink[3].x < face[3].x && ink[3].y > face[3].y);
-    }
-
-    #[test]
-    fn a_hovered_slab_is_lighter_than_one_at_rest() {
-        // The only thing distinguishing the row you are on, so it has to actually differ.
-        for tone in [Tone::Primary, Tone::Plain, Tone::Danger] {
-            let (rest, lit) = (tone.face(false), tone.face(true));
-            assert_ne!(rest, lit, "{tone:?} does not react to the cursor");
-            let brightness = |c: egui::Color32| c.r() as u32 + c.g() as u32 + c.b() as u32;
-            assert!(brightness(lit) > brightness(rest), "{tone:?} darkens on hover");
-        }
-    }
-
-    #[test]
-    fn text_on_the_jungle_palette_stays_readable() {
-        // Rough relative-luminance contrast. Not a full WCAG check, but enough to catch cloth
-        // text being put on a colour it disappears into.
-        fn luminance(c: egui::Color32) -> f32 {
-            let channel = |v: u8| {
-                let v = v as f32 / 255.0;
-                if v <= 0.03928 {
-                    v / 12.92
-                } else {
-                    ((v + 0.055) / 1.055).powf(2.4)
-                }
-            };
-            0.2126 * channel(c.r()) + 0.7152 * channel(c.g()) + 0.0722 * channel(c.b())
-        }
-        fn ratio(a: egui::Color32, b: egui::Color32) -> f32 {
-            let (x, y) = (luminance(a), luminance(b));
-            let (hi, lo) = if x > y { (x, y) } else { (y, x) };
-            (hi + 0.05) / (lo + 0.05)
-        }
-
-        for background in [CANOPY, TURF, TIMBER, PLANK, PLANK_DARK, INK] {
-            assert!(
-                ratio(CLOTH, background) >= 4.5,
-                "cloth on {background:?} is only {:.1}:1",
-                ratio(CLOTH, background)
-            );
-        }
-        assert!(ratio(INK, GOLD) >= 4.5, "ink on gold must stay legible");
-    }
-
 // ---------------------------------------------------------------------------
 // Type
 // ---------------------------------------------------------------------------
@@ -664,7 +588,7 @@ mod tests {
             (hi + 0.05) / (lo + 0.05)
         }
 
-        for background in [CANOPY, TURF, TIMBER, INK] {
+        for background in [CANOPY, TURF, TIMBER, PLANK, PLANK_DARK, INK] {
             assert!(
                 ratio(CLOTH, background) >= 4.5,
                 "cloth on {background:?} is only {:.1}:1",
