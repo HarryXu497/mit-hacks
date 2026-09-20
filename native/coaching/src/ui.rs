@@ -10,12 +10,17 @@ use cube_soccer::tactics::Transcript as TableTranscript;
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 
-const PANEL: egui::Color32 = egui::Color32::from_rgb(18, 27, 38);
-const BORDER: egui::Color32 = egui::Color32::from_rgb(43, 57, 73);
-const TEXT: egui::Color32 = egui::Color32::from_rgb(237, 243, 251);
-const MUTED: egui::Color32 = egui::Color32::from_rgb(157, 171, 188);
-const BLUE: egui::Color32 = egui::Color32::from_rgb(46, 145, 255);
-const RED: egui::Color32 = egui::Color32::from_rgb(239, 71, 73);
+// The panels are the jungle's own timber, not a cold slab floating in front of
+// it: face, bars, outline, and text all come from `theme`'s palette so the flat
+// screens read as carved wood standing in the same world as the easel behind them.
+const PANEL: egui::Color32 = crate::theme::PLANK;
+const BAR: egui::Color32 = crate::theme::PLANK_DARK;
+const BORDER: egui::Color32 = crate::theme::INK;
+const TEXT: egui::Color32 = crate::theme::CLOTH;
+const MUTED: egui::Color32 = crate::theme::CLOTH_DIM;
+const GOLD: egui::Color32 = crate::theme::GOLD;
+const RED: egui::Color32 = crate::theme::CLAY;
+const WARN: egui::Color32 = egui::Color32::from_rgb(235, 170, 120);
 
 #[derive(Resource, Default)]
 pub struct CoachingUiState {
@@ -45,8 +50,13 @@ pub fn coaching_ui(
     mut interpretation_requests: EventWriter<RequestInterpretation>,
     mut match_ready: EventWriter<MatchReady>,
     role: Res<NetworkRole>,
+    mut table_keyboard: ResMut<cube_soccer::tactics::KeyboardCaptured>,
 ) {
     let context = contexts.ctx_mut();
+
+    // Silence the table's own keyboard shortcuts whenever a panel field has
+    // focus, so typing a note (Enter especially) does not also fire them.
+    table_keyboard.0 = context.wants_keyboard_input();
 
     top_bar(context, &mut session, &mut ui_state);
     timeline_panel(context, &mut session);
@@ -75,11 +85,12 @@ fn top_bar(
 ) {
     egui::TopBottomPanel::top("top-bar")
         .exact_height(58.0)
-        .frame(panel_frame(egui::Color32::from_rgb(17, 26, 37)))
+        .frame(panel_frame(BAR))
         .show(context, |ui| {
+            crate::theme::wood_grain(ui.painter(), ui.max_rect().expand2(egui::vec2(12.0, 7.0)));
             ui.horizontal_centered(|ui| {
                 ui.add_space(12.0);
-                ui.heading(egui::RichText::new("Tactic Lab").size(22.0).strong());
+                crate::theme::panel_title(ui, "Tactic Lab", 24.0);
                 ui.separator();
                 let title_response = ui.add(
                     egui::TextEdit::singleline(&mut session.session.title)
@@ -156,22 +167,19 @@ fn board_panel(
                 egui::vec2(board_width.min(500.0), toolbar_height),
             );
             ui.allocate_ui_at_rect(toolbar_rect, |ui| {
+                // A wooden tool tray, not a floating grey pill: same timber and ink
+                // as the panels so the board's controls belong to the same app.
                 egui::Frame::none()
-                    .fill(egui::Color32::from_rgb(207, 214, 217))
-                    .rounding(7.0)
-                    .inner_margin(egui::Margin::symmetric(7.0, 6.0))
+                    .fill(PANEL)
+                    .stroke(egui::Stroke::new(2.0_f32, BORDER))
+                    .rounding(3.0)
+                    .inner_margin(egui::Margin::symmetric(8.0, 6.0))
                     .show(ui, |ui| {
-                        let visuals = ui.visuals_mut();
-                        visuals.override_text_color = Some(egui::Color32::from_rgb(39, 49, 61));
-                        let idle = egui::Color32::from_rgb(232, 236, 238);
-                        let hovered = egui::Color32::from_rgb(216, 223, 227);
-                        visuals.widgets.inactive.weak_bg_fill = idle;
-                        visuals.widgets.inactive.bg_fill = idle;
-                        visuals.widgets.hovered.weak_bg_fill = hovered;
-                        visuals.widgets.hovered.bg_fill = hovered;
-                        visuals.widgets.active.weak_bg_fill = hovered;
-                        visuals.widgets.active.bg_fill = hovered;
-                        visuals.selection.bg_fill = BLUE.linear_multiply(0.55);
+                        crate::theme::wood_grain(
+                            ui.painter(),
+                            ui.max_rect().expand2(egui::vec2(8.0, 6.0)),
+                        );
+                        ui.visuals_mut().selection.bg_fill = GOLD;
                         ui.horizontal_centered(|ui| {
                             tool_button(ui, interaction, Tool::Select, "Select");
                             tool_button(ui, interaction, Tool::Arrow, "Arrow");
@@ -191,7 +199,14 @@ fn board_panel(
 
 fn tool_button(ui: &mut egui::Ui, interaction: &mut BoardInteraction, tool: Tool, label: &str) {
     let selected = interaction.tool == tool;
-    let button = egui::Button::new(label)
+    // Ink on gold when chosen — the leading-edge look the app uses for a
+    // selection — and cloth on timber otherwise.
+    let text = if selected {
+        egui::RichText::new(label).color(crate::theme::INK).strong()
+    } else {
+        egui::RichText::new(label)
+    };
+    let button = egui::Button::new(text)
         .selected(selected)
         .min_size(egui::vec2(74.0, 38.0));
     if ui.add(button).clicked() {
@@ -217,21 +232,24 @@ fn transcript_panel(
         .width_range(330.0..=500.0)
         .frame(panel_frame(PANEL))
         .show(context, |ui| {
+            crate::theme::wood_grain(ui.painter(), ui.max_rect().expand2(egui::vec2(12.0, 7.0)));
             ui.horizontal(|ui| {
-                ui.heading(if result.output.is_some() {
-                    "Tactical JSON"
-                } else {
-                    "Live transcript"
-                });
+                crate::theme::panel_title(
+                    ui,
+                    if result.output.is_some() {
+                        "Tactical JSON"
+                    } else {
+                        "Live transcript"
+                    },
+                    22.0,
+                );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    // The table's microphone reports itself, in its own words. This panel used
-                    // to show its *own* `SpeechRuntime`, which no longer runs.
-                    let status = table_speech
-                        .status
-                        .lines()
-                        .next()
-                        .unwrap_or(if table_speech.live { "Listening" } else { "Idle" });
-                    ui.label(egui::RichText::new(status).small().color(MUTED));
+                    // The table's microphone reports itself, in its own words — and some of
+                    // those words are long device errors that used to overrun the heading.
+                    // The header only badges the state; the full text shows in the body.
+                    let (label, healthy) = mic_status(&table_speech.status, table_speech.live);
+                    let color = if healthy { MUTED } else { WARN };
+                    ui.label(egui::RichText::new(label).small().color(color));
                 });
             });
             ui.separator();
@@ -253,11 +271,17 @@ fn transcript_view(
     requests: &mut EventWriter<RequestInterpretation>,
     result: &TacticalResult,
 ) {
-    if let Some(error) = table_speech.status.strip_prefix("Speech error: ") {
-        ui.colored_label(egui::Color32::from_rgb(235, 170, 120), error);
+    // A microphone or device problem, in full: the header only had room to badge
+    // it. Strip the "Speech error: " prefix when present so it reads as plain prose.
+    if !mic_status(&table_speech.status, table_speech.live).1 {
+        let detail = table_speech
+            .status
+            .strip_prefix("Speech error: ")
+            .unwrap_or(&table_speech.status);
+        ui.colored_label(WARN, detail.trim());
     }
     if let Some(error) = &persistence.error {
-        ui.colored_label(egui::Color32::from_rgb(235, 170, 120), error);
+        ui.colored_label(WARN, error);
     }
 
     let replay = replay_session(&session.session.events, None);
@@ -319,11 +343,7 @@ fn transcript_view(
         });
 
     ui.separator();
-    ui.label(
-        egui::RichText::new("MANUAL TRANSCRIPT")
-            .small()
-            .color(MUTED),
-    );
+    crate::theme::section_label(ui, "Manual transcript");
     ui.horizontal(|ui| {
         let add_button_width = 58.0;
         let field_width =
@@ -335,16 +355,17 @@ fn transcript_view(
         );
         let submit = ui.button("Add").clicked()
             || (response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)));
-        if submit && session.session.status == SessionStatus::Recording {
+        if submit && !ui_state.manual_transcript.trim().is_empty() {
             let text = std::mem::take(&mut ui_state.manual_transcript);
             session.add_transcript(text, TranscriptSource::Manual, None, None);
         }
     });
     ui.add_space(8.0);
-    let can_generate = matches!(
-        session.session.status,
-        SessionStatus::Review | SessionStatus::Interpreted
-    ) && result.state != InterpretationState::Generating;
+    // Anything recorded or noted can be interpreted — you no longer have to
+    // stop recording first. If a recording is still running, tapping Generate
+    // finalises it (below) before the request goes out.
+    let has_content = !session.session.events.is_empty();
+    let can_generate = has_content && result.state != InterpretationState::Generating;
     let label = if result.state == InterpretationState::Generating {
         "Generating…"
     } else if result.state == InterpretationState::Failed {
@@ -357,12 +378,18 @@ fn transcript_view(
         .add_enabled_ui(can_generate, |ui| {
             ui.add_sized(
                 generate_size,
-                egui::Button::new(egui::RichText::new(label).strong()).fill(BLUE),
+                egui::Button::new(egui::RichText::new(label).strong().color(crate::theme::INK))
+                    .fill(GOLD),
             )
         })
         .inner
         .clicked()
     {
+        // Finalise a live recording so the interpreter, which ignores requests
+        // while recording, accepts this one on the next tick.
+        if session.session.status == SessionStatus::Recording {
+            session.stop();
+        }
         requests.send(RequestInterpretation::Generate);
     }
     if result.state == InterpretationState::Failed {
@@ -448,10 +475,11 @@ fn result_view(
 fn timeline_panel(context: &egui::Context, session: &mut CoachingSession) {
     egui::TopBottomPanel::bottom("timeline")
         .exact_height(150.0)
-        .frame(panel_frame(egui::Color32::from_rgb(19, 29, 40)))
+        .frame(panel_frame(BAR))
         .show(context, |ui| {
+            crate::theme::wood_grain(ui.painter(), ui.max_rect().expand2(egui::vec2(12.0, 7.0)));
             ui.horizontal(|ui| {
-                ui.heading(egui::RichText::new("Session timeline").size(15.0));
+                crate::theme::panel_title(ui, "Session timeline", 17.0);
                 if ui
                     .add_enabled(
                         session.session.status != SessionStatus::Recording
@@ -495,7 +523,7 @@ fn timeline_panel(context: &egui::Context, session: &mut CoachingSession) {
                             .count()
                     ))
                     .small()
-                    .color(BLUE),
+                    .color(GOLD),
                 );
                 ui.separator();
                 ui.label(
@@ -544,8 +572,27 @@ fn reset_dialog(
 fn panel_frame(fill: egui::Color32) -> egui::Frame {
     egui::Frame::none()
         .fill(fill)
-        .stroke(egui::Stroke::new(1.0_f32, BORDER))
+        .stroke(egui::Stroke::new(2.0_f32, BORDER))
         .inner_margin(egui::Margin::symmetric(14.0, 9.0))
+}
+
+/// A short badge for the microphone's self-reported status, plus whether it is
+/// healthy. Device errors are long sentences; in the heading they overran the
+/// title, so anything that is not a known idle/listening state is collapsed to
+/// "Mic unavailable" and shown in full in the transcript body instead.
+fn mic_status(status: &str, live: bool) -> (String, bool) {
+    let line = status.lines().next().unwrap_or("").trim();
+    let healthy = matches!(
+        line.to_ascii_lowercase().as_str(),
+        "" | "listening" | "idle" | "ready" | "recording" | "stopped"
+    );
+    if line.is_empty() {
+        (if live { "Listening" } else { "Idle" }.to_owned(), true)
+    } else if healthy {
+        (line.to_owned(), true)
+    } else {
+        ("Mic unavailable".to_owned(), false)
+    }
 }
 
 fn format_time(milliseconds: u64) -> String {

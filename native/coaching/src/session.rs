@@ -124,7 +124,10 @@ impl CoachingSession {
         start_ms: Option<u64>,
         end_ms: Option<u64>,
     ) {
-        if self.session.status != SessionStatus::Recording || text.trim().is_empty() {
+        // Manual notes may be jotted before recording or in review; only speech
+        // capture is bound to the recording clock, and that path builds its own
+        // segments. An empty note is still dropped.
+        if text.trim().is_empty() {
             return;
         }
         let timestamp_ms = end_ms.unwrap_or_else(|| self.elapsed_now());
