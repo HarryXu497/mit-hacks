@@ -1126,6 +1126,16 @@ pub(super) fn build(
                 top + 0.18,
                 z + a.sin() * rz * r,
             );
+            // The clearing works down a corridor aimed at the stadium. A single
+            // frond standing in it fills the frame at easel distance, so the
+            // planting keeps to the flanks on that one outcrop.
+            if i == CLEARING_OUTCROP {
+                let toward = Vec2::new(-x, -z).normalize_or_zero();
+                let offset = Vec2::new(q.x - x, q.z - z);
+                if (offset.x * toward.y - offset.y * toward.x).abs() < 5.2 {
+                    continue;
+                }
+            }
             let size = 1.35 + random(i * 49 + shrub) * 1.75;
             oval(
                 c,
@@ -1161,8 +1171,20 @@ pub(super) fn build(
         }
         for t in 0..2 {
             let a = t as f32 * 2.399;
-            let tx = x + a.cos() * rx * 0.65;
-            let tz = z + a.sin() * rz * 0.65;
+            let mut tx = x + a.cos() * rx * 0.65;
+            let mut tz = z + a.sin() * rz * 0.65;
+            if i == CLEARING_OUTCROP {
+                // Pushed out to the rim rather than dropped: the clearing needs
+                // its middle empty, but an outcrop with no palm on it stops
+                // looking like one of this archipelago's islands.
+                tx = x + a.cos() * rx * 0.94;
+                tz = z + a.sin() * rz * 0.94;
+                let toward = Vec2::new(-x, -z).normalize_or_zero();
+                let offset = Vec2::new(tx - x, tz - z);
+                if (offset.x * toward.y - offset.y * toward.x).abs() < 5.2 {
+                    continue;
+                }
+            }
             palm_at(c, k, tx, tz, 3.5 + random(t + i) * 2.5, a, top);
         }
         if i % 2 == 0 {

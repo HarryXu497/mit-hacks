@@ -46,6 +46,18 @@ pub fn review_view() -> Transform {
         .looking_at(place(EASEL_LOCAL + Vec3::new(-1.35, 2.25, 0.8)), Vec3::Y)
 }
 
+/// Across the island to the tactics table, with the sign beside it. Chosen so
+/// neither the easel nor the model stands between the coach and the board.
+pub fn table_view() -> Transform {
+    // Past the easel rather than behind it: from further back the canvas
+    // itself would fill the frame. Aimed high enough that the sign's head and
+    // the table's near edge both stay inside the same shot.
+    // Square on to an upright board, from past the easel rather than behind
+    // it. Aimed so the board's head and the sign's foot share the frame.
+    Transform::from_translation(place(Vec3::new(0.5, 3.9, -0.5)))
+        .looking_at(place(Vec3::new(0.2, 3.1, -7.0)), Vec3::Y)
+}
+
 /// Eases the camera between the painting view and the review view. The same
 /// rule as the flight, at a smaller scale: the view changes by moving.
 pub fn glide(
@@ -56,7 +68,11 @@ pub fn glide(
     let Ok(mut transform) = cameras.get_single_mut() else {
         return;
     };
-    let target = if *phase.get() == CreationPhase::Review { review_view() } else { easel_view() };
+    let target = match phase.get() {
+        CreationPhase::Review => review_view(),
+        CreationPhase::Coaching => table_view(),
+        _ => easel_view(),
+    };
     let alpha = 1. - (-4.0 * time.delta_seconds()).exp();
     transform.translation = transform.translation.lerp(target.translation, alpha);
     transform.rotation = transform.rotation.slerp(target.rotation, alpha);
@@ -89,6 +105,10 @@ pub fn spawn_camera(mut c: Commands) {
             ..default()
         },
         CreationCamera,
+        // Names this as the camera the world's UI belongs to. Without it the
+        // sign's own camera would also draw the HUD, and photograph the prompt
+        // plaque onto the sign.
+        bevy::ui::IsDefaultUiCamera,
     ));
 }
 

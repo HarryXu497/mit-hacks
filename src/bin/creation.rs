@@ -5,6 +5,7 @@
 
 use bevy::prelude::*;
 use cube_soccer::creation::CreationPlugin;
+use cube_soccer::tactics::TacticsPlugin;
 use cube_soccer::jungle::{animate_jungle, build_jungle};
 use cube_soccer::rendering::{setup_lighting, stylized};
 
@@ -44,6 +45,7 @@ fn main() {
     stylized::register_shader(&mut app);
     app.add_plugins(MaterialPlugin::<stylized::JungleMaterial>::default())
         .add_plugins(CreationPlugin)
+        .add_plugins(TacticsPlugin)
         .add_systems(Startup, redirect_output)
         .add_systems(Startup, (setup_lighting, build_jungle))
         .add_systems(Update, (animate_jungle, stylized::stylize))
@@ -51,7 +53,7 @@ fn main() {
         // Frame rate once a second on stderr, so "is it laggy" is a number.
         .add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin)
         .add_plugins(bevy::diagnostic::LogDiagnosticsPlugin::default())
-        .add_systems(PreUpdate, self_test.after(bevy::input::InputSystem))
+        .add_systems(PreUpdate, (self_test, self_test_table).chain().after(bevy::input::InputSystem))
         .run();
 }
 
@@ -78,6 +80,9 @@ fn capture(
         exit.send(bevy::app::AppExit);
     }
 }
+
+/// The frame the easel's driver hands the mouse to the table's driver.
+const EASEL_UNTIL: u32 = 800;
 
 /// Set CANOPY_SITTING_SELFTEST to a folder to have the app run its own flow.
 ///
@@ -144,12 +149,16 @@ fn self_test(
     } else {
         None
     };
-    match target {
-        Some(position) => {
-            window.set_cursor_position(Some(position));
-            buttons.press(MouseButton::Left);
+    // Only while the easel has the floor: after that the table's driver owns
+    // the mouse, and two drivers releasing each other's clicks paints nothing.
+    if f < EASEL_UNTIL {
+        match target {
+            Some(position) => {
+                window.set_cursor_position(Some(position));
+                buttons.press(MouseButton::Left);
+            }
+            None => buttons.release(MouseButton::Left),
         }
-        None => buttons.release(MouseButton::Left),
     }
 
     // Enter: save appearance, save superpower, continue from review.
@@ -158,18 +167,75 @@ fn self_test(
     } else {
         keys.release(KeyCode::Enter);
     }
+    // At the table: start the clock, move a token, draw an arrow, stop.
+    if f == 820 {
+        keys.press(KeyCode::KeyR);
+    } else if f == 980 {
+        keys.press(KeyCode::KeyA);
+    } else if f == 1180 {
+        keys.press(KeyCode::KeyR);
+    } else if f == 1260 {
+        keys.press(KeyCode::Enter);
+    }
+
     let shot = match f {
         460 => Some("st-1-appearance"),
         620 => Some("st-2-superpower"),
         750 => Some("st-3-review"),
-        1120 => Some("st-4-landed"),
+        1210 => Some("st-4-table"),
+        1560 => Some("st-5-landed"),
         _ => None,
     };
     if let Some(name) = shot {
         let _ = shots.save_screenshot_to_disk(window_entity, format!("{dir}/{name}.png"));
     }
-    if f == 1150 {
+    if f == 1600 {
         exit.send(bevy::app::AppExit);
+    }
+}
+
+/// Drives the board itself once the camera has settled at the table: drags a
+/// token across the halfway line, then draws an arrow behind it.
+fn self_test_table(
+    mut frame: Local<u32>,
+    mut windows: Query<&mut Window>,
+    mut buttons: ResMut<ButtonInput<MouseButton>>,
+    cameras: Query<(&Camera, &GlobalTransform), With<cube_soccer::creation::camera::CreationCamera>>,
+    plane: Option<Res<cube_soccer::tactics::board::BoardPlane>>,
+) {
+    if std::env::var("CANOPY_SITTING_SELFTEST").is_err() {
+        return;
+    }
+    *frame += 1;
+    let f = *frame;
+    if f < EASEL_UNTIL {
+        return;
+    }
+    let (Ok(mut window), Ok((camera, camera_tf)), Some(plane)) =
+        (windows.get_single_mut(), cameras.get_single(), plane)
+    else {
+        return;
+    };
+    let on_board = |at: Vec2| camera.world_to_viewport(camera_tf, plane.world(at) + plane.normal() * 0.12);
+
+    let drag = 860..950;
+    let arrow = 1010..1110;
+    let target = if drag.contains(&f) {
+        // Player 7 pushed up out of the near line.
+        let t = (f - drag.start) as f32 / (drag.end - drag.start) as f32;
+        on_board(Vec2::new(0.64, 0.64).lerp(Vec2::new(0.58, 0.44), t))
+    } else if arrow.contains(&f) {
+        let t = (f - arrow.start) as f32 / (arrow.end - arrow.start) as f32;
+        on_board(Vec2::new(0.50, 0.40).lerp(Vec2::new(0.32, 0.18), t))
+    } else {
+        None
+    };
+    match target {
+        Some(position) => {
+            window.set_cursor_position(Some(position));
+            buttons.press(MouseButton::Left);
+        }
+        None => buttons.release(MouseButton::Left),
     }
 }
 

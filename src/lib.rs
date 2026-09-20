@@ -16,6 +16,7 @@ pub mod systems;
 pub mod ui;
 pub mod jungle;
 pub mod creation;
+pub mod tactics;
 
 #[cfg(feature = "python")]
 pub mod python;

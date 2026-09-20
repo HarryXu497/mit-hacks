@@ -65,8 +65,10 @@ pub fn easel_anchor() -> Vec3 {
     place(EASEL_LOCAL)
 }
 
-/// How long the flight from the easel to the pitch takes.
-const FLIGHT_SECONDS: f32 = 4.2;
+/// How long the flight from the island to the pitch takes. The table starts
+/// it, so it is public; the duration is a property of the journey, not of who
+/// happens to press the key.
+pub const FLIGHT_SECONDS: f32 = 4.2;
 
 /// The steps of creation, in the order the 2D screen defined them.
 #[derive(States, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -76,6 +78,8 @@ pub enum CreationPhase {
     PaintingSuperpower,
     /// Both paintings side by side, with the chance to go back to either.
     Review,
+    /// The tactics table has the floor; see the `tactics` module.
+    Coaching,
     /// The camera is flying to the pitch.
     Departing,
     /// Arrived. The host app takes over from here.
@@ -83,6 +87,12 @@ pub enum CreationPhase {
 }
 
 impl CreationPhase {
+    /// True while the painter is still at the easel, which is what the painting
+    /// systems run on. The table's own phases take over afterwards.
+    pub fn at_the_easel(self) -> bool {
+        matches!(self, Self::PaintingAppearance | Self::PaintingSuperpower | Self::Review)
+    }
+
     /// The painting being worked on, if this is a painting step.
     pub fn slot(self) -> Option<Slot> {
         match self {
@@ -176,9 +186,15 @@ impl Plugin for CreationPlugin {
                     fade_notice,
                     hud::update,
                 )
-                    .run_if(not(in_state(CreationPhase::Departing)))
-                    .run_if(not(in_state(CreationPhase::Finished))),
+                    .run_if(|phase: Res<State<CreationPhase>>| phase.get().at_the_easel()),
             )
+            // The camera keeps moving after the easel is finished with: it
+            // crosses the island to the table, then leaves for the match.
+            .add_systems(
+                Update,
+                (camera::glide, fade_notice).run_if(in_state(CreationPhase::Coaching)),
+            )
+            .add_systems(OnEnter(CreationPhase::Coaching), hud::hide)
             .add_systems(Update, camera::fly.run_if(in_state(CreationPhase::Departing)))
             .add_systems(OnEnter(CreationPhase::Departing), hud::hide)
             .add_systems(OnEnter(CreationPhase::Finished), announce);
@@ -195,8 +211,6 @@ fn advance(
     paintings: Option<Res<paint::Paintings>>,
     mut session: ResMut<persistence::CreationSession>,
     mut notice: ResMut<Notice>,
-    mut c: Commands,
-    cameras: Query<&Transform, With<camera::CreationCamera>>,
 ) {
     let Some(paintings) = paintings else {
         return;
@@ -238,16 +252,9 @@ fn advance(
         }
         CreationPhase::Review => match session.write_manifest(&paintings) {
             Ok(_) => {
-                let Ok(from) = cameras.get_single() else {
-                    return;
-                };
-                c.insert_resource(camera::Flight {
-                    elapsed: 0.,
-                    duration: FLIGHT_SECONDS,
-                    from: *from,
-                    to: camera::broadcast_view(),
-                });
-                next.set(CreationPhase::Departing);
+                // The paintings are done; the coach turns to the table. The
+                // flight to the match is the table's to start, not the easel's.
+                next.set(CreationPhase::Coaching);
             }
             Err(error) => notice.refuse(format!("Could not finalize the session: {error}")),
         },

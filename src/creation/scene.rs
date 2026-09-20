@@ -343,9 +343,10 @@ fn undergrowth(c: &mut Commands, k: &Kit) {
         let a = i as f32 * 2.399;
         let r = 4.2 + (i as f32 * 0.7).sin() * 1.1;
         let local = Vec3::new(a.cos() * r, 0.15, a.sin() * r * 0.9);
-        // Leave the line of sight from painter to easel to stadium clear: no
-        // planting between the camera and the canvas, or directly beyond it.
-        if local.x.abs() < 3.4 && local.z > -2.0 {
+        // Leave the whole middle of the island clear. The easel, the tactics
+        // table and the sightline between them all run down this corridor, and
+        // a single leaf in it fills the frame at these camera distances.
+        if local.x.abs() < 4.6 {
             continue;
         }
         let s = 0.5 + (i as f32 * 1.3).sin().abs() * 0.4;
