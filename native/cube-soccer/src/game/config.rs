@@ -100,14 +100,20 @@ pub fn effective_goal_dist(active: usize) -> f32 {
     field_scale(active) * FIELD_WIDTH / 2.0
 }
 
+/// Number of tactic parameters (the `TacticParams` fields) appended to each
+/// agent's observation so the RL policy can condition its behavior on the active
+/// tactic. See `src/systems/heuristic_ai.rs::TacticParams`.
+pub const TACTIC_PARAMS: usize = 7;
+
 /// Per-agent observation length.
 /// Layout: self pos+vel (6) + teammates (6*(N-1)) + opponents (6*N)
 ///         + ball pos+vel (6) + goal dists (2) + score_diff + time (2)
 ///         + superpower cooldown-ready fraction (1)
 ///         + own superpower one-hot [blast, freeze, boost, slow] (4)
 ///         + possession flags (3: self/teammate/opponent has ball)
-///       = 18 + 12*N.
-pub const OBSERVATION_SIZE: usize = 18 + 12 * PLAYERS_PER_TEAM;
+///         + active tactic params (7, normalized) — the coach's directive for this agent
+///       = 18 + 12*N + 7.
+pub const OBSERVATION_SIZE: usize = 18 + 12 * PLAYERS_PER_TEAM + TACTIC_PARAMS;
 /// Per-agent action length (move_x, move_z, jump, fire).
 pub const ACTION_SIZE: usize = 4;
 
@@ -168,6 +174,17 @@ pub const NEAR_GOAL_BONUS: f32 = 4.0;
 pub const REWARD_WIN: f32 = 5.0;
 pub const REWARD_LOSE: f32 = -5.0;
 
+// --- Per-tactic positional-imitation reward (Orange only; see docs/TACTICS.md §4c) ---
+/// Default weight on the per-tactic `shape_match` reward: a per-step bump for each
+/// Orange agent occupying the position its active tactic prescribes. This is THE
+/// knob that trades scoring for visible style — leaned high so conditioned behaviors
+/// are clearly distinct. Runtime-overridable via `CubeSoccerEnv::set_tactic_weight`.
+/// Kept independent of `shaping_weight` so tactics don't fade as dense shaping anneals.
+pub const TACTIC_WEIGHT: f32 = 0.1;
+/// Gaussian width (meters) of the `shape_match` bump: reward peaks at `tactic_weight`
+/// when the agent sits on its prescribed spot and falls off over ~this distance.
+pub const TACTIC_MATCH_SIGMA: f32 = 5.0;
+
 // --- Team-play shaping (produce positional roles instead of a ball-swarm) ---
 /// Teammates closer than this (meters) count as "crowding" each other.
 pub const CROWD_RADIUS: f32 = 3.0;
@@ -218,8 +235,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn observation_size_includes_possession_flags() {
-        assert_eq!(OBSERVATION_SIZE, 18 + 12 * PLAYERS_PER_TEAM);
+    fn observation_size_includes_possession_flags_and_tactic() {
+        assert_eq!(OBSERVATION_SIZE, 18 + 12 * PLAYERS_PER_TEAM + TACTIC_PARAMS);
+        assert_eq!(TACTIC_PARAMS, 7);
     }
 
     #[test]

@@ -19,7 +19,8 @@ use crate::systems::status_effects::{tick_status_effects, apply_status_forces, I
 use crate::systems::superpowers::{tick_superpower_cooldowns, activate_superpowers};
 use crate::systems::possession::{tick_cooldowns, update_possession, Possession};
 use crate::systems::scoring::{detect_goals_by_position, GoalHalfWidth};
-use crate::systems::heuristic_ai::{apply_heuristic_ai, apply_roster_gating, freeze_inactive_players, AiControlled, TeamTactics, HeuristicDifficulty, ActiveRoster};
+use crate::systems::heuristic_ai::{apply_heuristic_ai, apply_roster_gating, freeze_inactive_players, prescribed_positions, AiControlled, TeamMate, TeamTactics, TacticRandomization, HeuristicDifficulty, ActiveRoster};
+use std::collections::HashMap;
 use crate::game::Team;
 use crate::rl::observation::get_observations;
 use crate::rl::reward::RewardCalculator;
@@ -53,6 +54,7 @@ pub struct LatestRewards(pub Vec<f32>);
 fn extract_observations(
     mut latest: ResMut<LatestObs>,
     roster: Option<Res<ActiveRoster>>,
+    tactics: Res<TeamTactics>,
     player_query: Query<(Entity, &Transform, &Velocity, &CubePlayer, Option<&crate::systems::superpowers::Superpower>)>,
     ball_query: Query<(&Transform, &Velocity), With<Ball>>,
     game_state: Res<GameState>,
@@ -60,7 +62,7 @@ fn extract_observations(
 ) {
     let active = roster.map(|r| r.0).unwrap_or(crate::game::PLAYERS_PER_TEAM);
     let goal_dist = crate::game::effective_goal_dist(active);
-    if let Some(per_agent) = get_observations(&player_query, &ball_query, &game_state, &possession, goal_dist) {
+    if let Some(per_agent) = get_observations(&player_query, &ball_query, &game_state, &possession, &tactics, goal_dist) {
         let mut flat = Vec::with_capacity(per_agent.len() * crate::game::OBSERVATION_SIZE);
         for obs in &per_agent {
             flat.extend_from_slice(obs);
@@ -75,6 +77,7 @@ fn compute_step_rewards(
     mut latest: ResMut<LatestRewards>,
     possession: Res<Possession>,
     roster: Option<Res<ActiveRoster>>,
+    tactics: Res<TeamTactics>,
     player_query: Query<(Entity, &Transform, &CubePlayer)>,
     ball_query: Query<(&Transform, &Velocity), With<Ball>>,
     mut goal_events: EventReader<GoalScoredEvent>,
@@ -93,12 +96,31 @@ fn compute_step_rewards(
             .map(|(_, _, p)| (p.team, p.index))
     });
 
+    // Per-tactic positional-imitation target for each ACTIVE Orange agent (benched
+    // players are frozen/ghosted, so they don't get a shape target). The reward pulls
+    // each agent toward the position its current tactic prescribes.
+    let orange_mates: Vec<TeamMate> = player_query
+        .iter()
+        .filter(|(_, _, p)| p.team == Team::Orange && p.index < active)
+        .map(|(_, t, p)| TeamMate { index: p.index, pos: t.translation })
+        .collect();
+    let prescribed = prescribed_positions(
+        Team::Orange, &orange_mates, ball_transform.translation, &tactics.orange,
+    );
+    let mut tactic_targets: HashMap<(Team, usize), Vec3> = HashMap::new();
+    for (mate, pos) in orange_mates.iter().zip(prescribed) {
+        tactic_targets.insert((Team::Orange, mate.index), pos);
+    }
+
     let agents: Vec<(crate::game::Team, usize, &Transform)> = player_query
         .iter()
         .map(|(_, t, p)| (p.team, p.index, t))
         .collect();
 
-    latest.0 = calc.compute_all(&agents, ball_transform, ball_velocity, goal_event, false, None, holder);
+    latest.0 = calc.compute_all(
+        &agents, ball_transform, ball_velocity, goal_event, false, None, holder,
+        Some(&tactic_targets),
+    );
 }
 
 /// Force a fixed physics timestep so each `app.update()` is one deterministic tick.
@@ -181,6 +203,7 @@ pub fn build_headless_app() -> App {
         .init_resource::<LatestRewards>()
         .init_resource::<RewardCalculator>()
         .init_resource::<TeamTactics>()
+        .init_resource::<TacticRandomization>()
         .init_resource::<HeuristicDifficulty>()
         .init_resource::<ActiveRoster>()
         .init_resource::<GoalHalfWidth>()

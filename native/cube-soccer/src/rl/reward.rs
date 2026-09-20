@@ -4,7 +4,7 @@ use crate::game::{
     GoalScoredEvent, Team, FIELD_WIDTH,
     REWARD_GOAL, REWARD_GOAL_AGAINST, REWARD_BALL_PROGRESS, REWARD_WIN, REWARD_LOSE,
     NEAR_GOAL_RADIUS, NEAR_GOAL_BONUS, GOAL_DEPTH, REWARD_BALL_APPROACH,
-    CROWD_RADIUS, REWARD_TEAMMATE_CROWD,
+    CROWD_RADIUS, REWARD_TEAMMATE_CROWD, TACTIC_WEIGHT, TACTIC_MATCH_SIGMA,
 };
 use std::collections::HashMap;
 
@@ -34,6 +34,10 @@ pub struct RewardCalculator {
     pub config: RewardConfig,
     pub prev_ball_pos: Vec3,
     pub shaping_weight: f32,
+    /// Weight on the per-tactic positional-imitation reward (Orange only). Separate
+    /// from `shaping_weight` so tactics stay expressed after dense shaping anneals to
+    /// 0. Runtime-set via `CubeSoccerEnv::set_tactic_weight`.
+    pub tactic_weight: f32,
     /// Distance from field center to the attacking goal line — scales with the
     /// active roster (field-size curriculum). Defaults to the full field.
     pub goal_dist: f32,
@@ -51,6 +55,7 @@ impl Default for RewardCalculator {
             config: RewardConfig::default_config(),
             prev_ball_pos: Vec3::ZERO,
             shaping_weight: 1.0,
+            tactic_weight: TACTIC_WEIGHT,
             goal_dist: FIELD_WIDTH / 2.0,
             prev_positions: HashMap::new(),
             has_prev: false,
@@ -64,6 +69,7 @@ impl RewardCalculator {
             config,
             prev_ball_pos: Vec3::ZERO,
             shaping_weight: 1.0,
+            tactic_weight: TACTIC_WEIGHT,
             goal_dist: FIELD_WIDTH / 2.0,
             prev_positions: HashMap::new(),
             has_prev: false,
@@ -151,9 +157,28 @@ impl RewardCalculator {
         crowd as f32 * REWARD_TEAMMATE_CROWD
     }
 
+    /// Positional-imitation bump for one Orange agent: a Gaussian peaking at
+    /// `tactic_weight` when the agent sits on the position its tactic prescribes,
+    /// decaying over `TACTIC_MATCH_SIGMA` meters. Bounded and non-negative, so it
+    /// rewards matching the tactic without ever punishing — the policy reads the
+    /// tactic in its obs to predict where this bump is. `None` target -> 0.
+    fn shape_match(&self, target: Option<&Vec3>, pos: Vec3) -> f32 {
+        match target {
+            Some(t) => {
+                let d = pos.distance(*t);
+                let s = TACTIC_MATCH_SIGMA.max(1e-3);
+                self.tactic_weight * (-(d * d) / (2.0 * s * s)).exp()
+            }
+            None => 0.0,
+        }
+    }
+
     /// Compute a per-agent reward vector (length `NUM_AGENTS`), ordered by
     /// `agent_flat_index`.
-    /// `agent_reward = team_shared + crowding`.
+    /// `agent_reward = team_shared + crowding + approach + tactic shape_match`.
+    /// `tactic_targets` maps (team, index) -> the position that agent's active tactic
+    /// prescribes; only Orange entries contribute a `shape_match` term. Pass `None`
+    /// to disable tactic shaping entirely.
     pub fn compute_all(
         &mut self,
         agents: &[(Team, usize, &Transform)],
@@ -163,6 +188,7 @@ impl RewardCalculator {
         game_over: bool,
         winner: Option<Team>,
         _holder: Option<(Team, usize)>,
+        tactic_targets: Option<&HashMap<(Team, usize), Vec3>>,
     ) -> Vec<f32> {
         use crate::game::{agent_flat_index, NUM_AGENTS};
 
@@ -191,7 +217,19 @@ impl RewardCalculator {
                 0.0
             };
 
-            rewards[agent_flat_index(*team, *index)] = shared + crowd + approach;
+            // Per-tactic positional imitation (Orange only): pull the agent toward
+            // the spot its active tactic prescribes. This is what makes the policy
+            // behave differently per tactic instead of ignoring the tactic input.
+            let shape = if *team == Team::Orange {
+                self.shape_match(
+                    tactic_targets.and_then(|t| t.get(&(*team, *index))),
+                    transform.translation,
+                )
+            } else {
+                0.0
+            };
+
+            rewards[agent_flat_index(*team, *index)] = shared + crowd + approach + shape;
         }
 
         // Record this step's positions for next step's telescoping deltas.
@@ -230,7 +268,7 @@ mod tests {
         let ball_v = Velocity { linvel: Vec3::ZERO, angvel: Vec3::ZERO };
         let goal = GoalScoredEvent { scoring_team: Team::Orange };
 
-        let rewards = calc.compute_all(&refs, &ball, &ball_v, Some(&goal), false, None, None);
+        let rewards = calc.compute_all(&refs, &ball, &ball_v, Some(&goal), false, None, None, None);
         assert_eq!(rewards.len(), NUM_AGENTS);
         let o0 = rewards[agent_flat_index(Team::Orange, 0)];
         let o1 = rewards[agent_flat_index(Team::Orange, 1)];
@@ -297,18 +335,51 @@ mod tests {
         // Step 1 establishes prev positions (approach contributes 0 this step).
         let far = tf(10.0, 1.0, 0.0);
         let agents1: Vec<(Team, usize, &Transform)> = vec![(Team::Orange, 0, &far)];
-        let _ = calc.compute_all(&agents1, &ball, &ballv, None, false, None, None);
+        let _ = calc.compute_all(&agents1, &ball, &ballv, None, false, None, None, None);
         // Step 2: agent moved closer to the (stationary) ball -> positive reward.
         let near = tf(6.0, 1.0, 0.0);
         let agents2: Vec<(Team, usize, &Transform)> = vec![(Team::Orange, 0, &near)];
-        let r = calc.compute_all(&agents2, &ball, &ballv, None, false, None, None);
+        let r = calc.compute_all(&agents2, &ball, &ballv, None, false, None, None, None);
         let idx = agent_flat_index(Team::Orange, 0);
         assert!(r[idx] > 0.0, "moving toward the ball should be rewarded, got {}", r[idx]);
 
         // Moving away again nets it back (telescopes ~ un-farmable).
         let agents3: Vec<(Team, usize, &Transform)> = vec![(Team::Orange, 0, &far)];
-        let back = calc.compute_all(&agents3, &ball, &ballv, None, false, None, None);
+        let back = calc.compute_all(&agents3, &ball, &ballv, None, false, None, None, None);
         assert!(back[idx] < 0.0, "retreating from the ball should be penalized, got {}", back[idx]);
+    }
+
+    #[test]
+    fn tactic_shape_match_rewards_being_on_the_prescribed_spot() {
+        use std::collections::HashMap;
+        let ball = tf(0.0, 1.0, 0.0);
+        let ballv = Velocity::default();
+
+        // Orange #0 is coached to stand at (8, 1, 3).
+        let target = Vec3::new(8.0, 1.0, 3.0);
+        let mut targets: HashMap<(Team, usize), Vec3> = HashMap::new();
+        targets.insert((Team::Orange, 0), target);
+
+        // On the spot -> full bump (~tactic_weight). Far away -> ~0.
+        let on = tf(8.0, 1.0, 3.0);
+        let far = tf(-8.0, 1.0, -3.0);
+        let idx = agent_flat_index(Team::Orange, 0);
+        let w = RewardCalculator::default().tactic_weight;
+
+        let r_on = RewardCalculator::default()
+            .compute_all(&[(Team::Orange, 0, &on)], &ball, &ballv, None, false, None, None, Some(&targets));
+        let r_far = RewardCalculator::default()
+            .compute_all(&[(Team::Orange, 0, &far)], &ball, &ballv, None, false, None, None, Some(&targets));
+
+        assert!(r_on[idx] > r_far[idx], "on the prescribed spot should out-reward being far: {} vs {}", r_on[idx], r_far[idx]);
+        assert!((r_on[idx] - w).abs() < 1e-3, "on-spot bump ~ tactic_weight, got {}", r_on[idx]);
+
+        // Blue never gets a shape_match term even if a target is (wrongly) present.
+        let mut blue_targets: HashMap<(Team, usize), Vec3> = HashMap::new();
+        blue_targets.insert((Team::Blue, 0), target);
+        let r_blue = RewardCalculator::default()
+            .compute_all(&[(Team::Blue, 0, &on)], &ball, &ballv, None, false, None, None, Some(&blue_targets));
+        assert_eq!(r_blue[agent_flat_index(Team::Blue, 0)], 0.0, "blue gets no tactic reward");
     }
 
     #[test]

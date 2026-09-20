@@ -153,6 +153,20 @@ impl PyCubeSoccerEnv {
         Ok(())
     }
 
+    /// Enable/disable per-episode Orange tactic randomization (training). Off = a
+    /// coach's explicitly-set tactic persists across resets.
+    fn set_tactic_randomization(&mut self, on: bool) -> PyResult<()> {
+        self.env.set_tactic_randomization(on);
+        Ok(())
+    }
+
+    /// Set the weight on the per-tactic positional-imitation reward (Orange only).
+    /// Higher = more visibly distinct behaviors per tactic.
+    fn set_tactic_weight(&mut self, weight: f32) -> PyResult<()> {
+        self.env.set_tactic_weight(weight);
+        Ok(())
+    }
+
     /// Set the dense-shaping weight (1.0 = full, 0.0 = pure goal objective).
     fn set_shaping_weight(&mut self, weight: f32) -> PyResult<()> {
         self.env.set_shaping_weight(weight);
