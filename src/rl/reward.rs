@@ -3,9 +3,10 @@ use bevy_rapier3d::prelude::*;
 use crate::game::{
     GoalScoredEvent, Team, FIELD_WIDTH,
     REWARD_GOAL, REWARD_GOAL_AGAINST, REWARD_BALL_PROGRESS, REWARD_WIN, REWARD_LOSE,
-    NEAR_GOAL_RADIUS, NEAR_GOAL_BONUS, GOAL_DEPTH,
+    NEAR_GOAL_RADIUS, NEAR_GOAL_BONUS, GOAL_DEPTH, REWARD_BALL_APPROACH,
     CROWD_RADIUS, REWARD_TEAMMATE_CROWD,
 };
+use std::collections::HashMap;
 
 #[derive(Default, Clone)]
 pub struct RewardConfig {
@@ -33,11 +34,23 @@ pub struct RewardCalculator {
     pub config: RewardConfig,
     pub prev_ball_pos: Vec3,
     pub shaping_weight: f32,
+    /// Previous-step positions per (team, index), for the potential-based
+    /// agent-approaches-ball shaping. Empty on the first step of an episode.
+    prev_positions: HashMap<(Team, usize), Vec3>,
+    /// Whether `prev_ball_pos`/`prev_positions` hold a valid previous step (false
+    /// right after a reset, so the first step contributes no telescoping delta).
+    has_prev: bool,
 }
 
 impl Default for RewardCalculator {
     fn default() -> Self {
-        Self { config: RewardConfig::default_config(), prev_ball_pos: Vec3::ZERO, shaping_weight: 1.0 }
+        Self {
+            config: RewardConfig::default_config(),
+            prev_ball_pos: Vec3::ZERO,
+            shaping_weight: 1.0,
+            prev_positions: HashMap::new(),
+            has_prev: false,
+        }
     }
 }
 
@@ -47,6 +60,8 @@ impl RewardCalculator {
             config,
             prev_ball_pos: Vec3::ZERO,
             shaping_weight: 1.0,
+            prev_positions: HashMap::new(),
+            has_prev: false,
         }
     }
 
@@ -56,6 +71,8 @@ impl RewardCalculator {
 
     pub fn reset(&mut self) {
         self.prev_ball_pos = Vec3::ZERO;
+        self.prev_positions.clear();
+        self.has_prev = false;
     }
 
     /// Reward shared equally by every agent on `team` this step:
@@ -147,14 +164,37 @@ impl RewardCalculator {
         let shared_orange = self.team_shared(Team::Orange, ball_transform, goal_event, game_over, winner);
         let shared_blue = self.team_shared(Team::Blue, ball_transform, goal_event, game_over, winner);
 
+        let curr_ball = ball_transform.translation;
         let mut rewards = vec![0.0f32; NUM_AGENTS];
         for (team, index, transform) in agents {
             let shared = if *team == Team::Orange { shared_orange } else { shared_blue };
             let crowd = self.shaping_weight
                 * Self::crowding_penalty(*team, *index, transform.translation, agents);
-            rewards[agent_flat_index(*team, *index)] = shared + crowd;
+
+            // Potential-based "approach the ball": reward reducing this agent's
+            // distance to the ball. Telescopes (un-farmable) and gives a from-scratch
+            // policy a reason to go to the ball at all — the seed of every scoring play.
+            let approach = if self.has_prev {
+                if let Some(prev_pos) = self.prev_positions.get(&(*team, *index)) {
+                    let prev_dist = prev_pos.distance(self.prev_ball_pos);
+                    let curr_dist = transform.translation.distance(curr_ball);
+                    self.shaping_weight * REWARD_BALL_APPROACH * (prev_dist - curr_dist)
+                } else {
+                    0.0
+                }
+            } else {
+                0.0
+            };
+
+            rewards[agent_flat_index(*team, *index)] = shared + crowd + approach;
         }
 
+        // Record this step's positions for next step's telescoping deltas.
+        self.prev_positions.clear();
+        for (team, index, transform) in agents {
+            self.prev_positions.insert((*team, *index), transform.translation);
+        }
+        self.has_prev = true;
         self.update_state(ball_transform);
         rewards
     }
@@ -242,6 +282,28 @@ mod tests {
         let goal = GoalScoredEvent { scoring_team: Team::Orange };
         let r = calc.team_shared(Team::Orange, &advanced, Some(&goal), false, None);
         assert!((r - 30.0).abs() < 1e-4, "goal unaffected by shaping_weight, got {r}");
+    }
+
+    #[test]
+    fn approach_reward_pulls_agents_toward_the_ball() {
+        let mut calc = RewardCalculator::default();
+        let ball = tf(0.0, 1.0, 0.0);
+        let ballv = Velocity::default();
+        // Step 1 establishes prev positions (approach contributes 0 this step).
+        let far = tf(10.0, 1.0, 0.0);
+        let agents1: Vec<(Team, usize, &Transform)> = vec![(Team::Orange, 0, &far)];
+        let _ = calc.compute_all(&agents1, &ball, &ballv, None, false, None, None);
+        // Step 2: agent moved closer to the (stationary) ball -> positive reward.
+        let near = tf(6.0, 1.0, 0.0);
+        let agents2: Vec<(Team, usize, &Transform)> = vec![(Team::Orange, 0, &near)];
+        let r = calc.compute_all(&agents2, &ball, &ballv, None, false, None, None);
+        let idx = agent_flat_index(Team::Orange, 0);
+        assert!(r[idx] > 0.0, "moving toward the ball should be rewarded, got {}", r[idx]);
+
+        // Moving away again nets it back (telescopes ~ un-farmable).
+        let agents3: Vec<(Team, usize, &Transform)> = vec![(Team::Orange, 0, &far)];
+        let back = calc.compute_all(&agents3, &ball, &ballv, None, false, None, None);
+        assert!(back[idx] < 0.0, "retreating from the ball should be penalized, got {}", back[idx]);
     }
 
     #[test]

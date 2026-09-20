@@ -133,6 +133,12 @@ pub const STEAL_CONTACT_SECS: f32 = 0.4;
 pub const REWARD_GOAL: f32 = 30.0;
 pub const REWARD_GOAL_AGAINST: f32 = -30.0;
 pub const REWARD_BALL_PROGRESS: f32 = 0.5;  // reward per meter the ball nears the opp goal (potential-based)
+/// Per-agent reward per meter an agent moves toward the ball (potential-based, so it
+/// telescopes and can't be farmed). Bootstraps the behavior chain: without a reason
+/// to approach the ball, a from-scratch policy collapses to passivity — it never
+/// touches the ball, so the ball-progress signal never fires. Small so it guides
+/// rather than dominates; anneals with the rest of the shaping.
+pub const REWARD_BALL_APPROACH: f32 = 0.1;
 /// Extra potential-based "finishing pull": a ramp that grows as the ball nears the
 /// opp goal center (peaks at the mouth). Potential-based (telescopes), so camping in
 /// the attacking third earns 0 — only approaching the net is rewarded.
