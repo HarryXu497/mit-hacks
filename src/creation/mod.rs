@@ -21,17 +21,49 @@ pub mod scene;
 use bevy::prelude::*;
 use paint::Slot;
 
-/// Where the spur stands, relative to the pitch at the origin.
+/// The island the clearing stands on, read from the landscape's own table of
+/// outcrops rather than invented here. The clearing furnishes an island the
+/// world already has, so there is one definition of where that island is and
+/// the stadium never grows a peak that exists only for this screen.
+const OUTCROP: (f32, f32, f32, f32, f32) =
+    crate::jungle::landscape::OUTCROPS[crate::jungle::landscape::CLEARING_OUTCROP];
+
+/// Centre of the island, on the pitch's plane.
+pub const PEAK: Vec3 = Vec3::new(OUTCROP.0, 0., OUTCROP.1);
+/// Height of its flat grass table.
+pub const PEAK_TOP: f32 = OUTCROP.2;
+/// Half-extents of that table, which is how much room the clearing has.
+pub const ISLAND_RX: f32 = OUTCROP.3;
+pub const ISLAND_RZ: f32 = OUTCROP.4;
+
+/// Where the easel's feet sit, in the clearing's frame.
+pub const EASEL_LOCAL: Vec3 = Vec3::new(0.4, 0.55, 1.4);
+
+/// How far the clearing's frame is turned.
 ///
-/// Off the far right corner of the summit: close enough that the stadium is a
-/// clear presence, far enough that the clearing feels like its own place.
-/// Chosen to sit inside the match camera's frame, so the easel remains visible
-/// on the mountainside during play.
-pub const PEAK: Vec3 = Vec3::new(40.0, 0.0, -34.0);
-/// Height of the flat cap above the pitch plane.
-pub const PEAK_TOP: f32 = 17.6;
-/// Where the easel's feet sit on the cap.
-pub const EASEL_ANCHOR: Vec3 = Vec3::new(PEAK.x + 0.4, PEAK_TOP + 0.55, PEAK.z + 1.4);
+/// The clearing is authored with -Z pointing away from the painter. Turning it
+/// to this heading aims that axis at the stadium, so looking past the easel
+/// means looking at the pitch, and the flight afterwards runs straight down
+/// the same line instead of swinging around to find it.
+pub fn clearing_yaw() -> f32 {
+    PEAK.x.atan2(PEAK.z)
+}
+
+/// The clearing's rotation, for anything that must face along with it.
+pub fn facing() -> Quat {
+    Quat::from_rotation_y(clearing_yaw())
+}
+
+/// A point in the clearing's frame — x right, y up from the island's table,
+/// z toward the painter — as a point in the world.
+pub fn place(local: Vec3) -> Vec3 {
+    PEAK + Vec3::Y * PEAK_TOP + facing() * local
+}
+
+/// Where the easel's feet sit, in the world.
+pub fn easel_anchor() -> Vec3 {
+    place(EASEL_LOCAL)
+}
 
 /// How long the flight from the easel to the pitch takes.
 const FLIGHT_SECONDS: f32 = 4.2;
@@ -244,7 +276,9 @@ fn breathe(
         };
         let sway = (t * 0.51).sin() * 0.012;
         let yaw = if powered { 0.12 } else { scene::MODEL_YAW };
-        let target = Quat::from_rotation_y(yaw + (t * 0.43).sin() * 0.018);
+        // Turned with the clearing. Without this the pose is rebuilt in world
+        // axes every frame and the model ends up facing off the island.
+        let target = facing() * Quat::from_rotation_y(yaw + (t * 0.43).sin() * 0.018);
         transform.translation = model.rest + Vec3::new(sway, rise, 0.);
         transform.rotation = transform.rotation.slerp(target, 0.08);
     }
@@ -274,20 +308,39 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_peak_stands_clear_of_the_pitch() {
+    fn the_clearing_stands_on_an_island_the_landscape_already_raises() {
+        // The point of this: no peak exists solely to host the creation screen.
+        let table = crate::jungle::landscape::OUTCROPS;
+        assert!(crate::jungle::landscape::CLEARING_OUTCROP < table.len());
+        let chosen = table[crate::jungle::landscape::CLEARING_OUTCROP];
+        assert_eq!(PEAK.x, chosen.0);
+        assert_eq!(PEAK.z, chosen.1);
+        assert_eq!(PEAK_TOP, chosen.2);
+    }
+
+    #[test]
+    fn the_clearing_stands_clear_of_the_pitch() {
         use crate::game::config::{FIELD_DEPTH, FIELD_WIDTH};
-        assert!(PEAK.x.abs() > FIELD_WIDTH / 2., "the spur must not sit on the playing surface");
+        assert!(PEAK.x.abs() > FIELD_WIDTH / 2., "the island is not on the playing surface");
         assert!(PEAK.z.abs() > FIELD_DEPTH / 2.);
     }
 
     #[test]
-    fn the_easel_stands_on_the_cap() {
-        assert!(EASEL_ANCHOR.y > PEAK_TOP, "the easel's feet rest on top of the peak");
+    fn the_clearing_faces_the_stadium() {
+        // -Z in the clearing's frame must point at the pitch, or the painter
+        // works with their back to the thing the flight is about to fly to.
+        let forward = facing() * Vec3::NEG_Z;
+        let to_pitch = (Vec3::new(-PEAK.x, 0., -PEAK.z)).normalize();
+        assert!(forward.dot(to_pitch) > 0.999, "forward {forward:?} vs {to_pitch:?}");
     }
 
     #[test]
-    fn the_clearing_looks_down_on_the_pitch() {
-        assert!(PEAK_TOP > 10.0);
+    fn the_easel_stands_on_the_island_not_over_its_edge() {
+        assert!(easel_anchor().y > PEAK_TOP, "the easel's feet rest on the table");
+        // Generous margin: the model, the shelf and the boards all sit further
+        // out than the easel does, and none of them may hang off the rim.
+        assert!(EASEL_LOCAL.x.abs() + 5.0 < ISLAND_RX, "room across the island");
+        assert!(EASEL_LOCAL.z.abs() + 5.0 < ISLAND_RZ, "room along the island");
     }
 
     #[test]

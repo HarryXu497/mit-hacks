@@ -12,7 +12,7 @@
 //! Strokes are also kept as point lists, which is what makes undo exact and
 //! gives the manifest its stroke counts.
 
-use super::scene::{CanvasSurface, CANVAS_H, CANVAS_TILT, CANVAS_W};
+use super::scene::{CanvasSurface, CANVAS_H, CANVAS_W};
 use super::{CreationPhase, Notice};
 use bevy::prelude::*;
 use bevy::render::render_asset::RenderAssetUsages;
@@ -202,9 +202,8 @@ pub fn blank_canvas_image() -> Image {
 ///
 /// Kept as a free function of plain geometry so the mapping can be tested
 /// without a window, a camera or a running app.
-pub fn canvas_hit(origin: Vec3, dir: Vec3, centre: Vec3, tilt: f32) -> Option<Vec2> {
-    let rot = Quat::from_rotation_x(-tilt);
-    let normal = rot * Vec3::Z;
+pub fn canvas_hit(origin: Vec3, dir: Vec3, centre: Vec3, rotation: Quat) -> Option<Vec2> {
+    let normal = rotation * Vec3::Z;
     let denom = dir.dot(normal);
     // Facing away, or parallel to the plane: no usable intersection.
     if denom.abs() < 1e-5 {
@@ -214,7 +213,7 @@ pub fn canvas_hit(origin: Vec3, dir: Vec3, centre: Vec3, tilt: f32) -> Option<Ve
     if t <= 0.0 {
         return None;
     }
-    let local = rot.inverse() * (origin + dir * t - centre);
+    let local = rotation.inverse() * (origin + dir * t - centre);
     let u = local.x / CANVAS_W + 0.5;
     // Texture rows run downward, world Y runs up.
     let v = 0.5 - local.y / CANVAS_H;
@@ -373,7 +372,10 @@ pub fn paint(
     let Ok((canvas_tf, material)) = canvases.get_single() else {
         return;
     };
-    let Some(hit) = canvas_hit(ray.origin, *ray.direction, canvas_tf.translation, CANVAS_TILT) else {
+    // The canvas's own rotation, so the clearing can be turned to any heading
+    // without the hit test and the geometry drifting apart.
+    let Some(hit) = canvas_hit(ray.origin, *ray.direction, canvas_tf.translation, canvas_tf.rotation)
+    else {
         // Leaving the canvas ends the stroke; coming back starts a new one.
         stroke.drawing = false;
         return;
@@ -510,7 +512,7 @@ mod tests {
 
     #[test]
     fn a_ray_down_the_middle_lands_in_the_centre_of_the_canvas() {
-        let hit = canvas_hit(Vec3::new(0., 0., 5.), Vec3::NEG_Z, Vec3::ZERO, 0.0)
+        let hit = canvas_hit(Vec3::new(0., 0., 5.), Vec3::NEG_Z, Vec3::ZERO, Quat::IDENTITY)
             .expect("a ray straight at the canvas must hit it");
         assert!((hit.x - 0.5).abs() < 1e-4, "horizontal centre");
         assert!((hit.y - 0.5).abs() < 1e-4, "vertical centre");
@@ -518,15 +520,15 @@ mod tests {
 
     #[test]
     fn texture_rows_run_downward_while_world_y_runs_up() {
-        let above = canvas_hit(Vec3::new(0., 1., 5.), Vec3::NEG_Z, Vec3::ZERO, 0.0).unwrap();
-        let below = canvas_hit(Vec3::new(0., -1., 5.), Vec3::NEG_Z, Vec3::ZERO, 0.0).unwrap();
+        let above = canvas_hit(Vec3::new(0., 1., 5.), Vec3::NEG_Z, Vec3::ZERO, Quat::IDENTITY).unwrap();
+        let below = canvas_hit(Vec3::new(0., -1., 5.), Vec3::NEG_Z, Vec3::ZERO, Quat::IDENTITY).unwrap();
         assert!(above.y < below.y, "higher in the world is a smaller texture row");
     }
 
     #[test]
     fn rays_that_miss_the_board_report_no_hit() {
-        assert!(canvas_hit(Vec3::new(CANVAS_W, 0., 5.), Vec3::NEG_Z, Vec3::ZERO, 0.0).is_none());
-        assert!(canvas_hit(Vec3::new(0., 0., 5.), Vec3::Z, Vec3::ZERO, 0.0).is_none());
+        assert!(canvas_hit(Vec3::new(CANVAS_W, 0., 5.), Vec3::NEG_Z, Vec3::ZERO, Quat::IDENTITY).is_none());
+        assert!(canvas_hit(Vec3::new(0., 0., 5.), Vec3::Z, Vec3::ZERO, Quat::IDENTITY).is_none());
     }
 
     #[test]

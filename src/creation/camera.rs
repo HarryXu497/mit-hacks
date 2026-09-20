@@ -4,7 +4,7 @@
 //! separate views of separate scenes — they are two framings of one world, and
 //! the transition between them is travel, not a cut.
 
-use super::{CreationPhase, EASEL_ANCHOR, PEAK, PEAK_TOP};
+use super::{place, CreationPhase, EASEL_LOCAL};
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::prelude::*;
 
@@ -25,16 +25,16 @@ pub struct Flight {
 /// angled so the model sits to its left and the stadium shows past its right
 /// edge. The whole composition is readable in one shot without moving.
 pub fn easel_view() -> Transform {
-    // Set CANOPY_SITTING_WIDE to step back and inspect the whole peak, in the
+    // Set CANOPY_SITTING_WIDE to step back and inspect the whole island, in the
     // same spirit as CANOPY_CLOSEUP on the match camera. Presentation only.
     if std::env::var("CANOPY_SITTING_WIDE").is_ok() {
-        return Transform::from_translation(EASEL_ANCHOR + Vec3::new(9.0, 7.0, 19.0))
-            .looking_at(EASEL_ANCHOR + Vec3::new(-1.5, 1.0, 0.), Vec3::Y);
+        return Transform::from_translation(place(EASEL_LOCAL + Vec3::new(9.0, 7.0, 19.0)))
+            .looking_at(place(EASEL_LOCAL + Vec3::new(-1.5, 1.0, 0.)), Vec3::Y);
     }
-    let canvas = EASEL_ANCHOR + Vec3::new(0., 2.55, 0.52);
-    Transform::from_translation(canvas + Vec3::new(1.62, 0.72, 6.15)).looking_at(
+    let canvas = EASEL_LOCAL + Vec3::new(0., 2.55, 0.52);
+    Transform::from_translation(place(canvas + Vec3::new(1.62, 0.72, 6.15))).looking_at(
         // Aiming slightly below centre leaves headroom for the ranges behind.
-        canvas + Vec3::new(-0.15, -0.18, 0.),
+        place(canvas + Vec3::new(-0.15, -0.18, 0.)),
         Vec3::Y,
     )
 }
@@ -42,8 +42,8 @@ pub fn easel_view() -> Transform {
 /// Stepped back and to the left, so the easel and the second board share the
 /// frame for review.
 pub fn review_view() -> Transform {
-    Transform::from_translation(EASEL_ANCHOR + Vec3::new(-1.1, 3.3, 9.4))
-        .looking_at(EASEL_ANCHOR + Vec3::new(-1.35, 2.25, 0.8), Vec3::Y)
+    Transform::from_translation(place(EASEL_LOCAL + Vec3::new(-1.1, 3.3, 9.4)))
+        .looking_at(place(EASEL_LOCAL + Vec3::new(-1.35, 2.25, 0.8)), Vec3::Y)
 }
 
 /// Eases the camera between the painting view and the review view. The same
@@ -62,7 +62,7 @@ pub fn glide(
     transform.rotation = transform.rotation.slerp(target.rotation, alpha);
 }
 
-/// The match framing, matched to the broadcast camera the game itself uses so
+/// The match framing,/// The match framing, matched to the broadcast camera the game itself uses so
 /// the flight lands exactly where gameplay begins with no visible correction.
 pub fn broadcast_view() -> Transform {
     Transform::from_translation(Vec3::new(0., 44., 78.)).looking_at(Vec3::new(0., 10., 0.), Vec3::Y)
@@ -116,13 +116,11 @@ pub fn fly(
     flight.elapsed += time.delta_seconds();
     let t = ease(flight.elapsed / flight.duration);
 
-    // A control point out over the valley, high and wide of the peak, keeps the
-    // path clear of the terrain and gives the move an arc worth watching.
-    let control = Vec3::new(
-        PEAK.x * 0.55 + 18.0,
-        PEAK_TOP + 34.0,
-        PEAK.z * 0.4 + 74.0,
-    );
+    // The straight line from the island to the broadcast position passes
+    // through the summit massif, so the path bows up and over through a raised
+    // midpoint. Derived from the two ends rather than tuned to one island, so
+    // moving the clearing does not fly the camera through a mountain.
+    let control = (flight.from.translation + flight.to.translation) * 0.5 + Vec3::Y * 26.0;
     let a = flight.from.translation.lerp(control, t);
     let b = control.lerp(flight.to.translation, t);
     transform.translation = a.lerp(b, t);
@@ -139,14 +137,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_easel_view_looks_at_the_canvas_from_in_front_of_it() {
+    fn the_painter_stands_behind_the_easel_looking_at_the_pitch() {
         let view = easel_view();
-        assert!(
-            view.translation.z > EASEL_ANCHOR.z,
-            "the painter stands in front of the easel"
-        );
-        let forward = view.forward();
-        assert!(forward.z < 0., "and looks back toward it");
+        let canvas = place(EASEL_LOCAL + Vec3::new(0., 2.55, 0.52));
+        let to_canvas = (canvas - view.translation).normalize();
+        assert!(view.forward().dot(to_canvas) > 0.98, "the camera looks at the canvas");
+        // And past it: the pitch is beyond the canvas, not behind the painter.
+        let to_pitch = (Vec3::ZERO - view.translation).normalize();
+        assert!(view.forward().dot(to_pitch) > 0.8, "the stadium is in shot");
     }
 
     #[test]

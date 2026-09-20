@@ -4,6 +4,26 @@ use bevy::render::{
     mesh::Indices, render_asset::RenderAssetUsages, render_resource::PrimitiveTopology,
 };
 
+/// The free-standing outcrops around the stadium bowl: `(x, z, top, rx, rz)`.
+///
+/// Public because the painting clearing stands on one of these rather than on
+/// a peak of its own — the island is part of the landscape first, and a stage
+/// second, so there is exactly one definition of where it is.
+pub(crate) const OUTCROPS: [(f32, f32, f32, f32, f32); 8] = [
+    (-48., 12., -9., 7., 8.),
+    (47., 4., 2., 7., 8.),
+    (-47., -27., -5., 10., 9.),
+    (52., -32., -8., 10., 12.),
+    (-24., -65., -9., 13., 10.),
+    (17., -67., -12., 12., 10.),
+    (-69., -56., -6., 12., 14.),
+    (72., -64., -1., 13., 12.),
+];
+
+/// Which outcrop the painting clearing stands on: the broad one off the right
+/// of the broadcast frame, which has the widest top of the eight.
+pub(crate) const CLEARING_OUTCROP: usize = 7;
+
 const SUMMIT_X: f32 = 35.;
 const SUMMIT_Z: f32 = 24.;
 const VALLEY_Y: f32 = -42.;
@@ -645,7 +665,7 @@ fn monkey_relief(c: &mut Commands, k: &Kit, p: Vec3, s: f32) {
         );
     }
 }
-fn pagoda(c: &mut Commands, k: &Kit, p: Vec3, s: f32) {
+pub(crate) fn pagoda(c: &mut Commands, k: &Kit, p: Vec3, s: f32) {
     block(c, k, k.wood.clone(), p, Vec3::new(4.5, 0.3, 4.5) * s);
     for x in [-1., 1.] {
         for z in [-1., 1.] {
@@ -1084,26 +1104,18 @@ pub(super) fn build(
         );
     }
     // A handful of near outcrops establishes the depth scale and bridge network.
-    for (i, (x, z, top, rx, rz)) in [
-        (-48., 12., -9., 7., 8.),
-        (47., 4., 2., 7., 8.),
-        (-47., -27., -5., 10., 9.),
-        (52., -32., -8., 10., 12.),
-        (-24., -65., -9., 13., 10.),
-        (17., -67., -12., 12., 10.),
-        (-69., -56., -6., 12., 14.),
-        (72., -64., -1., 13., 12.),
-    ]
-    .into_iter()
-    .enumerate()
-    {
+    for (i, (x, z, top, rx, rz)) in OUTCROPS.into_iter().enumerate() {
         c.spawn(PbrBundle {
             mesh: meshes.add(massif(rx, rz, top, -44., i * 73 + 100, false)),
             material: white.clone(),
             transform: Transform::from_xyz(x, 0., z),
             ..default()
         });
-        pagoda(c, k, Vec3::new(x, top + 0.2, z), 0.8 + random(i) * 0.4);
+        // The clearing occupies this one, so it gets no stock pavilion; the
+        // creation scene furnishes its top itself.
+        if i != CLEARING_OUTCROP {
+            pagoda(c, k, Vec3::new(x, top + 0.2, z), 0.8 + random(i) * 0.4);
+        }
         // Dense, unequal clumps occupy the rim; keep a small clear pavilion
         // approach rather than distributing five identical trees on bare turf.
         for shrub in 0..8 {

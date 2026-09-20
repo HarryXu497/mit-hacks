@@ -3,7 +3,7 @@ use crate::entities::{Ball, CubePlayer};
 use crate::game::config::*;
 use crate::systems::display::DigitSegment;
 use bevy::prelude::*;
-mod landscape;
+pub(crate) mod landscape;
 
 #[derive(Component)]
 pub struct Waterfall {
