@@ -23,6 +23,10 @@ use crate::systems::{
 };
 use crate::input::keyboard::keyboard_input_system;
 use crate::rendering::lighting::setup_lighting;
+use crate::ui::goal_banner::{
+    animate_goal_banner, dress_the_podium, keep_the_podium_on_its_layer, raise_the_goal_banner,
+    setup_goal_banner, GoalCelebration,
+};
 use crate::ui::hud::setup_ui;
 use crate::ui::powers::{fill_power_rail, setup_power_hud, update_power_hud, PowerHudSide};
 use crate::ui::scoreboard::update_ui;
@@ -63,6 +67,7 @@ impl Plugin for CubeSoccerPlugin {
             .init_resource::<Possession>()
             .init_resource::<WornCharacters>()
             .init_resource::<PowerHudSide>()
+            .init_resource::<GoalCelebration>()
 
             // Events
             .add_event::<GoalScoredEvent>()
@@ -90,6 +95,7 @@ impl Plugin for CubeSoccerPlugin {
                 setup_lighting,
                 setup_ui,
                 setup_power_hud,
+                setup_goal_banner,
                 load_power_fx,
             ))
 
@@ -140,6 +146,17 @@ impl Plugin for CubeSoccerPlugin {
                 animate_power_fx,
             ).chain())
             .add_systems(Update, (fill_power_rail, update_power_hud).chain())
+
+            // The goal banner. Deliberately *not* gated on `MatchState::Playing`: a goal moves
+            // the match into `GoalScored`, which is precisely when the banner has to be running.
+            // The stands are kept dressed at all times so the portrait is ready the instant one
+            // goes in, rather than loading a model while the banner is already up.
+            .add_systems(Update, (
+                dress_the_podium,
+                keep_the_podium_on_its_layer,
+                raise_the_goal_banner,
+                animate_goal_banner,
+            ).chain())
 
             // Reset after goal (with 1 second delay)
             .add_systems(OnEnter(MatchState::GoalScored), (reset_after_goal, clear_possession))

@@ -253,6 +253,18 @@ impl Team {
             Team::Blue => GOAL_BLUE,
         }
     }
+
+    /// What to call the side on screen.
+    ///
+    /// `Debug` would print "Orange", which is close enough to be tempting and wrong in two ways:
+    /// it is not the casing the HUD is set in, and it would follow the variant if the variant were
+    /// ever renamed. The displayed name is its own decision, so it is written down as one.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Team::Orange => "ORANGE",
+            Team::Blue => "BLUE",
+        }
+    }
 }
 
 /// Flat agent ordering: Orange occupies indices `[0, PLAYERS_PER_TEAM)`,

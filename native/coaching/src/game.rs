@@ -36,6 +36,10 @@ use cube_soccer::systems::{
 use cube_soccer::ui::powers::{
     fill_power_rail, setup_power_hud, update_power_hud, PowerHudSide,
 };
+use cube_soccer::ui::goal_banner::{
+    animate_goal_banner, clear_goal_banner, dress_the_podium, keep_the_podium_on_its_layer,
+    raise_the_goal_banner, setup_goal_banner, GoalCelebration,
+};
 use cube_soccer::ui::{setup_ui, update_ui};
 
 use crate::phase::AppPhase;
@@ -56,6 +60,7 @@ impl Plugin for GamePlugin {
             .init_resource::<KickCooldowns>()
             .init_resource::<PlayMemory>()
             .init_resource::<WornCharacters>()
+            .init_resource::<GoalCelebration>()
             .init_resource::<MatchFurnished>()
             .init_resource::<PowerHudSide>()
             .init_resource::<SnapshotTimer>()
@@ -83,6 +88,7 @@ impl Plugin for GamePlugin {
                 (
                     setup_ui,
                     setup_power_hud,
+                    setup_goal_banner,
                     load_power_fx,
                     start_game_stream,
                     mark_furnished,
@@ -190,6 +196,29 @@ impl Plugin for GamePlugin {
                     .chain()
                     .run_if(in_state(AppPhase::Game)),
             )
+            // The goal banner, and the two stands it photographs.
+            //
+            // Ungated by `MatchState`, because a goal moves the match into `GoalScored` and that
+            // is exactly when the banner has to run. Deliberately *not* gated on
+            // `is_not_spectator` either: a joiner never raises `GoalScoredEvent` locally, so the
+            // banner is driven off the score the snapshot brings it, and gating it here is what
+            // would leave the joiner with nothing to see.
+            .add_systems(
+                Update,
+                (
+                    dress_the_podium,
+                    keep_the_podium_on_its_layer,
+                    raise_the_goal_banner,
+                    animate_goal_banner,
+                )
+                    .chain()
+                    .after(apply_network_snapshot)
+                    .run_if(in_state(AppPhase::Game)),
+            )
+            // `half_time` can pull the app into the coaching screen on the very goal that raised
+            // the banner, which would otherwise leave it hanging over a screen it has nothing to
+            // do with.
+            .add_systems(OnExit(AppPhase::Game), clear_goal_banner)
             .add_systems(
                 PostUpdate,
                 update_camera
