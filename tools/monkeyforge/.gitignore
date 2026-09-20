@@ -1,0 +1,55 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+dist/
+build/
+*.egg-info/
+
+# Generated character jobs and large model artifacts
+data/jobs/*
+!data/jobs/.gitkeep
+data/cache/*
+!data/cache/.gitkeep
+models/
+checkpoints/
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+
+# Blender and generated assets
+*.blend1
+output/
+.pytest-tmp/
+
+# Worker-side generated GLB cache
+worker/cache/
+
+# Offline arm64 wheel bundle, rebuilt with worker/offline/README.md
+worker/offline/wheels/
+
+# Proprietary prototype references are local-only. Keep the audit note tracked.
+assets/reference/btd6_prototype/*
+!assets/reference/btd6_prototype/README.md
+# Same policy for the 2D style sheets and icon sheets: private style reference only,
+# never the public repo, the released game, or a shipped training set.
+assets/reference/btd6_icons/*
+!assets/reference/btd6_icons/README.md
+assets/reference/btd6_style_2d/*
+!assets/reference/btd6_style_2d/README.md
+assets/reference/btd6_extract/*
+# Generated and intermediate GLBs stay out of the repo -- but the bases do not.
+# `monkey_base.glb` is what a player wears when nothing has been forged yet, or when
+# the GPU box is unreachable, so a fresh clone has to have it or the fallback path is
+# simply missing. The rigged role models and the BTD6-derived base go with it: they
+# are inputs to the pipeline, not outputs of it.
+assets/base/*.glb
+!assets/base/monkey_base.glb
+!assets/base/btd6_dartmonkey.glb
+!assets/base/monkeyforge_*.glb
+assets/work/*
+!assets/work/.gitkeep

@@ -10,8 +10,8 @@ pub const PLAYER_GROUP: Group = Group::GROUP_2;
 pub const BARRIER_GROUP: Group = Group::GROUP_3;
 
 // === ARENA (White environment) ===
-pub const ARENA_WIDTH: f32 = 42.0;      // X - total width
-pub const ARENA_DEPTH: f32 = 38.0;      // Z - depth (must be > extended field)
+pub const ARENA_WIDTH: f32 = 58.0;      // X - total width
+pub const ARENA_DEPTH: f32 = 46.0;      // Z - depth (must be > extended field)
 pub const ARENA_HEIGHT: f32 = 15.0;     // Y - wall height
 
 pub const WALL_THICKNESS: f32 = 0.5;
@@ -19,8 +19,8 @@ pub const WALL_COLOR: Color = Color::rgb(0.95, 0.95, 0.95);  // Off-white
 pub const GRID_COLOR: Color = Color::rgb(0.85, 0.85, 0.85);  // Grey lines
 
 // === FIELD (Grey play area) ===
-pub const FIELD_WIDTH: f32 = 36.0;      // X
-pub const FIELD_DEPTH: f32 = 24.0;      // Z
+pub const FIELD_WIDTH: f32 = 48.0;      // X
+pub const FIELD_DEPTH: f32 = 32.0;      // Z
 pub const FIELD_HEIGHT: f32 = 1.0;      // Y - platform thickness
 pub const FIELD_COLOR: Color = Color::rgb(0.25, 0.25, 0.25);  // Dark grey
 pub const FIELD_GRID_SPACING: f32 = 2.0;  // White grid spacing
@@ -130,10 +130,20 @@ pub const STEAL_COOLDOWN_SECS: f32 = 0.5;
 pub const STEAL_CONTACT_SECS: f32 = 0.4;
 
 // === REWARDS ===
-pub const REWARD_GOAL: f32 = 10.0;
-pub const REWARD_GOAL_AGAINST: f32 = -10.0;
-pub const REWARD_BALL_TO_GOAL: f32 = 0.01;      // Per step if ball approaches
-pub const REWARD_TOUCH_BALL: f32 = 0.1;
+pub const REWARD_GOAL: f32 = 30.0;
+pub const REWARD_GOAL_AGAINST: f32 = -30.0;
+pub const REWARD_BALL_PROGRESS: f32 = 0.5;  // reward per meter the ball nears the opp goal (potential-based)
+/// Per-agent reward per meter an agent moves toward the ball (potential-based, so it
+/// telescopes and can't be farmed). Bootstraps the behavior chain: without a reason
+/// to approach the ball, a from-scratch policy collapses to passivity — it never
+/// touches the ball, so the ball-progress signal never fires. Small so it guides
+/// rather than dominates; anneals with the rest of the shaping.
+pub const REWARD_BALL_APPROACH: f32 = 0.1;
+/// Extra potential-based "finishing pull": a ramp that grows as the ball nears the
+/// opp goal center (peaks at the mouth). Potential-based (telescopes), so camping in
+/// the attacking third earns 0 — only approaching the net is rewarded.
+pub const NEAR_GOAL_RADIUS: f32 = 6.0;
+pub const NEAR_GOAL_BONUS: f32 = 4.0;
 pub const REWARD_WIN: f32 = 5.0;
 pub const REWARD_LOSE: f32 = -5.0;
 
@@ -142,9 +152,6 @@ pub const REWARD_LOSE: f32 = -5.0;
 pub const CROWD_RADIUS: f32 = 3.0;
 /// Per-step penalty per crowding teammate (individual) — pushes cubes to spread.
 pub const REWARD_TEAMMATE_CROWD: f32 = -0.02;
-/// Per-step reward while a teammate holds the ball (shared) — rewards keeping
-/// possession, which with spacing encourages passing/support play.
-pub const REWARD_POSSESSION: f32 = 0.02;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Default)]
 pub enum Team {

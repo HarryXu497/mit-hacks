@@ -9,13 +9,16 @@ use crate::game_stream::{
 use crate::network::{is_not_spectator, is_spectator, NetworkRole};
 use cube_soccer::entities::CubePlayer;
 use cube_soccer::entities::{
-    spawn_arena, spawn_ball, spawn_field, spawn_goals, spawn_players, spawn_wall_scoreboard,
+    animate_player_visual, spawn_arena, spawn_ball, spawn_field, spawn_goals, spawn_players,
+    spawn_wall_scoreboard,
 };
 use cube_soccer::game::{
     BallTouchedEvent, GameOverEvent, GameState, GoalScoredEvent, MatchState, ResetGameEvent,
 };
-use cube_soccer::jungle::{animate_jungle, build_jungle};
+use cube_soccer::jungle::{animate_jungle, animate_water, build_jungle};
+use cube_soccer::rendering::batching::merge_static_draws;
 use cube_soccer::rendering::setup_lighting;
+use cube_soccer::rendering::stylized::{register_shader, stylize, JungleMaterial};
 use cube_soccer::systems::{
     activate_superpowers, apply_heuristic_ai, apply_status_forces, clamp_velocities,
     clear_possession, tick_cooldowns, tick_status_effects, tick_superpower_cooldowns,
@@ -35,7 +38,16 @@ pub struct GamePlugin;
 
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
+        // The jungle's cel lighting and animated water are a material extension, so the
+        // shader has to be registered on the app before anything that uses it is spawned.
+        register_shader(app);
+
         app.add_plugins(RapierPhysicsPlugin::<NoUserData>::default())
+            .add_plugins(MaterialPlugin::<JungleMaterial>::default())
+            // Two samples, not four: once the static props are batched the frame is fill
+            // bound, and the goal netting's sub-pixel beams sparkle with no coverage
+            // sampling at all. See the note in cube-soccer's own CubeSoccerPlugin.
+            .insert_resource(Msaa::Sample2)
             .insert_state(MatchState::Playing)
             .init_resource::<GameState>()
             .init_resource::<ResetTimer>()
@@ -68,8 +80,20 @@ impl Plugin for GamePlugin {
                 )
                     .chain(),
             )
-            .add_systems(OnEnter(AppPhase::Game), build_jungle.after(setup_ui))
-            .add_systems(Update, animate_jungle.run_if(in_state(AppPhase::Game)))
+            // Batching has to see every prop and stylising has to see the batches, so these
+            // three are chained. Without the last two the scene renders unlit and unmerged:
+            // this branch previously scheduled `build_jungle` alone, back when the jungle was
+            // a single file with no landscape, cel material or batching pass.
+            .add_systems(
+                OnEnter(AppPhase::Game),
+                (build_jungle, merge_static_draws, stylize)
+                    .chain()
+                    .after(setup_ui),
+            )
+            .add_systems(
+                Update,
+                (animate_jungle, animate_water).run_if(in_state(AppPhase::Game)),
+            )
             .add_systems(
                 Update,
                 (
@@ -123,6 +147,10 @@ impl Plugin for GamePlugin {
                 (
                     animate_fragments,
                     animate_googly_eyes,
+                    // Display-only, and deliberately not gated on `is_not_spectator`: the joiner
+                    // has to animate too, which is why `apply_network_snapshot` recovers
+                    // `Velocity` from the streamed positions rather than leaving it at zero.
+                    animate_player_visual,
                     spawn_trail_particles,
                     animate_trail_particles,
                 )

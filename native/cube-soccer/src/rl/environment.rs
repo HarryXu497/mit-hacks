@@ -10,7 +10,10 @@ use crate::game::{
 use crate::entities::{Ball, CubePlayer, get_spawn_position, get_ball_spawn_position};
 use crate::input::AIActions;
 use crate::systems::possession::Possession;
-use crate::systems::heuristic_ai::{TeamTactics, TacticParams, Tactic};
+use crate::systems::heuristic_ai::{TeamTactics, TacticParams, Tactic, HeuristicDifficulty, ActiveRoster};
+use crate::systems::scoring::GoalHalfWidth;
+use crate::systems::superpowers::{Superpower, SuperpowerKind};
+use crate::systems::status_effects::StatusEffects;
 use crate::rl::reward::RewardCalculator;
 use crate::rl::sim::{build_headless_app, EpisodeDone, LatestObs, LatestRewards};
 
@@ -102,6 +105,36 @@ impl CubeSoccerEnv {
             }
         }
 
+        // Randomize each cube's superpower loadout (both teams) from the seeded RNG,
+        // in a stable (team, index) order so a given seed reproduces the loadout.
+        {
+            let world = &mut self.app.world;
+            let mut cubes: Vec<(usize, usize, Entity)> = world
+                .query::<(Entity, &CubePlayer)>()
+                .iter(world)
+                .map(|(e, p)| (p.team as usize, p.index, e))
+                .collect();
+            cubes.sort_by_key(|(team, index, _)| (*team, *index));
+            const KINDS: [SuperpowerKind; 4] = [
+                SuperpowerKind::BeamBlast,
+                SuperpowerKind::FreezeRay,
+                SuperpowerKind::Boost,
+                SuperpowerKind::Slow,
+            ];
+            for (_, _, e) in cubes {
+                let r = rng.gen_range(0..5);
+                let mut em = world.entity_mut(e);
+                // Clear any residual status effects from the previous episode so
+                // resets are clean/reproducible (freezes/boosts don't leak across).
+                em.insert(StatusEffects::default());
+                if r == 0 {
+                    em.remove::<Superpower>();
+                } else {
+                    em.insert(Superpower::new(KINDS[r - 1]));
+                }
+            }
+        }
+
         self.current_step = 0;
         self.app.update();
         self.app.world.resource::<LatestObs>().0.clone()
@@ -181,6 +214,36 @@ impl CubeSoccerEnv {
             Team::Orange => tt.orange.clear_overrides(),
             Team::Blue => tt.blue.clear_overrides(),
         }
+    }
+
+    /// Set the dense-shaping weight (1.0 = full shaping, 0.0 = pure goal objective).
+    /// Driven by the training loop to anneal shaping over the run.
+    pub fn set_shaping_weight(&mut self, w: f32) {
+        self.app.world.resource_mut::<RewardCalculator>().shaping_weight = w;
+    }
+
+    /// Set the heuristic opponent's difficulty (1.0 = full strength, 0.0 = frozen).
+    /// Driven by the training loop's curriculum: start Blue weak so Orange can learn
+    /// to score, then ramp back to full strength. Persists across `reset()`.
+    pub fn set_opponent_difficulty(&mut self, d: f32) {
+        self.app.world.resource_mut::<HeuristicDifficulty>().0 = d.clamp(0.0, 1.0);
+    }
+
+    /// Set the active roster size (players per team, 1..=PLAYERS_PER_TEAM). Benched
+    /// players are ghosted + frozen, so the match plays as a true NvN while the
+    /// observation/action shape stays fixed at the full roster. Driven by the
+    /// training loop to grow 1v1 -> full NvN. Persists across `reset()`.
+    pub fn set_active_roster(&mut self, n: usize) {
+        let clamped = n.clamp(1, crate::game::PLAYERS_PER_TEAM);
+        self.app.world.resource_mut::<ActiveRoster>().0 = clamped;
+    }
+
+    /// Set the scorable goal half-width in Z (goal-size curriculum). Clamped to
+    /// [regulation, half the field depth]. The curriculum starts wide (easy to
+    /// score) and narrows to regulation. Persists across `reset()`.
+    pub fn set_goal_half_width(&mut self, hw: f32) {
+        let clamped = hw.clamp(GoalHalfWidth::regulation(), crate::game::FIELD_DEPTH / 2.0);
+        self.app.world.resource_mut::<GoalHalfWidth>().0 = clamped;
     }
 
     pub fn get_observation_space(&self) -> (Vec<f32>, Vec<f32>, Vec<usize>) {
@@ -279,6 +342,206 @@ mod tests {
         let mut a = CubeSoccerEnv::new(EnvConfig::default());
         let mut b = CubeSoccerEnv::new(EnvConfig::default());
         assert_eq!(a.reset(Some(42)), b.reset(Some(42)));
+    }
+
+    #[test]
+    fn reset_reassigns_loadout_and_starts_clean() {
+        // After playing (powers fire, effects/cooldowns accumulate), a reset must
+        // re-assign the loadout and not carry unbounded residual state. (Strict
+        // byte-reproducibility on the same env is NOT guaranteed — the heuristic's
+        // sticky-handler Local and Rapier's solver state persist — and isn't needed;
+        // fresh-env determinism + reproducible loadout are the real guarantees.)
+        use crate::systems::superpowers::Superpower;
+        use crate::entities::CubePlayer;
+        let mut env = CubeSoccerEnv::new(EnvConfig::default());
+        env.reset(Some(0));
+        let zero = vec![0.0f32; NUM_AGENTS * crate::game::ACTION_SIZE];
+        for _ in 0..40 {
+            let _ = env.step(&zero);
+        }
+        env.reset(Some(3));
+        // Loadout was (re)assigned this episode: at least one cube has a power.
+        let world = &mut env.app.world;
+        let has_power = world
+            .query::<(&CubePlayer, Option<&Superpower>)>()
+            .iter(world)
+            .any(|(_, sp)| sp.is_some());
+        assert!(has_power, "reset should assign a fresh loadout");
+    }
+
+    #[test]
+    fn reset_seed_gives_reproducible_loadout() {
+        use crate::systems::superpowers::{Superpower, SuperpowerKind};
+        use crate::entities::CubePlayer;
+
+        fn loadout(env: &mut CubeSoccerEnv) -> Vec<(usize, usize, Option<SuperpowerKind>)> {
+            let world = &mut env.app.world;
+            let mut v: Vec<(usize, usize, Option<SuperpowerKind>)> = world
+                .query::<(&CubePlayer, Option<&Superpower>)>()
+                .iter(world)
+                .map(|(p, sp)| (p.team as usize, p.index, sp.map(|s| s.kind)))
+                .collect();
+            v.sort_by_key(|(t, i, _)| (*t, *i));
+            v
+        }
+
+        let mut a = CubeSoccerEnv::new(EnvConfig::default());
+        let mut b = CubeSoccerEnv::new(EnvConfig::default());
+        a.reset(Some(7));
+        b.reset(Some(7));
+        let la = loadout(&mut a);
+        let lb = loadout(&mut b);
+        assert_eq!(la, lb, "same seed must give the same loadout");
+        assert!(la.iter().any(|(_, _, k)| k.is_some()), "expected some powers assigned for seed 7");
+    }
+
+    #[test]
+    fn opponent_difficulty_scales_blue_movement() {
+        use crate::entities::CubePlayer;
+
+        fn blue_positions(env: &mut CubeSoccerEnv) -> Vec<Vec3> {
+            let world = &mut env.app.world;
+            let mut v: Vec<(usize, Vec3)> = world
+                .query::<(&CubePlayer, &Transform)>()
+                .iter(world)
+                .filter(|(p, _)| p.team == Team::Blue)
+                .map(|(p, t)| (p.index, t.translation))
+                .collect();
+            v.sort_by_key(|(i, _)| *i);
+            v.into_iter().map(|(_, p)| p).collect()
+        }
+
+        fn blue_travel(diff: f32) -> f32 {
+            let mut env = CubeSoccerEnv::new(EnvConfig::default());
+            env.reset(Some(5));
+            env.set_opponent_difficulty(diff);
+            let start = blue_positions(&mut env);
+            let zero = vec![0.0f32; NUM_AGENTS * crate::game::ACTION_SIZE];
+            for _ in 0..40 {
+                let _ = env.step(&zero);
+            }
+            let end = blue_positions(&mut env);
+            start.iter().zip(end).map(|(a, b)| a.distance(b)).sum()
+        }
+
+        let frozen = blue_travel(0.0);
+        let full = blue_travel(1.0);
+        assert!(
+            full > frozen + 1.0,
+            "full-strength Blue should travel more than a frozen opponent: full {full} vs frozen {frozen}"
+        );
+    }
+
+    #[test]
+    fn active_roster_benches_extra_players() {
+        // With a 1v1 roster, players index>=1 must be frozen (velocity ~0) even when
+        // driven hard, while index 0 is free to move.
+        use crate::entities::CubePlayer;
+        if crate::game::PLAYERS_PER_TEAM < 2 {
+            return; // nothing to bench
+        }
+        let mut env = CubeSoccerEnv::new(EnvConfig::default());
+        env.reset(Some(2));
+        env.set_active_roster(1);
+
+        // Where everyone starts, so "did it move" can be asked about displacement rather than
+        // about the speed it happens to be carrying on the last tick.
+        fn positions(env: &mut CubeSoccerEnv) -> Vec<(Team, usize, Vec3)> {
+            let world = &mut env.app.world;
+            world
+                .query::<(&CubePlayer, &Transform)>()
+                .iter(world)
+                .map(|(p, t)| (p.team, p.index, t.translation))
+                .collect()
+        }
+        let start = positions(&mut env);
+
+        // Drive ALL orange players hard toward +x.
+        let mut actions = vec![0.0f32; NUM_AGENTS * crate::game::ACTION_SIZE];
+        for a in 0..crate::game::PLAYERS_PER_TEAM {
+            actions[a * crate::game::ACTION_SIZE] = 1.0;
+        }
+        for _ in 0..30 {
+            let _ = env.step(&actions);
+        }
+
+        let end = positions(&mut env);
+        let world = &mut env.app.world;
+        let speeds: Vec<(Team, usize, f32)> = world
+            .query::<(&CubePlayer, &Velocity)>()
+            .iter(world)
+            .map(|(p, v)| (p.team, p.index, v.linvel.length()))
+            .collect();
+        for (team, index, speed) in &speeds {
+            if *index >= 1 {
+                assert!(*speed < 1e-3, "benched player {team:?}#{index} should be frozen, got speed {speed}");
+            }
+        }
+
+        // The active orange player (index 0) actually moves.
+        //
+        // This asks how far it travelled, not how fast it is going at the end. Instantaneous
+        // speed was a proxy that only worked while the kickoff happened to leave #0 with clear
+        // space ahead of it: the formation is now a real 5-a-side shape, which starts the two
+        // #0 players head-on and much closer together, so a player driven flat out for thirty
+        // steps can be stationary at the end precisely *because* it moved -- into its opponent.
+        // Displacement is what "not benched" actually means.
+        // Horizontal only: everyone is spawned a little above the turf and settles onto it in the
+        // first few ticks, so vertical travel says nothing about whether a player was driven.
+        let displacement = |team: Team, index: usize| -> f32 {
+            let at = |v: &Vec<(Team, usize, Vec3)>| {
+                v.iter()
+                    .find(|(t, i, _)| *t == team && *i == index)
+                    .map(|(_, _, p)| *p)
+                    .expect("player should exist")
+            };
+            let delta = at(&end) - at(&start);
+            Vec2::new(delta.x, delta.z).length()
+        };
+        assert!(
+            displacement(Team::Orange, 0) > 0.5,
+            "active orange #0 should have been driven away from its kickoff position, moved {}",
+            displacement(Team::Orange, 0)
+        );
+        for index in 1..crate::game::PLAYERS_PER_TEAM {
+            assert!(
+                displacement(Team::Orange, index) < 1e-2,
+                "benched orange #{index} should not have moved at all"
+            );
+        }
+    }
+
+    #[test]
+    fn wide_goal_scores_shots_a_narrow_goal_would_miss() {
+        use crate::entities::Ball;
+        // Place the ball just past Blue's goal line but wide in Z (outside regulation).
+        fn score_with_width(hw: f32) -> u32 {
+            let mut env = CubeSoccerEnv::new(EnvConfig::default());
+            env.reset(Some(0));
+            env.set_goal_half_width(hw);
+            {
+                let world = &mut env.app.world;
+                let mut q = world.query_filtered::<&mut Transform, With<Ball>>();
+                let mut t = q.single_mut(world);
+                t.translation = Vec3::new(crate::game::FIELD_WIDTH / 2.0 + 0.1, crate::game::FIELD_HEIGHT + 0.5, 6.0);
+            }
+            let zero = vec![0.0f32; NUM_AGENTS * crate::game::ACTION_SIZE];
+            let r = env.step(&zero);
+            r.info.score[0] // Orange goals
+        }
+        // z=6 is outside the regulation mouth (~2.8) but inside a wide goal.
+        assert_eq!(score_with_width(GoalHalfWidth::regulation()), 0, "narrow goal: wide ball is no goal");
+        assert_eq!(score_with_width(8.0), 1, "wide goal: the same wide ball scores");
+    }
+
+    #[test]
+    fn set_shaping_weight_updates_calculator() {
+        let mut env = CubeSoccerEnv::new(EnvConfig::default());
+        env.reset(Some(0));
+        env.set_shaping_weight(0.0);
+        assert_eq!(env.app.world.resource::<RewardCalculator>().shaping_weight, 0.0);
+        env.set_shaping_weight(0.5);
+        assert_eq!(env.app.world.resource::<RewardCalculator>().shaping_weight, 0.5);
     }
 
     #[test]

@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 use crate::game::config::*;
+use crate::entities::character::PlayerVisual;
 
 // Player collision filter: collides with everything
 fn player_collision_groups() -> CollisionGroups {
@@ -94,6 +95,7 @@ pub fn spawn_players(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    asset_server: Res<AssetServer>,
 ) {
     // Eye materials (shared)
     let eye_white = materials.add(StandardMaterial {
@@ -113,6 +115,7 @@ pub fn spawn_players(
                 &mut commands,
                 &mut meshes,
                 &mut materials,
+                &asset_server,
                 team,
                 index,
                 get_spawn_position(team, index),
@@ -129,6 +132,7 @@ fn spawn_player_with_eyes(
     commands: &mut Commands,
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
+    asset_server: &AssetServer,
     team: Team,
     index: usize,
     position: Vec3,
@@ -142,65 +146,88 @@ fn spawn_player_with_eyes(
     let eye_y = 0.15;  // Slightly above center
     let eye_spacing = 0.3;  // Distance between eyes
 
-    commands.spawn(CubePlayerBundle::new(team, index, position, meshes, materials))
-        .with_children(|parent| {
-            // Left eye (white globe)
-            parent.spawn(PbrBundle {
-                mesh: eye_mesh.clone(),
-                material: eye_material.clone(),
-                transform: Transform::from_xyz(-eye_spacing, eye_y, eye_z),
-                ..default()
-            }).with_children(|eye| {
-                // Left pupil (positioned in front of the eye globe)
-                eye.spawn((
-                    PbrBundle {
-                        mesh: pupil_mesh.clone(),
-                        material: pupil_material.clone(),
-                        transform: Transform::from_xyz(0.0, 0.0, 0.12),
-                        ..default()
-                    },
-                    GooglyPupil { base_offset: Vec3::new(0.0, 0.0, 0.12) },
-                ));
-            });
+    // A generated character replaces the cube's *appearance* only. The bundle below -- collider,
+    // mass, damping, locked axes -- is spawned identically either way, so physics and the
+    // observation vector are unaffected and trained policies stay valid.
+    //
+    // Everything visible hangs off a `PlayerVisual` child rather than off the body itself, because
+    // the body's transform belongs to Rapier and to `movement.rs`. Animating a child leaves both
+    // alone, and it means the cube fallback animates exactly like a generated character does.
+    //
+    // The body therefore draws nothing of its own. `Visibility::Hidden` would take the children
+    // down with it, since visibility propagates -- so its mesh handle is swapped for the default
+    // one, which draws nothing while leaving the hierarchy intact.
+    let skinned = crate::entities::character::skin_path(team).is_some();
 
-            // Right eye (white globe)
-            parent.spawn(PbrBundle {
-                mesh: eye_mesh.clone(),
-                material: eye_material.clone(),
-                transform: Transform::from_xyz(eye_spacing, eye_y, eye_z),
+    // Built only when there is no model to wear, so an unused mesh and material are not added to
+    // the asset store for every skinned player.
+    let cube_appearance = (!skinned).then(|| {
+        (
+            meshes.add(Cuboid::new(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE)),
+            materials.add(StandardMaterial {
+                base_color: team.color(),
+                metallic: 0.5,
+                perceptual_roughness: 0.4,
                 ..default()
-            }).with_children(|eye| {
-                // Right pupil (positioned in front of the eye globe)
-                eye.spawn((
-                    PbrBundle {
-                        mesh: pupil_mesh.clone(),
-                        material: pupil_material.clone(),
-                        transform: Transform::from_xyz(0.0, 0.0, 0.12),
-                        ..default()
-                    },
-                    GooglyPupil { base_offset: Vec3::new(0.0, 0.0, 0.12) },
-                ));
+            }),
+        )
+    });
+
+    let mut entity = commands.spawn(CubePlayerBundle::new(team, index, position, meshes, materials));
+    entity.insert(Handle::<Mesh>::default());
+
+    entity.with_children(|parent| {
+        if crate::entities::character::spawn_skin(parent, asset_server, team) {
+            return;
+        }
+
+        let (cube_mesh, cube_material) =
+            cube_appearance.expect("no skin means the cube appearance was built above");
+
+        parent
+            .spawn((PlayerVisual::new(0.0, 1.0), SpatialBundle::default()))
+            .with_children(|visual| {
+                visual.spawn(PbrBundle {
+                    mesh: cube_mesh,
+                    material: cube_material,
+                    ..default()
+                });
+
+                // A googly eye, twice: a white globe with a pupil parked in front of it.
+                for side in [-1.0f32, 1.0] {
+                    visual
+                        .spawn(PbrBundle {
+                            mesh: eye_mesh.clone(),
+                            material: eye_material.clone(),
+                            transform: Transform::from_xyz(side * eye_spacing, eye_y, eye_z),
+                            ..default()
+                        })
+                        .with_children(|eye| {
+                            eye.spawn((
+                                PbrBundle {
+                                    mesh: pupil_mesh.clone(),
+                                    material: pupil_material.clone(),
+                                    transform: Transform::from_xyz(0.0, 0.0, 0.12),
+                                    ..default()
+                                },
+                                GooglyPupil { base_offset: Vec3::new(0.0, 0.0, 0.12) },
+                            ));
+                        });
+                }
             });
-        });
+    });
 }
 
-/// Get the initial spawn position for a player at `index` on `team`.
-/// Players are spread along the Z axis on their team's side of the field.
+/// Where a player starts, and where every reset puts them back.
+///
+/// Delegates to [`crate::entities::roster::formation_position`] so the kickoff
+/// shape has exactly one definition. This used to be an even spread along the
+/// width of the box; it is now Jeremy Liu's authored 5-a-side formation, which
+/// changes the initial state distribution the RL environment samples from. The
+/// observation and action layouts are untouched, so existing checkpoints still
+/// load — they were simply trained from a different kickoff.
 pub fn get_spawn_position(team: Team, index: usize) -> Vec3 {
-    let x = match team {
-        Team::Orange => -FIELD_WIDTH / 4.0,
-        Team::Blue => FIELD_WIDTH / 4.0,
-    };
-
-    let z = if PLAYERS_PER_TEAM <= 1 {
-        0.0
-    } else {
-        let span = FIELD_DEPTH / 2.0;
-        let t = index as f32 / (PLAYERS_PER_TEAM - 1) as f32; // 0.0 ..= 1.0
-        -span / 2.0 + t * span
-    };
-
-    Vec3::new(x, FIELD_HEIGHT + CUBE_SIZE, z)
+    crate::entities::roster::formation_position(team, index)
 }
 
 #[cfg(test)]

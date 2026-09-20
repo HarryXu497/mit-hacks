@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 use std::collections::HashMap;
 use crate::entities::{Ball, CubePlayer, PlayerInput};
-use crate::game::{Team, FIELD_WIDTH};
+use crate::game::{Team, FIELD_WIDTH, PLAYERS_PER_TEAM, PLAYER_GROUP, BARRIER_GROUP};
 
 /// Marker: cubes with this component are driven by the built-in heuristic AI.
 #[derive(Component)]
@@ -170,6 +170,34 @@ pub struct TeamTactics {
 impl Default for TeamTactics {
     fn default() -> Self {
         Self { orange: TeamDirective::default(), blue: TeamDirective::default() }
+    }
+}
+
+/// Difficulty knob for the heuristic-driven team(s): scales AI movement output and
+/// gates superpower use. `1.0` = full-strength heuristic; `0.0` = frozen. Used by
+/// training curricula to weaken the heuristic opponent early (so the RL team can
+/// discover scoring) and then ramp back to full strength. A missing resource
+/// defaults to `1.0`, so non-training consumers are unaffected.
+#[derive(Resource, Clone, Copy, Debug)]
+pub struct HeuristicDifficulty(pub f32);
+
+impl Default for HeuristicDifficulty {
+    fn default() -> Self {
+        Self(1.0)
+    }
+}
+
+/// Player-count curriculum knob: how many players per team are "active" (1..=P).
+/// Players with `index >= active` on *either* team are benched — made
+/// non-collidable and frozen — so the match plays as a true NvN with a fixed
+/// full-roster observation/action shape. Ramp this 1 -> P to grow 1v1 into full
+/// 5v5 with the same policy. A missing resource defaults to the full roster.
+#[derive(Resource, Clone, Copy, Debug)]
+pub struct ActiveRoster(pub usize);
+
+impl Default for ActiveRoster {
+    fn default() -> Self {
+        Self(PLAYERS_PER_TEAM)
     }
 }
 
@@ -360,15 +388,57 @@ pub fn assign_team_movements(
     (out, handler_index)
 }
 
+/// System: gate collision by the player-count curriculum. Players with
+/// `index >= active` (on either team) are made non-collidable with the ball and
+/// other players — they still rest on the floor via `BARRIER_GROUP`, but the ball
+/// and active players pass through them, so the field plays as a true NvN. At the
+/// full roster every player is solid. A missing `ActiveRoster` = full roster.
+pub fn apply_roster_gating(
+    roster: Option<Res<ActiveRoster>>,
+    mut query: Query<(&CubePlayer, &mut CollisionGroups)>,
+) {
+    let active = roster.map(|r| r.0).unwrap_or(PLAYERS_PER_TEAM).clamp(1, PLAYERS_PER_TEAM);
+    let solid_filter = CollisionGroups::new(PLAYER_GROUP, Group::ALL);
+    // Ghost: collide only with barriers/floor; pass through ball + other players.
+    let ghost_filter = CollisionGroups::new(PLAYER_GROUP, BARRIER_GROUP);
+    for (player, mut groups) in query.iter_mut() {
+        *groups = if player.index < active { solid_filter } else { ghost_filter };
+    }
+}
+
+/// System: freeze benched players (`index >= active`). Zeroes their control input
+/// (so RL/heuristic can't move them or fire powers) and pins their velocity to zero.
+/// Combined with [`apply_roster_gating`], benched players are effectively absent.
+/// Runs after both controllers so it overrides whatever input they set.
+pub fn freeze_inactive_players(
+    roster: Option<Res<ActiveRoster>>,
+    mut query: Query<(&CubePlayer, &mut PlayerInput, &mut Velocity)>,
+) {
+    let active = roster.map(|r| r.0).unwrap_or(PLAYERS_PER_TEAM).clamp(1, PLAYERS_PER_TEAM);
+    for (player, mut input, mut vel) in query.iter_mut() {
+        if player.index >= active {
+            input.movement = Vec2::ZERO;
+            input.jump = false;
+            input.fire = false;
+            vel.linvel = Vec3::ZERO;
+            vel.angvel = Vec3::ZERO;
+        }
+    }
+}
+
 /// System: drive every `AiControlled` cube using team-aware role assignment.
 /// The current ball-handler for each team is remembered in a `Local` so the role
 /// is sticky (hysteresis) rather than recomputed from scratch each frame.
 pub fn apply_heuristic_ai(
     mut handlers: Local<HashMap<Team, usize>>,
     tactics: Option<Res<TeamTactics>>,
+    difficulty: Option<Res<HeuristicDifficulty>>,
     ball_query: Query<(&Transform, &Velocity), With<Ball>>,
     mut player_query: Query<(&mut PlayerInput, &Transform, &CubePlayer), With<AiControlled>>,
 ) {
+    // Difficulty scales how fast the heuristic team moves and whether it uses
+    // superpowers. Weak opponent = slow, no powers; full strength = the original.
+    let diff = difficulty.map(|d| d.0).unwrap_or(1.0).clamp(0.0, 1.0);
     let Ok((ball_t, ball_v)) = ball_query.get_single() else { return; };
     let ball_pos = ball_t.translation;
     let ball_vel = ball_v.linvel;
@@ -397,10 +467,11 @@ pub fn apply_heuristic_ai(
 
     for (mut input, _transform, player) in player_query.iter_mut() {
         if let Some((movement, jump)) = result.get(&(player.team, player.index)) {
-            input.movement = *movement;
+            input.movement = *movement * diff;
             input.jump = *jump;
         }
-        input.fire = true;
+        // Weak opponents don't use superpowers; they come online past half strength.
+        input.fire = diff > 0.5;
     }
 }
 

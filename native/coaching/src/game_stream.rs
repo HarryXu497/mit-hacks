@@ -4,6 +4,7 @@
 //! physics/AI, which is what avoids cross-machine simulation drift.
 use crate::network::{NetworkEndpoint, NetworkRole};
 use bevy::prelude::*;
+use bevy_rapier3d::prelude::Velocity;
 use crossbeam_channel::{unbounded, Receiver};
 use cube_soccer::entities::{Ball, CubePlayer};
 use cube_soccer::game::{GameState, Team};
@@ -228,9 +229,10 @@ pub fn publish_game_snapshot(
 }
 
 pub fn apply_network_snapshot(
+    time: Res<Time>,
     role: Option<Res<NetworkRole>>,
     runtime: Option<Res<GameStreamRuntime>>,
-    mut players: Query<(&CubePlayer, &mut Transform), Without<Ball>>,
+    mut players: Query<(&CubePlayer, &mut Transform, &mut Velocity), Without<Ball>>,
     mut ball: Query<&mut Transform, With<Ball>>,
     mut game_state: ResMut<GameState>,
 ) {
@@ -242,15 +244,28 @@ pub fn apply_network_snapshot(
     let Some(snapshot) = runtime.latest() else {
         return;
     };
+    let dt = time.delta_seconds();
     for player_snapshot in &snapshot.players {
         let team = if player_snapshot.team == 0 {
             Team::Orange
         } else {
             Team::Blue
         };
-        for (player, mut transform) in &mut players {
+        for (player, mut transform, mut velocity) in &mut players {
             if player.team == team && player.index == player_snapshot.index {
-                transform.translation = Vec3::from(player_snapshot.position);
+                let position = Vec3::from(player_snapshot.position);
+
+                // Velocity is not on the wire, but the display systems all read it: the googly
+                // eyes lag the pupils by it and `animate_player_visual` drives the whole gait,
+                // lean and bob from it. Without this the joiner watches ten statues slide
+                // around the pitch. Recovering it from the positional delta costs nothing and
+                // cannot affect the simulation, because `configure_network_physics` has already
+                // switched Rapier's pipeline off on this machine -- nothing integrates it.
+                if dt > 0.0 {
+                    velocity.linvel = (position - transform.translation) / dt;
+                }
+
+                transform.translation = position;
                 transform.rotation = Quat::from_rotation_y(player_snapshot.yaw);
                 break;
             }

@@ -81,6 +81,18 @@ class CubeSoccerEnv(gym.Env):
             self._env.render()
         return None
 
+    def set_shaping_weight(self, w):
+        self._env.set_shaping_weight(float(w))
+
+    def set_opponent_difficulty(self, d):
+        self._env.set_opponent_difficulty(float(d))
+
+    def set_active_roster(self, n):
+        self._env.set_active_roster(int(n))
+
+    def set_goal_half_width(self, hw):
+        self._env.set_goal_half_width(float(hw))
+
     def close(self):
         pass
 
@@ -176,6 +188,18 @@ class CubeSoccerTeamEnv(gym.Env):
         obs, rewards, done, truncated, info = self._env.step(full)
         team_reward = float(np.sum(rewards[: self.players_per_team]))
         return self._orange_obs(obs), team_reward, done, truncated, info
+
+    def set_shaping_weight(self, w):
+        self._env.set_shaping_weight(float(w))
+
+    def set_opponent_difficulty(self, d):
+        self._env.set_opponent_difficulty(float(d))
+
+    def set_active_roster(self, n):
+        self._env.set_active_roster(int(n))
+
+    def set_goal_half_width(self, hw):
+        self._env.set_goal_half_width(float(hw))
 
     def render(self):
         if self.render_mode == "human":

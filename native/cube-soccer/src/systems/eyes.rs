@@ -7,6 +7,29 @@ use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 use crate::entities::{CubePlayer, GooglyPupil};
 
+/// How far up the hierarchy to look for the body a pupil belongs to.
+///
+/// Pupil -> Eye -> PlayerVisual -> Cube is the deepest arrangement today; the limit only exists
+/// so a malformed hierarchy cannot spin here.
+const MAX_ANCESTRY: usize = 8;
+
+/// Find the player body a pupil hangs beneath, however many nodes are in between.
+///
+/// This used to be a hard-coded two hops, which broke the moment the visuals were re-parented
+/// under an animated `PlayerVisual` node: the grandparent stopped being the body and the pupils
+/// silently froze. Walking until the body is found makes the effect independent of how the
+/// visual hierarchy is arranged.
+fn body_of(start: Entity, parents: &Query<&Parent>, bodies: &Query<&Velocity, With<CubePlayer>>) -> Option<Entity> {
+    let mut current = start;
+    for _ in 0..MAX_ANCESTRY {
+        if bodies.get(current).is_ok() {
+            return Some(current);
+        }
+        current = parents.get(current).ok()?.get();
+    }
+    None
+}
+
 /// Animate googly eye pupils based on parent cube velocity
 pub fn animate_googly_eyes(
     cube_query: Query<&Velocity, With<CubePlayer>>,
@@ -14,10 +37,7 @@ pub fn animate_googly_eyes(
     parent_query: Query<&Parent>,
 ) {
     for (mut transform, pupil, parent) in pupil_query.iter_mut() {
-        // Navigate up the hierarchy: Pupil -> Eye -> Cube
-        let eye_entity = parent.get();
-        if let Ok(eye_parent) = parent_query.get(eye_entity) {
-            let cube_entity = eye_parent.get();
+        if let Some(cube_entity) = body_of(parent.get(), &parent_query, &cube_query) {
             if let Ok(velocity) = cube_query.get(cube_entity) {
                 // Calculate pupil offset based on velocity
                 // Pupils move opposite to acceleration (they "lag behind")

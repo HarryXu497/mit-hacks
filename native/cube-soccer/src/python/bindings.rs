@@ -152,6 +152,33 @@ impl PyCubeSoccerEnv {
         self.env.clear_player_overrides(parse_team(team)?);
         Ok(())
     }
+
+    /// Set the dense-shaping weight (1.0 = full, 0.0 = pure goal objective).
+    fn set_shaping_weight(&mut self, weight: f32) -> PyResult<()> {
+        self.env.set_shaping_weight(weight);
+        Ok(())
+    }
+
+    /// Set the heuristic opponent's difficulty (1.0 = full strength, 0.0 = frozen).
+    /// Used by the training curriculum to weaken Blue early, then ramp to full.
+    fn set_opponent_difficulty(&mut self, difficulty: f32) -> PyResult<()> {
+        self.env.set_opponent_difficulty(difficulty);
+        Ok(())
+    }
+
+    /// Set the active roster size (players per team). Benched players are ghosted +
+    /// frozen; obs/action shape stays fixed. Used to grow 1v1 -> full NvN.
+    fn set_active_roster(&mut self, n: usize) -> PyResult<()> {
+        self.env.set_active_roster(n);
+        Ok(())
+    }
+
+    /// Set the scorable goal half-width in Z (goal-size curriculum). Clamped to
+    /// [regulation, half the field]. Start wide, narrow to regulation.
+    fn set_goal_half_width(&mut self, half_width: f32) -> PyResult<()> {
+        self.env.set_goal_half_width(half_width);
+        Ok(())
+    }
 }
 
 #[cfg(feature = "python")]

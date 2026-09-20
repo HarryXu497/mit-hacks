@@ -4,8 +4,9 @@ use bevy_rapier3d::prelude::*;
 use super::state::{GameState, MatchState};
 use super::events::{GoalScoredEvent, GameOverEvent, ResetGameEvent, BallTouchedEvent};
 use crate::entities::{spawn_arena, spawn_wall_scoreboard, spawn_field, spawn_goals, spawn_players, spawn_ball};
+use crate::entities::character::animate_player_visual;
 use crate::systems::{
-    camera::setup_camera,
+    camera::{setup_camera, update_camera},
     movement::{apply_player_movement, clamp_velocities},
     status_effects::{tick_status_effects, apply_status_forces, ImpulseEvent},
     physics::configure_physics,
@@ -15,7 +16,7 @@ use crate::systems::{
     effects::animate_fragments,
     display::update_wall_scoreboard,
     eyes::animate_googly_eyes,
-    trail::{spawn_trail_particles, animate_trail_particles, TrailSpawnTimer},
+    trail::TrailSpawnTimer,
     superpowers::{tick_superpower_cooldowns, activate_superpowers},
 };
 use crate::input::keyboard::keyboard_input_system;
@@ -27,7 +28,23 @@ pub struct CubeSoccerPlugin;
 
 impl Plugin for CubeSoccerPlugin {
     fn build(&self, app: &mut App) {
+        crate::rendering::stylized::register_shader(app);
+
         app
+            .add_plugins(MaterialPlugin::<crate::rendering::stylized::JungleMaterial>::default())
+
+            // Four-sample anti-aliasing shades every pixel four times over.
+            // Once the static props are batched the frame becomes fill bound,
+            // and on integrated graphics that setting costs about a fifth of it
+            // (measured 39 fps at 4x against 46 with it off).
+            //
+            // Off is too far: the goal netting is built from 0.035-wide beams
+            // that fall below a pixel at broadcast distance, and with no
+            // coverage sampling the mesh breaks into sparkle. Two samples hold
+            // the net and the touchlines together for roughly the price of
+            // none, so that is where this sits.
+            .insert_resource(Msaa::Sample2)
+
             // States
             .insert_state(MatchState::Playing)
 
@@ -63,6 +80,26 @@ impl Plugin for CubeSoccerPlugin {
                 setup_ui,
             ))
 
+            // The jungle is built after the pitch exists, then the static props are merged into a
+            // handful of draws and the cel-lit material is swapped in over the result. The order
+            // matters: batching has to see every prop, and stylising has to see the batches.
+            .add_systems(PostStartup, (
+                crate::jungle::build_jungle,
+                crate::rendering::batching::merge_static_draws,
+                crate::rendering::stylized::stylize,
+            ).chain())
+
+            .add_systems(Update, (
+                crate::jungle::animate_jungle,
+                crate::jungle::animate_water,
+            ))
+
+            // The broadcast camera follows the ball. It runs in PostUpdate, ahead of transform
+            // propagation, so the frame it renders is the one it just aimed at rather than the
+            // previous one.
+            .add_systems(PostUpdate, update_camera
+                .before(bevy::transform::TransformSystem::TransformPropagate))
+
             // Update systems during playing
             .add_systems(Update, (
                 keyboard_input_system,
@@ -87,12 +124,21 @@ impl Plugin for CubeSoccerPlugin {
             // Reset after round timeout (immediate)
             .add_systems(OnEnter(MatchState::RoundOver), (reset_after_round, clear_possession))
 
-            // Animate effects (always running)
+            // Animate effects (always running).
+            //
+            // `animate_player_visual` is what makes the characters move: it reads each body's
+            // velocity, fire input and knockback events and writes only the visual child's
+            // transform, so it can never perturb the simulation.
+            //
+            // Speed trails are deliberately *not* scheduled here. The effect was not wanted in the
+            // jungle presentation, and it cost a freshly allocated mesh and material per particle,
+            // thirty-three times a second per moving player, in a scene that is already fill
+            // bound. `systems::trail` is still built, and `TrailSpawnTimer` still registered, so
+            // the other binaries that do schedule it are unaffected.
             .add_systems(Update, (
                 animate_fragments,
                 animate_googly_eyes,
-                spawn_trail_particles,
-                animate_trail_particles,
+                animate_player_visual,
             ));
     }
 }

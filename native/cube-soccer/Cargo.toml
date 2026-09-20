@@ -16,6 +16,10 @@ rust-version = "1.75"
 # Game engine and physics - using 0.13 for better compatibility
 bevy = { version = "0.13", default-features = false, features = [
     "bevy_asset",
+    # Loads the generated character models. Without it `SceneBundle`'s glTF loader is absent and
+    # every .glb silently fails to load, leaving players as bare cubes.
+    "bevy_gltf",
+    "bevy_scene",
     "bevy_winit",
     "bevy_core_pipeline",
     "bevy_pbr",
@@ -26,6 +30,10 @@ bevy = { version = "0.13", default-features = false, features = [
     "multi-threaded",
     "x11",
     "tonemapping_luts",
+    "png",
+    # The clearing's prompt plaque is the only text in the game; the wall
+    # scoreboard is built from meshes, so no font was needed until now.
+    "default_font",
 ] }
 bevy_rapier3d = { version = "0.25", features = ["simd-stable"] }
 
@@ -34,6 +42,9 @@ rand = "0.8"
 nalgebra = "0.32"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+# Painting export. Same major as the one Bevy already builds, so no extra copy.
+image = { version = "0.24", default-features = false, features = ["png"] }
+humantime = "2.1"
 
 # Python bindings (optional)
 pyo3 = { version = "0.21", features = ["extension-module"], optional = true }
@@ -51,3 +62,14 @@ crate-type = ["cdylib", "rlib"]
 [[bin]]
 name = "cube-soccer"
 path = "src/main.rs"
+
+[[bin]]
+name = "creation"
+path = "src/bin/creation.rs"
+
+[profile.dev]
+opt-level = 1
+debug = 0
+
+[profile.dev.package."*"]
+opt-level = 2

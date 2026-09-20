@@ -1,7 +1,59 @@
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 use crate::entities::{Ball, GoalSensor};
-use crate::game::{GoalScoredEvent, GameState, MatchState, Team, GOALS_TO_WIN};
+use crate::game::{
+    GoalScoredEvent, GameState, MatchState, Team, GOALS_TO_WIN,
+    FIELD_WIDTH, FIELD_HEIGHT, GOAL_HEIGHT, GOAL_DEPTH,
+};
+
+/// Runtime scorable half-width in Z (the goal-size curriculum knob). Regulation is
+/// `GOAL_DEPTH/2 - 0.2` (matches the physical sensor); the curriculum starts this
+/// wide (up to ~half the field) so crude pushes score, then narrows to regulation.
+/// Only the headless [`detect_goals_by_position`] path honours it; a missing
+/// resource = regulation width.
+#[derive(Resource, Clone, Copy, Debug)]
+pub struct GoalHalfWidth(pub f32);
+
+impl GoalHalfWidth {
+    pub fn regulation() -> f32 {
+        GOAL_DEPTH / 2.0 - 0.2
+    }
+}
+
+impl Default for GoalHalfWidth {
+    fn default() -> Self {
+        Self(Self::regulation())
+    }
+}
+
+/// Headless goal detection by ball position, honouring [`GoalHalfWidth`]. A goal is
+/// scored when the ball is past a goal line (`|x| >= FIELD_WIDTH/2`), within the
+/// current scorable half-width in Z, and below the crossbar height. Used instead of
+/// the sensor-based [`detect_goals`] so the scorable width can be widened/narrowed
+/// during training (the physical posts/nets sit at `z = ±GOAL_DEPTH/2`, so wider
+/// balls pass into the open end zone and still register).
+pub fn detect_goals_by_position(
+    mut goal_events: EventWriter<GoalScoredEvent>,
+    ball_query: Query<&Transform, With<Ball>>,
+    half_width: Option<Res<GoalHalfWidth>>,
+) {
+    let Ok(ball) = ball_query.get_single() else {
+        return;
+    };
+    let p = ball.translation;
+    let hw = half_width.map(|h| h.0).unwrap_or_else(GoalHalfWidth::regulation);
+    let line = FIELD_WIDTH / 2.0;
+    let y_base = FIELD_HEIGHT;
+    if p.z.abs() > hw || p.y < y_base || p.y > y_base + GOAL_HEIGHT {
+        return;
+    }
+    if p.x >= line {
+        // Past Blue's goal line (+x) -> Orange scores.
+        goal_events.send(GoalScoredEvent { scoring_team: Team::Orange });
+    } else if p.x <= -line {
+        goal_events.send(GoalScoredEvent { scoring_team: Team::Blue });
+    }
+}
 
 pub fn detect_goals(
     mut goal_events: EventWriter<GoalScoredEvent>,
