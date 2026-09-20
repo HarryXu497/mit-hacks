@@ -67,7 +67,7 @@ pub const PHYSICS_TIMESTEP: f32 = 1.0 / 30.0;  // 30Hz sim (training throughput)
 
 // === MATCH ===
 pub const MATCH_DURATION_SECS: f32 = 300.0;  // 5 minutes total
-pub const ROUND_DURATION_SECS: f32 = 15.0;   // 15 seconds per round
+pub const ROUND_DURATION_SECS: f32 = 30.0;   // 30 seconds per round
 pub const GOALS_TO_WIN: u32 = 10;
 pub const RESET_DELAY_SECS: f32 = 1.0;  // 1 second pause after goal
 

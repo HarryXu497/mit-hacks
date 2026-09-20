@@ -364,15 +364,16 @@ fn transcript_view(
         }
     });
     ui.add_space(8.0);
+    // The transcript is finalized by the table's own microphone now (folded into
+    // the session by `mirror_the_table_into_the_session`); this crate's legacy
+    // `speech` runtime is no longer pumped — `receive_speech` was removed — so its
+    // `is_finalizing()` would latch forever and must not gate generation.
     let can_generate = matches!(
         session.session.status,
         SessionStatus::Review | SessionStatus::Interpreted
-    ) && !speech.is_finalizing()
-        && result.state != InterpretationState::Generating;
+    ) && result.state != InterpretationState::Generating;
     let label = if result.state == InterpretationState::Generating {
         "Generating…"
-    } else if speech.is_finalizing() {
-        "Finalizing transcript…"
     } else if result.state == InterpretationState::Failed {
         "Retry interpretation"
     } else {

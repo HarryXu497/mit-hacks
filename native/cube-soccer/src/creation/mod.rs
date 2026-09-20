@@ -210,9 +210,37 @@ impl Plugin for CreationPlugin {
             )
             .add_systems(OnEnter(CreationPhase::Coaching), hud::hide)
             .add_systems(Update, camera::fly.run_if(in_state(CreationPhase::Departing)))
-            .add_systems(OnEnter(CreationPhase::Departing), hud::hide)
+            .add_systems(OnEnter(CreationPhase::Departing), (ensure_flight, hud::hide))
             .add_systems(OnEnter(CreationPhase::Finished), announce);
     }
+}
+
+/// Guarantee a [`camera::Flight`] exists whenever the camera departs for the pitch.
+///
+/// The standalone easel/table flow inserts a `Flight` on the same key that sets
+/// `Departing` (see `tactics::input`). But the combined app reaches `Departing`
+/// from other paths too — the coaching host's `leave_the_island`, and the admin
+/// "skip to the match" shortcut — which set the state without a `Flight`. Without
+/// one, [`camera::fly`] (which requires `Res<Flight>`) panics the moment the phase
+/// turns, taking the whole app down. Inserting a default here — a flight from
+/// wherever the creation camera currently is to the broadcast framing — makes
+/// every entry into `Departing` safe, and leaves an already-supplied `Flight`
+/// untouched so the table's own framing still wins.
+fn ensure_flight(
+    mut commands: Commands,
+    existing: Option<Res<camera::Flight>>,
+    cameras: Query<&Transform, With<camera::CreationCamera>>,
+) {
+    if existing.is_some() {
+        return;
+    }
+    let from = cameras.get_single().copied().unwrap_or_default();
+    commands.insert_resource(camera::Flight {
+        elapsed: 0.,
+        duration: FLIGHT_SECONDS,
+        from,
+        to: camera::broadcast_view(),
+    });
 }
 
 /// Enter moves the flow forward, saving on the way — the same key, and the same

@@ -14,15 +14,17 @@ use cube_soccer::entities::{
 use cube_soccer::game::{
     BallTouchedEvent, GameOverEvent, GameState, GoalScoredEvent, MatchState, ResetGameEvent,
 };
+use cube_soccer::input::{apply_ai_actions, AIActions};
+use cube_soccer::rl::{apply_policy_actions, PolicyController, PolicyNet, PolicyTeams};
 use cube_soccer::systems::{
-    activate_superpowers, apply_heuristic_ai, apply_status_forces, clamp_velocities,
+    activate_superpowers, apply_status_forces, clamp_velocities,
     clear_possession, tick_cooldowns, tick_status_effects, tick_superpower_cooldowns,
     update_possession, AiControlled, ImpulseEvent, Possession, TeamTactics,
 };
 use cube_soccer::systems::{
     animate_fragments, animate_googly_eyes, animate_trail_particles, apply_player_movement,
     check_reset_timer, detect_goals, handle_goal_scored, reset_after_goal, reset_after_round,
-    spawn_trail_particles, update_camera, update_timers,
+    spawn_trail_particles, update_camera, update_timers, CubeFragment,
     update_wall_scoreboard, ResetTimer, TrailSpawnTimer,
 };
 use cube_soccer::ui::{setup_ui, update_ui};
@@ -41,6 +43,9 @@ impl Plugin for GamePlugin {
             .init_resource::<ResetTimer>()
             .init_resource::<TrailSpawnTimer>()
             .init_resource::<TeamTactics>()
+            .init_resource::<AIActions>()
+            .insert_resource(PolicyTeams::default())
+            .insert_resource(load_policy_controller())
             .init_resource::<Possession>()
             .init_resource::<WornCharacters>()
             .init_resource::<MatchFurnished>()
@@ -72,7 +77,12 @@ impl Plugin for GamePlugin {
             .add_systems(
                 Update,
                 (
-                    apply_heuristic_ai,
+                    // The coach's tactics reach the players through the RL policy:
+                    // `TeamTactics` (set from the coaching handoff) feed each agent's
+                    // observation, the policy reads them, and `apply_ai_actions` turns
+                    // its output into `PlayerInput`. This replaces the heuristic AI.
+                    apply_policy_actions,
+                    apply_ai_actions,
                     tick_superpower_cooldowns,
                     activate_superpowers,
                     tick_status_effects,
@@ -157,7 +167,20 @@ impl Plugin for GamePlugin {
                 (reset_after_round, clear_possession)
                     .chain()
                     .run_if(in_state(AppPhase::Game)),
-            );
+            )
+            // The countdown-driven round reset bursts the players into cube
+            // fragments, but the same transition leaves `AppPhase::Game` for the
+            // table — which stops `animate_fragments`, the system that clears them.
+            // Sweep them up on arrival at the table so they don't hang on the pitch.
+            .add_systems(OnEnter(AppPhase::Coaching), clear_reset_debris);
+    }
+}
+
+/// Despawn the decomposition fragments left by a round-ending reset. See the
+/// `OnEnter(AppPhase::Coaching)` registration above for why they linger.
+fn clear_reset_debris(mut commands: Commands, fragments: Query<Entity, With<CubeFragment>>) {
+    for entity in &fragments {
+        commands.entity(entity).despawn_recursive();
     }
 }
 
@@ -184,6 +207,20 @@ fn tag_players_ai(mut commands: Commands, players: Query<Entity, With<CubePlayer
     for entity in &players {
         commands.entity(entity).insert(AiControlled);
     }
+}
+
+/// Load the trained PPO policy that drives both coached teams. The weights live
+/// with the `cube-soccer` crate (`assets/policy.json`); override the path with
+/// `COACH_POLICY_JSON`. The diffuse checkpoints make the deterministic mean look
+/// passive, so we sample by default — set `COACH_POLICY_DETERMINISTIC` to force
+/// the mean.
+fn load_policy_controller() -> PolicyController {
+    let path = std::env::var("COACH_POLICY_JSON")
+        .unwrap_or_else(|_| PolicyNet::default_asset_path().to_string());
+    let net = PolicyNet::load(&path)
+        .unwrap_or_else(|e| panic!("coaching: failed to load RL policy from {path}: {e}"));
+    let sample = std::env::var("COACH_POLICY_DETERMINISTIC").is_err();
+    PolicyController::new(net, sample, 15.0)
 }
 
 /// The joiner never steps physics locally — it renders positions straight

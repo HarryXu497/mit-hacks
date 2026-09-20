@@ -37,10 +37,14 @@
 pub mod action;
 pub mod environment;
 pub mod observation;
+pub mod policy_agent;
+pub mod policy_net;
 pub mod reward;
 pub mod sim;
 
 pub use action::*;
 pub use environment::*;
 pub use observation::*;
+pub use policy_agent::*;
+pub use policy_net::*;
 pub use reward::*;

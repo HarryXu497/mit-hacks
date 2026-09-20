@@ -674,13 +674,13 @@ mod tests {
     }
 
     #[test]
-    fn tactic_next_cycles_all_ten() {
+    fn tactic_next_cycles_all_four() {
         let mut t = Tactic::Balanced;
         let mut seen = vec![t];
-        for _ in 0..9 { t = t.next(); seen.push(t); }
-        assert_eq!(seen.len(), 10);
-        assert_eq!(t.next(), Tactic::Balanced, "wraps back to Balanced after 10");
-        for i in 0..10 { for j in (i+1)..10 { assert_ne!(seen[i], seen[j]); } }
+        for _ in 0..3 { t = t.next(); seen.push(t); }
+        assert_eq!(seen.len(), 4);
+        assert_eq!(t.next(), Tactic::Balanced, "wraps back to Balanced after 4");
+        for i in 0..4 { for j in (i+1)..4 { assert_ne!(seen[i], seen[j]); } }
     }
 
     #[test]

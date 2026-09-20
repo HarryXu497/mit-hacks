@@ -129,6 +129,7 @@ fn ease(t: f32) -> f32 {
 /// peak to the broadcast position would clip through the summit massif.
 pub fn fly(
     time: Res<Time>,
+    mut commands: Commands,
     mut flight: ResMut<Flight>,
     mut cameras: Query<&mut Transform, With<CreationCamera>>,
     mut phase: ResMut<NextState<CreationPhase>>,
@@ -151,6 +152,10 @@ pub fn fly(
 
     if flight.elapsed >= flight.duration {
         transform.clone_from(&flight.to);
+        // Drop the flight so a later round departs fresh: `ensure_flight` only
+        // supplies one when none exists, and a spent flight (elapsed == duration)
+        // would otherwise make the next departure snap instead of fly.
+        commands.remove_resource::<Flight>();
         phase.set(CreationPhase::Finished);
     }
 }
