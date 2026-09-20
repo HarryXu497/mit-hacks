@@ -259,6 +259,31 @@ impl Tool {
 
 pub struct TacticsPlugin;
 
+/// Whether the standing sign beside the table is built and kept up to date.
+///
+/// The table works without it. The coaching app inserts `SignVisible(false)`
+/// because its own side panel already shows the transcript, timeline and
+/// tactical JSON the sign would — the second copy in the world was redundant.
+#[derive(Resource)]
+pub struct SignVisible(pub bool);
+
+impl Default for SignVisible {
+    fn default() -> Self {
+        Self(true)
+    }
+}
+
+/// Set true by a host app when an on-screen text field holds keyboard focus, so
+/// the table's own shortcuts stay quiet while the coach is typing. Without it,
+/// Enter typed into a note field also fires "Enter to match" and leaves for the
+/// game; every other table key (R, M, A, D, E…) would fire mid-word too.
+///
+/// cube-soccer has no egui of its own, so it cannot see the focus itself — the
+/// coaching panel writes this each frame. Defaults false: the table's keyboard
+/// is live unless a host says otherwise.
+#[derive(Resource, Default)]
+pub struct KeyboardCaptured(pub bool);
+
 impl Plugin for TacticsPlugin {
     fn build(&self, app: &mut App) {
         app.init_state::<TableState>()
@@ -267,6 +292,8 @@ impl Plugin for TacticsPlugin {
             .init_resource::<Interpretation>()
             .init_resource::<Tool>()
             .init_resource::<Playhead>()
+            .init_resource::<SignVisible>()
+            .init_resource::<KeyboardCaptured>()
             .add_event::<RequestInterpretation>()
             .add_event::<ResetBoard>()
             .add_systems(
@@ -338,7 +365,13 @@ fn controls(
     mut phase: ResMut<NextState<CreationPhase>>,
     mut c: Commands,
     cameras: Query<&Transform, With<crate::creation::camera::CreationCamera>>,
+    captured: Res<KeyboardCaptured>,
 ) {
+    // The coach is typing in a panel field; leave every shortcut to egui.
+    if captured.0 {
+        return;
+    }
+
     for (key, picked) in [
         (KeyCode::KeyM, Tool::Move),
         (KeyCode::KeyA, Tool::Arrow),

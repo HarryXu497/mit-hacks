@@ -49,8 +49,10 @@ pub fn replay_session(events: &[RawSessionEvent], until_ms: Option<u64>) -> Repl
     // A vector in log order, with an index beside it -- deliberately not a `HashMap` whose
     // values are collected at the end. `HashMap` seeds its iteration order per instance and a
     // fresh one was built on every call, so the stable sort below had a different starting
-    // order every frame. Two sentences sharing a timestamp therefore swapped rows on every
-    // repaint, which is one of the ways the transcript panel appeared to flicker.
+    // order every frame. Anything tying on the sort key therefore swapped rows on every
+    // repaint: two sentences said on the same millisecond, and every manual note jotted
+    // before the clock starts, which all share `start_ms = 0`. The index keeps an edit's
+    // lookup O(1).
     let mut transcripts: Vec<TranscriptSegment> = Vec::new();
     let mut position = HashMap::<String, usize>::new();
     let scoped = events
@@ -100,8 +102,8 @@ pub fn replay_session(events: &[RawSessionEvent], until_ms: Option<u64>) -> Repl
         }
     }
 
-    // Stable, over a vector already in log order, so sentences sharing a timestamp keep the
-    // order they were said in -- the same order on every call.
+    // Stable, over a vector already in log order, so anything tying on `start_ms` keeps the
+    // order it was added in -- the same order on every call.
     transcripts.sort_by_key(|segment| segment.start_ms);
     ReplayState {
         board,

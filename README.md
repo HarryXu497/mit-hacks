@@ -41,7 +41,6 @@ variables.
 | `tools/monkeyforge` | The generative asset pipeline: sketch → spec → geometry → validated GLB, plus the superpower classifier. |
 | `server/` | Node service: transcription, tactic interpretation, live shouts, LAN lobby, MonkeyForge bridge. |
 | `src/domain` | Shared session/tactic types and the interpretation schema. |
-| `ppo_cube_soccer_*_steps.zip` | Trained PPO checkpoints, 25.6M through 78.4M environment steps. |
 
 ## Run it
 
@@ -181,8 +180,9 @@ envs through `env_method`:
   goal objective; `ent_coef` decays so the policy sharpens as the scales get
   harder instead of letting the action std run away.
 
-We trained across **78.4 million environment steps**. Checkpoints at 25.6M,
-38.4M, 60.8M and 78.4M are committed at the repository root.
+We trained across **78.4 million environment steps**, checkpointing at 25.6M,
+38.4M, 60.8M and 78.4M. The checkpoint `.zip`s are not in the repository — they
+are 4 MB each and were dropped to keep the clone small.
 
 ### Rewards, and how agents cheat them
 

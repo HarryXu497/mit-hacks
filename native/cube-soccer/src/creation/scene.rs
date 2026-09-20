@@ -58,7 +58,7 @@ pub fn build_clearing(
 
     let canvas = easel(&mut c, &k, &quad, &mut mats, &mut images);
     model_stone(&mut c, &k);
-    pigment_shelf(&mut c, &k, &mut mats);
+    pigment_palette(&mut c, &k, &mut mats);
     undergrowth(&mut c, &k);
 
     c.insert_resource(CreationScene { canvas });
@@ -294,20 +294,61 @@ fn model_stone(c: &mut Commands, k: &Kit) {
     monkey(c, k, body, Team::Orange);
 }
 
-/// Ground pigment in stone dishes on a shelf beside the easel. These are the
-/// colour controls: diegetic objects you click, not a toolbar drawn over the
-/// world. `paint.rs` gives them their behaviour.
-fn pigment_shelf(c: &mut Commands, k: &Kit, mats: &mut Assets<StandardMaterial>) {
-    let shelf = EASEL_LOCAL + Vec3::new(2.62, 0.16, 0.95);
-    slab(c, k, k.rock.clone(), shelf, Vec3::new(1.5, 0.34, 3.5));
-    // The wet rag, folded at the near end: click it to wipe pigment off.
+/// The colour controls: a standing palette board beside the easel, turned into
+/// the same plane as the canvas so its face is square to the painter. Each
+/// pigment is a dish of colour on that face — diegetic objects you click, not a
+/// toolbar drawn over the world. Standing it upright, rather than laying the
+/// dishes flat on a shelf, is what makes it read as something to reach out and
+/// tap. `paint.rs` gives the dishes their behaviour.
+fn pigment_palette(c: &mut Commands, k: &Kit, mats: &mut Assets<StandardMaterial>) {
+    // Feet out to the easel's right, sat on the canvas's own z-plane (the +0.52
+    // matches the canvas centre) so the board rides above on a single post with
+    // its face level with the work — painter and palette read as one shot.
+    let base = EASEL_LOCAL + Vec3::new(2.75, 0., 0.52);
+    let (board_w, board_h) = (1.05_f32, 2.1_f32);
+    let centre = base + Vec3::new(0., 0.5 + board_h * 0.5, 0.);
+    // The canvas's lean, reused: parallel to the work, facing the painter.
+    let lean = facing() * Quat::from_rotation_x(-CANVAS_TILT);
+    // Turns a dish's mouth (up, by default) to lie in the board's plane, so it
+    // looks back at the camera instead of up at the sky.
+    let onto_board = lean * Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+
+    // A stone foot and a single post carrying the board up to the painter's eye.
+    slab(c, k, k.rock.clone(), base + Vec3::new(0., -0.45, -0.2), Vec3::new(0.9, 0.2, 0.9));
+    beam(
+        c,
+        k,
+        k.wood.clone(),
+        place(base + Vec3::new(0., -0.35, -0.2)),
+        place(centre) + lean * Vec3::new(0., -board_h * 0.5, -0.06),
+        0.16,
+    );
+    // Ink shell behind the board, matching every other form in the world.
+    c.spawn(PbrBundle {
+        mesh: k.cube.clone(),
+        material: k.ink.clone(),
+        transform: Transform::from_translation(place(centre))
+            .with_rotation(lean)
+            .with_scale(Vec3::new(board_w + INK * 6., board_h + INK * 6., 0.1)),
+        ..default()
+    });
+    // The palette board itself, a shade proud of the ink.
+    c.spawn(PbrBundle {
+        mesh: k.cube.clone(),
+        material: k.wood_light.clone(),
+        transform: Transform::from_translation(place(centre) + lean * Vec3::Z * 0.06)
+            .with_rotation(lean)
+            .with_scale(Vec3::new(board_w, board_h, 0.14)),
+        ..default()
+    });
+    // The wet rag, pinned low on the board: click it to wipe pigment off.
     c.spawn((
         PbrBundle {
             mesh: k.cube.clone(),
             material: k.white.clone(),
-            transform: Transform::from_translation(place(shelf + Vec3::new(0., 0.24, 1.42)))
-                .with_rotation(facing() * Quat::from_rotation_y(0.3))
-                .with_scale(Vec3::new(0.62, 0.12, 0.4)),
+            transform: Transform::from_translation(place(centre) + lean * Vec3::new(0., -1.0, 0.12))
+                .with_rotation(lean * Quat::from_rotation_z(0.1))
+                .with_scale(Vec3::new(0.5, 0.28, 0.1)),
             ..default()
         },
         super::paint::Rag,
@@ -316,22 +357,26 @@ fn pigment_shelf(c: &mut Commands, k: &Kit, mats: &mut Assets<StandardMaterial>)
     for (i, rgb) in super::paint::PIGMENTS.iter().enumerate() {
         let row = i / 2;
         let col = i % 2;
-        let p = place(shelf + Vec3::new(-0.34 + col as f32 * 0.68, 0.24, -1.32 + row as f32 * 0.66));
-        // The dish.
+        // Position on the board's face: x across, y up, then proud of the front.
+        let on_face = Vec3::new(-0.28 + col as f32 * 0.56, 0.8 - row as f32 * 0.52, 0.);
+        // The dish, laid into the board so its mouth faces the painter.
         c.spawn(PbrBundle {
             mesh: k.stone.clone(),
             material: k.rock_light.clone(),
-            transform: Transform::from_translation(p).with_scale(Vec3::new(0.29, 0.1, 0.29)),
+            transform: Transform::from_translation(place(centre) + lean * (on_face + Vec3::Z * 0.12))
+                .with_rotation(onto_board)
+                .with_scale(Vec3::new(0.24, 0.1, 0.24)),
             ..default()
         });
-        // The pigment pooled in it, at full authored chroma.
+        // The pigment in it, at full authored chroma, standing proud of the dish.
         let colour = material(mats, Color::rgb(rgb[0], rgb[1], rgb[2]));
         c.spawn((
             PbrBundle {
                 mesh: k.stone.clone(),
                 material: colour,
-                transform: Transform::from_translation(p + Vec3::Y * 0.07)
-                    .with_scale(Vec3::new(0.21, 0.06, 0.21)),
+                transform: Transform::from_translation(place(centre) + lean * (on_face + Vec3::Z * 0.18))
+                    .with_rotation(onto_board)
+                    .with_scale(Vec3::new(0.17, 0.06, 0.17)),
                 ..default()
             },
             super::paint::PigmentDish(i),
