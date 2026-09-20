@@ -2,7 +2,7 @@ import { z } from "zod";
 
 export const TACTIC_TAXONOMY_VERSION = "tactics-v2" as const;
 
-export const tacticKeys = ["balanced", "highpress", "gegenpress", "lowblock", "parkthebus", "counterattack", "possession", "wingplay", "narrowmidblock", "alloutattack"] as const;
+export const tacticKeys = ["balanced", "highpress", "lowblock", "wingplay"] as const;
 export const tacticKeySchema = z.enum(tacticKeys);
 export type TacticKey = z.infer<typeof tacticKeySchema>;
 
@@ -20,52 +20,16 @@ export const TACTIC_TAXONOMY = [
     "description": "Coordinated pressure high up the field."
   },
   {
-    "key": "gegenpress",
-    "displayName": "Gegenpress",
-    "downstreamValue": "gegenpress",
-    "description": "Immediate aggressive pressure after losing possession."
-  },
-  {
     "key": "lowblock",
     "displayName": "Low Block",
     "downstreamValue": "lowblock",
     "description": "Compact defensive organization near the own goal."
   },
   {
-    "key": "parkthebus",
-    "displayName": "Park the Bus",
-    "downstreamValue": "parkthebus",
-    "description": "Very deep defensive shape with minimal attacking commitment."
-  },
-  {
-    "key": "counterattack",
-    "displayName": "Counter-Attack",
-    "downstreamValue": "counterattack",
-    "description": "Defend deeper and break forward quickly after recovery."
-  },
-  {
-    "key": "possession",
-    "displayName": "Possession",
-    "downstreamValue": "possession",
-    "description": "Spread support and maintain passing options to keep the ball."
-  },
-  {
     "key": "wingplay",
     "displayName": "Wing Play",
     "downstreamValue": "wingplay",
     "description": "Use wide support to stretch opponents."
-  },
-  {
-    "key": "narrowmidblock",
-    "displayName": "Narrow Mid-Block",
-    "downstreamValue": "narrowmidblock",
-    "description": "Compact central shape with moderate pressure."
-  },
-  {
-    "key": "alloutattack",
-    "displayName": "All-Out Attack",
-    "downstreamValue": "alloutattack",
-    "description": "Commit most support players forward with a high line."
   }
 ] as const;
 

@@ -82,15 +82,12 @@ impl TacticParams {
 /// The named tactic presets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tactic {
-    Balanced, HighPress, Gegenpress, LowBlock, ParkTheBus,
-    CounterAttack, Possession, WingPlay, NarrowMidBlock, AllOutAttack,
+    Balanced, HighPress, LowBlock, WingPlay,
 }
 
 impl Tactic {
-    pub const ALL: [Tactic; 10] = [
-        Tactic::Balanced, Tactic::HighPress, Tactic::Gegenpress, Tactic::LowBlock,
-        Tactic::ParkTheBus, Tactic::CounterAttack, Tactic::Possession, Tactic::WingPlay,
-        Tactic::NarrowMidBlock, Tactic::AllOutAttack,
+    pub const ALL: [Tactic; 4] = [
+        Tactic::Balanced, Tactic::HighPress, Tactic::LowBlock, Tactic::WingPlay,
     ];
 
     pub fn params(self) -> TacticParams {
@@ -98,14 +95,8 @@ impl Tactic {
         match self {
             Tactic::Balanced       => TacticParams { defender_depth: 0.50, attacker_push: 0.40, width: 1.0, spacing: 1.0, press: 0.00, line_height:  0.00, commitment: 0.50 },
             Tactic::HighPress      => TacticParams { defender_depth: 0.30, attacker_push: 0.65, width: 1.0, spacing: 1.1, press: 0.70, line_height:  0.30, commitment: 0.60 },
-            Tactic::Gegenpress     => TacticParams { defender_depth: 0.25, attacker_push: 0.60, width: 0.9, spacing: 1.2, press: 0.95, line_height:  0.35, commitment: 0.70 },
             Tactic::LowBlock       => TacticParams { defender_depth: 0.85, attacker_push: 0.15, width: 0.8, spacing: 0.9, press: 0.00, line_height: -0.30, commitment: 0.25 },
-            Tactic::ParkTheBus     => TacticParams { defender_depth: 0.95, attacker_push: 0.10, width: 0.7, spacing: 0.8, press: 0.00, line_height: -0.45, commitment: 0.10 },
-            Tactic::CounterAttack  => TacticParams { defender_depth: 0.75, attacker_push: 0.70, width: 1.1, spacing: 1.1, press: 0.10, line_height: -0.20, commitment: 0.40 },
-            Tactic::Possession     => TacticParams { defender_depth: 0.45, attacker_push: 0.45, width: 1.2, spacing: 1.4, press: 0.20, line_height:  0.10, commitment: 0.50 },
             Tactic::WingPlay       => TacticParams { defender_depth: 0.50, attacker_push: 0.50, width: 1.6, spacing: 1.3, press: 0.10, line_height:  0.00, commitment: 0.55 },
-            Tactic::NarrowMidBlock => TacticParams { defender_depth: 0.55, attacker_push: 0.35, width: 0.7, spacing: 0.9, press: 0.35, line_height:  0.00, commitment: 0.40 },
-            Tactic::AllOutAttack   => TacticParams { defender_depth: 0.40, attacker_push: 0.75, width: 1.3, spacing: 1.2, press: 0.45, line_height:  0.40, commitment: 0.85 },
         }
     }
 
@@ -119,14 +110,8 @@ impl Tactic {
         match self {
             Tactic::Balanced => "Balanced",
             Tactic::HighPress => "High Press",
-            Tactic::Gegenpress => "Gegenpress",
             Tactic::LowBlock => "Low Block",
-            Tactic::ParkTheBus => "Park the Bus",
-            Tactic::CounterAttack => "Counter-Attack",
-            Tactic::Possession => "Possession",
             Tactic::WingPlay => "Wing Play",
-            Tactic::NarrowMidBlock => "Narrow Mid-Block",
-            Tactic::AllOutAttack => "All-Out Attack",
         }
     }
 
@@ -135,14 +120,8 @@ impl Tactic {
         match s.trim().to_lowercase().replace([' ', '-'], "").as_str() {
             "balanced" => Some(Tactic::Balanced),
             "highpress" => Some(Tactic::HighPress),
-            "gegenpress" => Some(Tactic::Gegenpress),
             "lowblock" => Some(Tactic::LowBlock),
-            "parkthebus" => Some(Tactic::ParkTheBus),
-            "counterattack" => Some(Tactic::CounterAttack),
-            "possession" => Some(Tactic::Possession),
             "wingplay" => Some(Tactic::WingPlay),
-            "narrowmidblock" => Some(Tactic::NarrowMidBlock),
-            "alloutattack" => Some(Tactic::AllOutAttack),
             _ => None,
         }
     }
@@ -705,20 +684,20 @@ mod tests {
     }
 
     #[test]
-    fn all_ten_presets_roundtrip_names() {
-        assert_eq!(Tactic::ALL.len(), 10);
+    fn all_four_presets_roundtrip_names() {
+        assert_eq!(Tactic::ALL.len(), 4);
         for t in Tactic::ALL {
             assert_eq!(Tactic::from_name(t.name()), Some(t), "{} must roundtrip", t.name());
         }
-        assert_eq!(Tactic::from_name("counter-attack"), Some(Tactic::CounterAttack));
-        assert_eq!(Tactic::from_name("PARK THE BUS"), Some(Tactic::ParkTheBus));
+        assert_eq!(Tactic::from_name("wing play"), Some(Tactic::WingPlay));
+        assert_eq!(Tactic::from_name("HIGH PRESS"), Some(Tactic::HighPress));
         assert_eq!(Tactic::from_name("nonsense"), None);
     }
 
     #[test]
     fn blend_averages_all_seven_axes() {
         let a = Tactic::Balanced.params();
-        let b = Tactic::AllOutAttack.params();
+        let b = Tactic::HighPress.params();
         let m = TacticParams::blend(&[(a, 1.0), (b, 1.0)]);
         assert!((m.press       - (a.press + b.press) / 2.0).abs() < 1e-6);
         assert!((m.line_height - (a.line_height + b.line_height) / 2.0).abs() < 1e-6);
@@ -726,8 +705,8 @@ mod tests {
     }
 
     #[test]
-    fn gegenpress_presses_harder_than_high_press() {
-        assert!(Tactic::Gegenpress.params().press > Tactic::HighPress.params().press);
+    fn high_press_presses_harder_than_balanced() {
+        assert!(Tactic::HighPress.params().press > Tactic::Balanced.params().press);
     }
 
     #[test]
