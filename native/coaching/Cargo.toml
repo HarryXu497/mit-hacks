@@ -43,10 +43,12 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tactic-lab-player-creation = { path = "../player-creation" }
-tokio = { version = "1.40", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tokio = { version = "1.40", features = ["rt-multi-thread", "macros", "sync", "time", "net"] }
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
 url = "2.5"
 uuid = { version = "1.10", features = ["v4", "serde"] }
+mdns-sd = "0.21.3"
+local-ip-address = "0.6.13"
 
 [dev-dependencies]
 tempfile = "3.12"

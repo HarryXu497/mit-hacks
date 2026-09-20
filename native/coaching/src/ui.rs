@@ -1,6 +1,6 @@
 use crate::board::{append_undo, BoardInteraction, BoardViewport, BOARD_ASPECT};
 use crate::interpretation::{InterpretationState, RequestInterpretation, TacticalResult};
-use crate::EnterGame;
+use crate::network::MatchReady;
 use crate::model::{create_id, RawSessionEvent, SessionStatus, Tool, TranscriptSource};
 use crate::persistence::{export_tactical_json, PersistenceStatus};
 use crate::replay::{find_undo_target, replay_session};
@@ -49,7 +49,7 @@ pub fn coaching_ui(
     persistence: Res<PersistenceStatus>,
     mut ui_state: ResMut<CoachingUiState>,
     mut interpretation_requests: EventWriter<RequestInterpretation>,
-    mut enter_game: EventWriter<EnterGame>,
+    mut match_ready: EventWriter<MatchReady>,
 ) {
     let context = contexts.ctx_mut();
 
@@ -63,7 +63,7 @@ pub fn coaching_ui(
         &persistence,
         &mut ui_state,
         &mut interpretation_requests,
-        &mut enter_game,
+        &mut match_ready,
     );
     board_panel(context, &mut session, &mut interaction, &mut viewport);
 
@@ -215,7 +215,7 @@ fn transcript_panel(
     persistence: &PersistenceStatus,
     ui_state: &mut CoachingUiState,
     requests: &mut EventWriter<RequestInterpretation>,
-    enter_game: &mut EventWriter<EnterGame>,
+    match_ready: &mut EventWriter<MatchReady>,
 ) {
     egui::SidePanel::right("transcript-panel")
         .resizable(true)
@@ -243,7 +243,7 @@ fn transcript_panel(
             ui.separator();
 
             if result.output.is_some() {
-                result_view(ui, session, result, enter_game);
+                result_view(ui, session, result, match_ready);
             } else {
                 transcript_view(ui, session, speech, persistence, ui_state, requests, result);
             }
@@ -413,7 +413,7 @@ fn result_view(
     ui: &mut egui::Ui,
     session: &mut CoachingSession,
     result: &mut TacticalResult,
-    enter_game: &mut EventWriter<EnterGame>,
+    match_ready: &mut EventWriter<MatchReady>,
 ) {
     let Some(output) = result.output.clone() else {
         return;
@@ -426,8 +426,12 @@ fn result_view(
     if let Some(notice) = &result.notice {
         ui.colored_label(egui::Color32::from_rgb(220, 201, 141), notice);
     }
-    if let Ok(handoff) = crate::game_handoff::GameHandoff::from_output(&output, &session.session.id) {
-        ui.label(handoff.summary());
+    if let Ok(red) = crate::game_handoff::CoachedTeam::from_output_for_team(
+        &output,
+        &session.session.id,
+        crate::game_handoff::TeamSide::Red,
+    ) {
+        ui.label(red.summary_line());
     }
     let pretty = serde_json::to_string_pretty(&output).unwrap_or_else(|_| "{}".into());
     ui.horizontal(|ui| {
@@ -454,7 +458,7 @@ fn result_view(
         )
         .clicked()
     {
-        enter_game.send(EnterGame);
+        match_ready.send(MatchReady);
     }
     ui.add_space(8.0);
     egui::ScrollArea::vertical()

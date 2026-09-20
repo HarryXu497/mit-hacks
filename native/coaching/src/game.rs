@@ -2,7 +2,11 @@ use bevy::prelude::*;
 use bevy::transform::TransformSystem;
 use bevy_rapier3d::prelude::*;
 
-use crate::game_handoff::GameHandoff;
+use crate::game_handoff::MatchHandoff;
+use crate::game_stream::{
+    apply_network_snapshot, publish_game_snapshot, start_game_stream, SnapshotTimer,
+};
+use crate::network::{is_not_spectator, is_spectator, NetworkRole};
 use cube_soccer::entities::CubePlayer;
 use cube_soccer::entities::{
     spawn_arena, spawn_ball, spawn_field, spawn_goals, spawn_players, spawn_wall_scoreboard,
@@ -38,6 +42,7 @@ impl Plugin for GamePlugin {
             .init_resource::<TrailSpawnTimer>()
             .init_resource::<TeamTactics>()
             .init_resource::<Possession>()
+            .init_resource::<SnapshotTimer>()
             .add_event::<ImpulseEvent>()
             .add_event::<GoalScoredEvent>()
             .add_event::<GameOverEvent>()
@@ -47,6 +52,7 @@ impl Plugin for GamePlugin {
                 OnEnter(AppPhase::Game),
                 (
                     configure_physics,
+                    configure_network_physics,
                     spawn_arena,
                     spawn_wall_scoreboard,
                     spawn_field,
@@ -58,6 +64,7 @@ impl Plugin for GamePlugin {
                     setup_ui,
                     tag_players_ai,
                     spawn_tactic_hud,
+                    start_game_stream,
                 )
                     .chain(),
             )
@@ -83,13 +90,25 @@ impl Plugin for GamePlugin {
                 )
                     .chain()
                     .run_if(in_state(AppPhase::Game))
-                    .run_if(in_state(MatchState::Playing)),
+                    .run_if(in_state(MatchState::Playing))
+                    .run_if(is_not_spectator),
+            )
+            .add_systems(
+                Update,
+                publish_game_snapshot.run_if(in_state(AppPhase::Game)),
+            )
+            .add_systems(
+                Update,
+                apply_network_snapshot
+                    .run_if(in_state(AppPhase::Game))
+                    .run_if(is_spectator),
             )
             .add_systems(
                 Update,
                 check_reset_timer
                     .run_if(in_state(AppPhase::Game))
-                    .run_if(in_state(MatchState::GoalScored)),
+                    .run_if(in_state(MatchState::GoalScored))
+                    .run_if(is_not_spectator),
             )
             .add_systems(
                 Update,
@@ -128,7 +147,15 @@ fn tag_players_ai(mut commands: Commands, players: Query<Entity, With<CubePlayer
     }
 }
 
-fn spawn_tactic_hud(mut commands: Commands, handoff: Res<GameHandoff>) {
+/// The joiner never steps physics locally — it renders positions straight
+/// from the host's stream — so disable Rapier's pipeline there entirely.
+/// This is what makes host-authoritative streaming safe against cross-machine
+/// simulation drift: the joiner has no local simulation to drift from.
+fn configure_network_physics(role: Option<Res<NetworkRole>>, mut config: ResMut<RapierConfiguration>) {
+    config.physics_pipeline_active = !role.map(|role| role.is_joiner()).unwrap_or(false);
+}
+
+fn spawn_tactic_hud(mut commands: Commands, handoff: Res<MatchHandoff>) {
     commands.spawn(TextBundle {
         text: Text::from_section(
             handoff.summary(),

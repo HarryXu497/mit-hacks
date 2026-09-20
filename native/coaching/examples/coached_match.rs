@@ -3,7 +3,11 @@
 //! cargo run --manifest-path native/coaching/Cargo.toml --example coached_match -- highpress
 use bevy::prelude::*;
 use serde_json::json;
-use tactic_lab_native::{game::GamePlugin, game_handoff::GameHandoff, phase::AppPhase};
+use tactic_lab_native::{
+    game::GamePlugin,
+    game_handoff::{CoachedTeam, MatchHandoff, TeamSide},
+    phase::AppPhase,
+};
 
 fn main() {
     let tactic = std::env::args().nth(1).unwrap_or_else(|| "highpress".into());
@@ -18,8 +22,12 @@ fn main() {
                 "evidence": { "eventIds": [], "transcriptSegmentIds": ["synthetic-instruction"] } }]
         }
     });
-    let handoff = GameHandoff::from_output(&output, "synthetic-render-smoke")
+    let red = CoachedTeam::from_output_for_team(&output, "synthetic-render-smoke", TeamSide::Red)
         .expect("Pass one of the ten canonical tactic labels");
+    let handoff = MatchHandoff {
+        red,
+        yellow: CoachedTeam::balanced_default("synthetic-render-smoke", TeamSide::Yellow),
+    };
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {

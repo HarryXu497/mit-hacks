@@ -1,4 +1,6 @@
+use crate::game_handoff::TeamSide;
 use crate::model::{AnnotationKind, EntityRef, RawSessionEvent, Session, SessionStatus, TeamId};
+use crate::network::{MatchReady, NetworkRole};
 use crate::persistence::save_artifacts;
 use crate::replay::{effective_events, replay_session};
 use crate::session::CoachingSession;
@@ -70,7 +72,8 @@ pub fn request_interpretation(
     mut session: ResMut<CoachingSession>,
     mut result: ResMut<TacticalResult>,
     runtime: Res<InterpretationRuntime>,
-    mut enter_game: EventWriter<crate::EnterGame>,
+    role: Res<NetworkRole>,
+    mut match_ready: EventWriter<MatchReady>,
 ) {
     let Some(request) = requests.read().next().copied() else {
         return;
@@ -88,7 +91,12 @@ pub fn request_interpretation(
             .notice
             .clone()
             .unwrap_or_else(|| "Unknown interpretation error".into());
-        let output = deterministic_interpretation(&session.session, "deterministic-fallback");
+        let team_id = match role.coached_side() {
+            TeamSide::Red => "red",
+            TeamSide::Yellow => "yellow",
+        };
+        let output =
+            deterministic_interpretation(&session.session, "deterministic-fallback", team_id);
         accept_interpretation(
             &mut session,
             &mut result,
@@ -97,7 +105,7 @@ pub fn request_interpretation(
                 "You chose to continue with Balanced. Interpretation failure: {diagnostic}"
             )),
         );
-        enter_game.send(crate::EnterGame);
+        match_ready.send(MatchReady);
         return;
     }
     result.state = InterpretationState::Generating;
@@ -110,10 +118,11 @@ pub fn request_interpretation(
     let revision = session.revision;
     let snapshot = session.session.clone();
     let sender = runtime.sender.clone();
+    let team_side = role.coached_side();
     drop(std::thread::spawn(move || {
         let endpoint = std::env::var("TACTIC_LAB_API_URL")
             .unwrap_or_else(|_| "http://127.0.0.1:8787".to_owned());
-        let outcome = fetch_interpretation(&endpoint, &snapshot);
+        let outcome = fetch_interpretation(&endpoint, &snapshot, team_side);
         let _ = sender.send(InterpretationReply {
             generation,
             revision,
@@ -123,20 +132,24 @@ pub fn request_interpretation(
     }));
 }
 
-fn fetch_interpretation(endpoint: &str, session: &Session) -> Result<Value, String> {
+fn fetch_interpretation(endpoint: &str, session: &Session, team_side: TeamSide) -> Result<Value, String> {
+    let team_id = match team_side {
+        TeamSide::Red => "red",
+        TeamSide::Yellow => "yellow",
+    };
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
         .map_err(transport_diagnostic)?;
     let response = client
         .post(format!("{}/api/interpret", endpoint.trim_end_matches('/')))
-        .json(&json!({ "schemaVersion": "1.0", "session": session }))
+        .json(&json!({ "schemaVersion": "1.0", "session": session, "teamId": team_id }))
         .send()
         .map_err(transport_diagnostic)?;
     let status = response.status().as_u16();
     // Read the error body before inspecting status: it contains the actionable reason.
     let body = response.text().map_err(transport_diagnostic)?;
-    decode_interpretation_response(status, &body, &session.id)
+    decode_interpretation_response(status, &body, &session.id, team_side)
 }
 
 fn transport_diagnostic(error: reqwest::Error) -> String {
@@ -154,6 +167,7 @@ fn decode_interpretation_response(
     status: u16,
     body: &str,
     session_id: &str,
+    team_side: TeamSide,
 ) -> Result<Value, String> {
     let output: Value = serde_json::from_str(body)
         .map_err(|error| format!("INVALID_SERVER_RESPONSE (HTTP {status}): Expected JSON, but could not decode the response: {error}. Check the API server logs."))?;
@@ -176,7 +190,7 @@ fn decode_interpretation_response(
     if output["rlSelection"]["selectionReason"].as_str() != Some("best_match") {
         return Err("NON_BEST_MATCH_SELECTION: The server did not return a supported best-match interpretation. Restart the updated API server and retry.".into());
     }
-    crate::game_handoff::GameHandoff::from_output(&output, session_id)
+    crate::game_handoff::CoachedTeam::from_output_for_team(&output, session_id, team_side)
         .map_err(|error| format!("INVALID_TACTICAL_PAYLOAD: {error:#}"))?;
     Ok(output)
 }
@@ -260,7 +274,7 @@ pub fn invalidate_stale_result(session: Res<CoachingSession>, mut result: ResMut
     }
 }
 
-pub fn deterministic_interpretation(session: &Session, mode: &str) -> Value {
+pub fn deterministic_interpretation(session: &Session, mode: &str, team_id: &str) -> Value {
     let replay = replay_session(&session.events, None);
     let effective = effective_events(&session.events);
     let board_actions = effective
@@ -406,7 +420,7 @@ pub fn deterministic_interpretation(session: &Session, mode: &str) -> Value {
             "sessionId": session.id,
             "primaryTactic": "balanced",
             "downstreamValue": "balanced",
-            "teamId": "red",
+            "teamId": team_id,
             "playerOverrides": [],
             "selectionReason": "system_fallback",
             "evidenceStrength": "weak",
@@ -422,7 +436,7 @@ mod tests {
     #[test]
     fn http_failure_preserves_server_reason_and_request_id() {
         let error = decode_interpretation_response(429,
-            r#"{"code":"OPENAI_RATE_LIMIT_OR_QUOTA","message":"Quota exhausted","requestId":"req-test"}"#, "s").unwrap_err();
+            r#"{"code":"OPENAI_RATE_LIMIT_OR_QUOTA","message":"Quota exhausted","requestId":"req-test"}"#, "s", TeamSide::Red).unwrap_err();
         assert!(error.contains("OPENAI_RATE_LIMIT_OR_QUOTA"));
         assert!(error.contains("Quota exhausted"));
         assert!(error.contains("req-test"));
@@ -432,14 +446,14 @@ mod tests {
     #[test]
     fn rejects_invalid_response_and_automatic_server_fallback() {
         assert!(
-            decode_interpretation_response(502, "<html>Gateway error</html>", "s")
+            decode_interpretation_response(502, "<html>Gateway error</html>", "s", TeamSide::Red)
                 .unwrap_err()
                 .contains("HTTP 502")
         );
         let session = Session::default();
-        let output = deterministic_interpretation(&session, "deterministic-fallback");
+        let output = deterministic_interpretation(&session, "deterministic-fallback", "red");
         assert!(
-            decode_interpretation_response(200, &output.to_string(), &session.id)
+            decode_interpretation_response(200, &output.to_string(), &session.id, TeamSide::Red)
                 .unwrap_err()
                 .contains("NON_MODEL_INTERPRETATION")
         );
@@ -451,8 +465,9 @@ mod tests {
         app.init_resource::<CoachingSession>()
             .init_resource::<TacticalResult>()
             .init_resource::<InterpretationRuntime>()
+            .init_resource::<NetworkRole>()
             .add_event::<RequestInterpretation>()
-            .add_event::<crate::EnterGame>()
+            .add_event::<MatchReady>()
             .add_systems(
                 Update,
                 (receive_interpretation, request_interpretation).chain(),
@@ -478,7 +493,7 @@ mod tests {
             .as_deref()
             .unwrap()
             .contains("invalid API key"));
-        assert!(app.world.resource::<Events<crate::EnterGame>>().is_empty());
+        assert!(app.world.resource::<Events<MatchReady>>().is_empty());
         app.world
             .send_event(RequestInterpretation::ContinueBalanced);
         app.update();
@@ -498,7 +513,7 @@ mod tests {
             .as_deref()
             .unwrap()
             .contains("invalid API key"));
-        assert!(!app.world.resource::<Events<crate::EnterGame>>().is_empty());
+        assert!(!app.world.resource::<Events<MatchReady>>().is_empty());
     }
 
     #[test]
@@ -529,10 +544,15 @@ mod tests {
             ],
             ..default()
         };
-        let output = deterministic_interpretation(&session, "deterministic-preview");
+        let output = deterministic_interpretation(&session, "deterministic-preview", "red");
         assert_eq!(output["steps"][0]["movements"][0]["entityId"], "ball");
         assert_eq!(output["schemaVersion"], "2.0");
-        let handoff = crate::game_handoff::GameHandoff::from_output(&output, &session.id).unwrap();
+        let handoff = crate::game_handoff::CoachedTeam::from_output_for_team(
+            &output,
+            &session.id,
+            crate::game_handoff::TeamSide::Red,
+        )
+        .unwrap();
         assert_eq!(handoff.tactic, cube_soccer::systems::Tactic::Balanced);
         assert!(handoff.overrides.is_empty());
     }

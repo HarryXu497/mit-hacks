@@ -1,8 +1,10 @@
 pub mod board;
 pub mod game;
 pub mod game_handoff;
+pub mod game_stream;
 pub mod interpretation;
 pub mod model;
+pub mod network;
 pub mod persistence;
 pub mod phase;
 pub mod replay;
@@ -20,6 +22,7 @@ use interpretation::{
     invalidate_stale_result, receive_interpretation, request_interpretation, InterpretationRuntime,
     RequestInterpretation, TacticalResult,
 };
+use network::{MatchReady, NetworkEndpoint, NetworkRole};
 use persistence::{autosave_session, load_recovery, AutosaveTracker, PersistenceStatus};
 use phase::AppPhase;
 use session::{tick_session, CoachingSession};
@@ -60,9 +63,12 @@ impl Plugin for CoachingPlugin {
             .init_resource::<InterpretationRuntime>()
             .init_resource::<AutosaveTracker>()
             .init_resource::<PersistenceStatus>()
+            .init_resource::<NetworkRole>()
+            .init_resource::<NetworkEndpoint>()
             .add_event::<RequestInterpretation>()
             .add_event::<SetCoachingActive>()
             .add_event::<EnterGame>()
+            .add_event::<MatchReady>()
             .add_systems(Startup, configure_egui)
             .add_systems(OnEnter(AppPhase::Coaching), spawn_board)
             .add_systems(
@@ -139,7 +145,20 @@ fn handle_enter_game(
             .output
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Missing interpretation"))
-            .and_then(|output| game_handoff::GameHandoff::from_output(output, &session.session.id));
+            .and_then(|output| {
+                let red = game_handoff::CoachedTeam::from_output_for_team(
+                    output,
+                    &session.session.id,
+                    game_handoff::TeamSide::Red,
+                )?;
+                // Yellow is not yet coached over the network (Phase B); default it
+                // until a real second-machine tactical output is merged in.
+                let yellow = game_handoff::CoachedTeam::balanced_default(
+                    &session.session.id,
+                    game_handoff::TeamSide::Yellow,
+                );
+                Ok::<_, anyhow::Error>(game_handoff::MatchHandoff { red, yellow })
+            });
         match handoff {
             Ok(handoff) => {
                 commands.insert_resource(handoff.team_tactics());
@@ -175,6 +194,7 @@ mod integration_tests {
         result.output = Some(interpretation::deterministic_interpretation(
             &session.session,
             "deterministic-fallback",
+            "red",
         ));
         app.add_plugins(MinimalPlugins)
             .init_state::<AppPhase>()
@@ -195,9 +215,9 @@ mod integration_tests {
         app.update();
         assert_eq!(
             *app.world.resource::<State<AppPhase>>().get(),
-            AppPhase::Creation
+            AppPhase::Lobby
         );
-        assert!(!app.world.contains_resource::<game_handoff::GameHandoff>());
+        assert!(!app.world.contains_resource::<game_handoff::MatchHandoff>());
         assert!(app.world.resource::<TacticalResult>().notice.is_some());
 
         app.world.resource_mut::<CoachingSession>().session.status =
@@ -210,7 +230,7 @@ mod integration_tests {
         app.world.send_event(EnterGame);
         app.update();
         app.update();
-        assert!(!app.world.contains_resource::<game_handoff::GameHandoff>());
+        assert!(!app.world.contains_resource::<game_handoff::MatchHandoff>());
     }
 
     #[test]

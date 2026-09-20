@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use bevy::window::{PresentMode, WindowResolution};
 use bevy_egui::EguiPlugin;
-use tactic_lab_native::{game::GamePlugin, phase::AppPhase, CoachingPlugin};
+use tactic_lab_native::{game::GamePlugin, network::LobbyPlugin, phase::AppPhase, CoachingPlugin};
 use tactic_lab_player_creation::state::ContinueToCoaching;
 use tactic_lab_player_creation::PlayerCreationPlugin;
 
@@ -24,6 +24,7 @@ fn main() {
         )
         .init_state::<AppPhase>()
         .add_plugins(EguiPlugin)
+        .add_plugins(LobbyPlugin)
         .add_plugins(PlayerCreationPlugin::default().yielding_to_coaching())
         .add_systems(Update, handle_continue_to_coaching)
         .add_plugins(CoachingPlugin)
