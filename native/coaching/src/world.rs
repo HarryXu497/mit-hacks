@@ -49,6 +49,7 @@ use cube_soccer::entities::{
 use cube_soccer::game::{GameState, MatchState, MATCH_DURATION_SECS};
 use cube_soccer::jungle::{animate_jungle, animate_water, build_jungle};
 use cube_soccer::rendering::batching::merge_static_draws;
+use cube_soccer::audio::{GameAudioPlugin, MicrophoneOpen, MusicTrack, Sfx};
 use cube_soccer::rendering::wordmark;
 use cube_soccer::rendering::setup_lighting;
 use cube_soccer::rendering::stylized::{
@@ -135,6 +136,12 @@ impl Plugin for WorldPlugin {
                 carry_the_wordmark.run_if(in_state(AppPhase::Lobby)),
             )
             .add_systems(OnExit(AppPhase::Lobby), strike_the_wordmark)
+            // Music and effects. The engine owns the playback; this crate owns
+            // the question of which bed belongs to which screen, because it is
+            // the one that knows what a screen is.
+            .add_plugins(GameAudioPlugin)
+            .add_systems(Update, (choose_the_bed, follow_the_microphone))
+            .add_systems(OnEnter(AppPhase::Game), whistle_for_kickoff)
             .add_systems(OnExit(AppPhase::Lobby), step_up_to_the_easel)
             .add_systems(
                 OnEnter(CreationPhase::Coaching),
@@ -265,6 +272,44 @@ fn strike_the_wordmark(
     for title in &titles {
         commands.entity(title).despawn_recursive();
     }
+}
+
+/// One bed for everything before kickoff, another for the match.
+///
+/// Creation and coaching stay on the lobby track on purpose: they are the same
+/// visit to the same island, and restarting the music at each step would cut
+/// the flow into three unrelated screens.
+fn choose_the_bed(phase: Res<State<AppPhase>>, mut track: ResMut<MusicTrack>) {
+    let wanted = match phase.get() {
+        AppPhase::Lobby | AppPhase::Creation | AppPhase::Coaching | AppPhase::Waiting => {
+            MusicTrack::Lobby
+        }
+        AppPhase::Game => MusicTrack::Match,
+    };
+    if *track != wanted {
+        *track = wanted;
+    }
+}
+
+/// Tells the engine to duck while the coach is being recorded.
+fn follow_the_microphone(
+    speech: Option<Res<cube_soccer::tactics::speech::SpeechRuntime>>,
+    mut mic: ResMut<MicrophoneOpen>,
+) {
+    use cube_soccer::tactics::speech::SpeechStatus;
+    let open = speech.is_some_and(|s| {
+        matches!(
+            s.status,
+            SpeechStatus::Connecting | SpeechStatus::Listening | SpeechStatus::Finalizing
+        )
+    });
+    if mic.0 != open {
+        mic.0 = open;
+    }
+}
+
+fn whistle_for_kickoff(mut sfx: EventWriter<Sfx>) {
+    sfx.send(Sfx::Whistle);
 }
 
 fn frame_the_lobby(mut cameras: Query<&mut Transform, With<CreationCamera>>) {
