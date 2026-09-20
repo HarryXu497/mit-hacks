@@ -220,6 +220,9 @@ def main():
                              "resumes correctly). Sharpens the policy as scales get harder.")
     parser.add_argument("--ent-anneal-frac", type=float, default=0.5,
                         help="fraction of training over which ent_coef anneals to --ent-coef-end")
+    parser.add_argument("--learning-rate", type=float, default=3e-4,
+                        help="PPO learning rate. Lower (e.g. 1e-4) to tame large updates "
+                             "(high approx_kl / clip_fraction) once the policy is sharp.")
     parser.add_argument("--resume", type=str, default=None,
                         help="path to a saved model .zip to resume training from "
                              "(must match the current obs/action shape). Pass the same "
@@ -306,7 +309,7 @@ def main():
         "MlpPolicy",
         env,
         verbose=1,
-        learning_rate=3e-4,
+        learning_rate=args.learning_rate,
         n_steps=2048,
         batch_size=256,
         n_epochs=10,
@@ -328,6 +331,14 @@ def main():
         # one). Lets us dial exploration down once scoring is found, to stop std runaway.
         model.ent_coef = args.ent_coef
         print(f"Overriding ent_coef -> {args.ent_coef}")
+        # Override the learning rate on resume (checkpoint restores the optimizer's old
+        # lr). Lower it to tame large updates (high approx_kl / clip_fraction).
+        from stable_baselines3.common.utils import get_schedule_fn
+        model.learning_rate = args.learning_rate
+        model.lr_schedule = get_schedule_fn(args.learning_rate)
+        for pg in model.policy.optimizer.param_groups:
+            pg["lr"] = args.learning_rate
+        print(f"Overriding learning_rate -> {args.learning_rate}")
 
     # Train. On resume, keep the global step counter (so TB logs + the shaping
     # anneal schedule continue) instead of restarting at 0.
