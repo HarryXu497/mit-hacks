@@ -23,6 +23,7 @@ pub mod heuristic_ai;
 pub mod movement;
 pub mod physics;
 pub mod possession;
+pub mod power_vfx;
 pub mod reset;
 pub mod scoring;
 pub mod status_effects;

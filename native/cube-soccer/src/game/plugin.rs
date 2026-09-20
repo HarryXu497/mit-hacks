@@ -20,10 +20,12 @@ use crate::systems::{
     eyes::animate_googly_eyes,
     trail::TrailSpawnTimer,
     superpowers::{tick_superpower_cooldowns, activate_superpowers},
+    power_vfx::{animate_power_fx, load_power_fx, reset_power_fx_glow, spawn_power_fx, PowerFired},
 };
 use crate::input::keyboard::keyboard_input_system;
 use crate::rendering::lighting::setup_lighting;
 use crate::ui::hud::setup_ui;
+use crate::ui::powers::{fill_power_rail, setup_power_hud, update_power_hud, PowerHudSide};
 use crate::ui::scoreboard::update_ui;
 
 pub struct CubeSoccerPlugin;
@@ -61,6 +63,7 @@ impl Plugin for CubeSoccerPlugin {
             .init_resource::<TrailSpawnTimer>()
             .init_resource::<Possession>()
             .init_resource::<WornCharacters>()
+            .init_resource::<PowerHudSide>()
 
             // Events
             .add_event::<GoalScoredEvent>()
@@ -68,6 +71,7 @@ impl Plugin for CubeSoccerPlugin {
             .add_event::<ResetGameEvent>()
             .add_event::<BallTouchedEvent>()
             .add_event::<ImpulseEvent>()
+            .add_event::<PowerFired>()
 
             // Physics
             .add_plugins(RapierPhysicsPlugin::<NoUserData>::default())
@@ -86,6 +90,8 @@ impl Plugin for CubeSoccerPlugin {
                 setup_camera,
                 setup_lighting,
                 setup_ui,
+                setup_power_hud,
+                load_power_fx,
             ))
 
             // The jungle is built after the pitch exists, then the static props are merged into a
@@ -125,6 +131,16 @@ impl Plugin for CubeSoccerPlugin {
                 update_ui,
                 update_wall_scoreboard,
             ).chain().run_if(in_state(MatchState::Playing)))
+
+            // What a power looks like. Ordered after the cast that raises the event so a burst
+            // appears on the same frame the power lands, and the glow reset runs first so the
+            // frame's pieces bid up from black rather than from the last cast's brightness.
+            .add_systems(Update, (
+                reset_power_fx_glow,
+                spawn_power_fx.after(activate_superpowers),
+                animate_power_fx,
+            ).chain())
+            .add_systems(Update, (fill_power_rail, update_power_hud).chain())
 
             // Reset after goal (with 1 second delay)
             .add_systems(OnEnter(MatchState::GoalScored), (reset_after_goal, clear_possession))

@@ -119,10 +119,36 @@ pub fn keep_characters_unstylised(
     }
 }
 
+/// Whether a surface hangs off a generated character.
+///
+/// Shares [`MAX_DEPTH`](keep_characters_unstylised)'s reasoning: a glTF scene's meshes arrive as
+/// descendants of the entity that asked for the scene, not on it.
+fn belongs_to_a_character(
+    surface: Entity,
+    parents: &Query<&Parent>,
+    skins: &Query<(), With<crate::entities::CharacterSkin>>,
+) -> bool {
+    let mut current = surface;
+    for _ in 0..12 {
+        if skins.contains(current) {
+            return true;
+        }
+        let Ok(parent) = parents.get(current) else { return false };
+        current = parent.get();
+    }
+    false
+}
+
 /// Swaps draw materials only. Physics, transforms and scoreboard emissives stay untouched.
 pub fn stylize(
     mut commands: Commands,
     source: Res<Assets<StandardMaterial>>,
+    // Walked here as well as in `keep_characters_unstylised`, because the marker that system
+    // inserts is a deferred command: on the frame a character's meshes first appear the marker
+    // has not landed yet, and without this the cel pass would claim them before it did. Once is
+    // enough to lose them -- the swap is permanent.
+    parents: Query<&Parent>,
+    skins: Query<(), With<crate::entities::CharacterSkin>>,
     // Optional for the same reason `register_shader` checks first: without a renderer there is no
     // `MaterialPlugin<JungleMaterial>` and so no store to put the swapped materials in. Scheduling
     // this system in a headless app is then simply a no-op instead of a panic.
@@ -140,6 +166,10 @@ pub fn stylize(
     };
     let mut cache = HashMap::new();
     for (entity, handle, actor) in &surfaces {
+        if belongs_to_a_character(entity, &parents, &skins) {
+            commands.entity(entity).insert(Unstylised);
+            continue;
+        }
         let Some(base) = source.get(handle) else {
             continue;
         };

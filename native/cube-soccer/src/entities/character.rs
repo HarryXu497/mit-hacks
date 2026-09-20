@@ -47,6 +47,30 @@ use crate::systems::status_effects::ImpulseEvent;
 /// fallback always exists.
 pub const BASE_CHARACTER: &str = "characters/base.glb#Scene0";
 
+/// The rigged MonkeyForge characters, one per position.
+///
+/// These are what a side actually fields. Unlike `base.glb` -- which is a single rigid mesh with
+/// no skeleton, and so can only ever be bounced around whole -- each of these carries a 21-joint
+/// humanoid rig, which is what lets [`rig::animate_rig`](super::rig::animate_rig) give them a
+/// real walk cycle. They ship with no animation clips, so the cycle is authored in code.
+pub const RIGGED_GOALKEEPER: &str = "characters/monkeyforge_goalkeeper.glb#Scene0";
+pub const RIGGED_DEFENDER: &str = "characters/monkeyforge_defender.glb#Scene0";
+pub const RIGGED_RUNNER: &str = "characters/monkeyforge_runner.glb#Scene0";
+pub const RIGGED_BALANCED: &str = "characters/monkeyforge_balanced.glb#Scene0";
+
+/// The monkey a side takes the field in until its coach forges one of their own.
+///
+/// This is [`BASE_CHARACTER`] for both sides. There are `characters/orange.glb` and
+/// `characters/blue.glb` beside it that look like they ought to be used here -- the base monkey
+/// with a team garment already on -- but they are broken exports and must not be: measured, they
+/// stand 17.7 units tall against this model's 1.4, sit from y=-11.6 to +6.0 instead of 0 to 1.4,
+/// and carry a sub-mesh reaching out to z=-24.6. Worn, they render as oversized fragments in the
+/// wrong place. Re-exporting them at the base model's scale and origin is what would make them
+/// usable; until then the clean base monkey is what plays.
+pub fn dressed_character(_team: Team) -> &'static str {
+    BASE_CHARACTER
+}
+
 /// How tall a character model is in its own space, before the game scales it.
 ///
 /// Measured from `base.glb`: 1.4 units, standing on y=0. This was previously assumed to be 1.0 --
@@ -58,8 +82,20 @@ pub const CHARACTER_MODEL_HEIGHT: f32 = 1.4;
 
 /// Scale that makes a character exactly as tall as the body it replaces.
 pub fn character_scale() -> f32 {
-    CUBE_SIZE / CHARACTER_MODEL_HEIGHT
+    CUBE_SIZE * CHARACTER_PRESENCE / CHARACTER_MODEL_HEIGHT
 }
+
+/// How much bigger than its collider a character is drawn.
+///
+/// Sized exactly to `CUBE_SIZE` the monkeys read as tiny: the pitch is 48 units across and the
+/// ball alone is 1.2, so a 1.5-unit player is a speck at broadcast distance. Drawing them half
+/// again over their collider gives them the chunky presence the art is built for, at the cost of
+/// feet and ears overhanging the box they collide with -- which is the usual trade in a game with
+/// stylised proportions, and far less noticeable than players you cannot see.
+///
+/// Visual only. The collider, mass and observation vector are untouched, so physics and any
+/// trained policy are unaffected.
+const CHARACTER_PRESENCE: f32 = 1.5;
 
 /// Which model each team is wearing, as a path under `assets/`.
 ///
@@ -76,8 +112,8 @@ pub struct WornCharacters {
 impl Default for WornCharacters {
     fn default() -> Self {
         Self {
-            orange: Some(BASE_CHARACTER.to_owned()),
-            blue: Some(BASE_CHARACTER.to_owned()),
+            orange: Some(dressed_character(Team::Orange).to_owned()),
+            blue: Some(dressed_character(Team::Blue).to_owned()),
         }
     }
 }
@@ -125,32 +161,36 @@ pub struct BlockyCharacter;
 
 /// Radians of gait phase per metre travelled. Phase advances with distance, not wall time, so the
 /// step rate follows the speed instead of sliding against it.
+// Amplitudes are deliberately large. The model has no skeleton -- no skins, no clips -- so
+// there are no limbs to swing: every bit of life has to come out of what the whole body does.
+// Read at broadcast distance a subtle bob is no bob at all, and these are tuned to be legible
+// there rather than to be correct up close.
 const GAIT_PER_METRE: f32 = 1.8;
 /// Horizontal speed at which the gait reaches full amplitude.
 const FULL_STRIDE_SPEED: f32 = 6.0;
 /// Peak bob height at full stride.
-const BOB_HEIGHT: f32 = 0.16;
+const BOB_HEIGHT: f32 = 0.26;
 /// Shoulder roll that rides along with the stride.
-const SWAY: f32 = 0.13;
+const SWAY: f32 = 0.20;
 /// Amplitude and rate of the standing-still breath.
 const IDLE_RISE: f32 = 0.045;
 const IDLE_RATE: f32 = 1.6;
 /// Forward pitch at full speed, and bank per rad/s of turn.
-const LEAN_PITCH: f32 = 0.30;
+const LEAN_PITCH: f32 = 0.42;
 const LEAN_BANK: f32 = 0.06;
 /// How fast lean eases toward its target, per second.
 const LEAN_EASE: f32 = 8.0;
 /// Downward speed past which an arrested fall counts as a landing.
 const LANDING_SPEED: f32 = 3.0;
 /// How far a landing flattens the visual, and how fast that recovers.
-const SQUASH_DEPTH: f32 = 0.22;
+const SQUASH_DEPTH: f32 = 0.34;
 const SQUASH_DECAY: f32 = 6.0;
 /// The kick: forward pitch, forward reach, and decay.
-const KICK_PITCH: f32 = 0.45;
-const KICK_REACH: f32 = 0.18;
+const KICK_PITCH: f32 = 0.70;
+const KICK_REACH: f32 = 0.30;
 const KICK_DECAY: f32 = 4.5;
 /// Taking a hit: recoil rotation, shake amplitude and rate, and decay.
-const HIT_RECOIL: f32 = 0.5;
+const HIT_RECOIL: f32 = 0.75;
 const HIT_SHAKE: f32 = 0.09;
 const HIT_SHAKE_RATE: f32 = 34.0;
 const HIT_DECAY: f32 = 3.0;
@@ -187,6 +227,17 @@ pub struct PlayerVisual {
     prev_vy: f32,
     /// Edge detection for `PlayerInput::fire`, so holding the key is one kick, not many.
     was_firing: bool,
+}
+
+impl PlayerVisual {
+    /// The gait phase, in radians.
+    ///
+    /// Exposed so [`rig::animate_rig`](super::rig::animate_rig) can drive the limbs from the very
+    /// same phase this drives the body bob from. Two clocks would put the feet out of step with
+    /// the bounce.
+    pub fn gait(&self) -> f32 {
+        self.gait
+    }
 }
 
 impl PlayerVisual {
@@ -533,5 +584,171 @@ mod tests {
         let t = visual.compose(0.0, 0.0);
         assert_eq!(t.translation, Vec3::ZERO);
         assert_eq!(t.scale, Vec3::ONE);
+    }
+}
+
+
+/// The eyelid mesh inside the monkey model, once found.
+///
+/// The model has no skeleton -- no skins and no clips -- so nothing about it can be animated by
+/// playing an exported clip. What it does have is its eyelids as a separate node, which is enough
+/// for a blink, and a blink is most of what makes a face look alive.
+#[derive(Component)]
+pub struct Eyelids {
+    /// Seconds until the next blink.
+    next: f32,
+    /// How far through the current blink we are, or `None` between blinks.
+    closing: Option<f32>,
+}
+
+/// Find the eyelid node in a freshly loaded character and take charge of it.
+pub fn adopt_eyelids(
+    mut commands: Commands,
+    named: Query<(Entity, &Name), Without<Eyelids>>,
+) {
+    for (entity, name) in &named {
+        if name.as_str().contains("Eyelid") {
+            commands.entity(entity).insert(Eyelids { next: 1.5, closing: None });
+        }
+    }
+}
+
+/// Blink. Irregularly, because a metronome blink is worse than none.
+pub fn blink(time: Res<Time>, mut lids: Query<(&mut Eyelids, &mut Transform)>) {
+    /// How long one blink takes, closed and open again.
+    const BLINK_SECS: f32 = 0.14;
+
+    let dt = time.delta_seconds();
+    for (index, (mut lid, mut transform)) in lids.iter_mut().enumerate() {
+        match lid.closing {
+            None => {
+                lid.next -= dt;
+                if lid.next <= 0.0 {
+                    lid.closing = Some(0.0);
+                }
+                transform.scale.y = 0.0;
+            }
+            Some(progress) => {
+                let progress = progress + dt;
+                if progress >= BLINK_SECS {
+                    lid.closing = None;
+                    // Staggered per player so a team does not blink in unison.
+                    lid.next = 2.0 + (index as f32 * 0.7) % 2.5;
+                    transform.scale.y = 0.0;
+                } else {
+                    lid.closing = Some(progress);
+                    // Down and back up over the blink.
+                    let t = progress / BLINK_SECS;
+                    transform.scale.y = (t * std::f32::consts::PI).sin();
+                }
+            }
+        }
+    }
+}
+
+/// Marks a character surface already set up, so the pass is idempotent.
+#[derive(Component)]
+pub struct Lit;
+
+/// Light the characters the way their art expects: not at all.
+///
+/// The monkeys were coming out nearly black, and measurement (`CANOPY_SKIN_PROBE`) showed why:
+/// their texture loads fine and their base colour is white, but they were the only things in the
+/// scene still being lit by the real lights. Every jungle prop is cel-shaded and so carries its
+/// own brightness, which left the players as the one PBR-lit object under a single sun -- dark
+/// against props that ignore it.
+///
+/// The fix is not more light. This art is flat-shaded with its form already painted into the
+/// diffuse, exactly like the cel-shaded props, so it wants no light model at all: unlit renders
+/// the texture as drawn, which is the bright orange the model was authored as.
+///
+/// The alpha mode is corrected at the same time. The exporter marks the body `Blend`, which makes
+/// an opaque monkey depth-sort against itself and flicker where ears and hair overlap the face --
+/// the glitching on the pitch. `Mask` keeps the cutouts the atlas does use without sorting.
+pub fn light_the_characters(
+    mut commands: Commands,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    surfaces: Query<(Entity, &Handle<StandardMaterial>), (Without<Lit>, Without<BlockyCharacter>)>,
+    parents: Query<&Parent>,
+    skins: Query<(), With<CharacterSkin>>,
+) {
+    for (entity, handle) in &surfaces {
+        // glTF meshes arrive as descendants of the node that asked for the scene.
+        let mut current = entity;
+        let mut theirs = false;
+        for _ in 0..12 {
+            if skins.contains(current) {
+                theirs = true;
+                break;
+            }
+            let Ok(parent) = parents.get(current) else { break };
+            current = parent.get();
+        }
+        if !theirs {
+            continue;
+        }
+        let Some(material) = materials.get_mut(handle) else {
+            continue;
+        };
+        material.unlit = true;
+        if matches!(material.alpha_mode, AlphaMode::Blend) {
+            material.alpha_mode = AlphaMode::Mask(0.5);
+        }
+        commands.entity(entity).insert(Lit);
+    }
+}
+
+/// Report what the loaded character meshes actually ended up rendering with.
+///
+/// Env-gated diagnostic: `CANOPY_SKIN_PROBE=1`. Answers the only question worth asking when the
+/// monkeys come out the wrong colour -- did the cel pass claim them, is the texture missing, or is
+/// the base colour itself dark.
+pub fn probe_character_materials(
+    mut done: Local<bool>,
+    standard: Query<(Entity, &Handle<StandardMaterial>)>,
+    jungle: Query<(Entity, &Handle<crate::rendering::stylized::JungleMaterial>)>,
+    parents: Query<&Parent>,
+    skins: Query<(), With<CharacterSkin>>,
+    names: Query<&Name>,
+    materials: Res<Assets<StandardMaterial>>,
+    jungle_materials: Option<Res<Assets<crate::rendering::stylized::JungleMaterial>>>,
+    time: Res<Time>,
+) {
+    if *done || std::env::var("CANOPY_SKIN_PROBE").is_err() || time.elapsed_seconds() < 6.0 {
+        return;
+    }
+    *done = true;
+
+    let of_a_character = |mut e: Entity| {
+        for _ in 0..12 {
+            if skins.contains(e) {
+                return true;
+            }
+            let Ok(p) = parents.get(e) else { return false };
+            e = p.get();
+        }
+        false
+    };
+
+    for (entity, handle) in &standard {
+        if !of_a_character(entity) {
+            continue;
+        }
+        let name = names.get(entity).map(|n| n.as_str().to_owned()).unwrap_or_default();
+        if let Some(m) = materials.get(handle) {
+            eprintln!(
+                "SKIN standard {name:?}: base={:?} tex={} emissive={:?} unlit={} alpha={:?}",
+                m.base_color,
+                m.base_color_texture.is_some(),
+                m.emissive,
+                m.unlit,
+                m.alpha_mode,
+            );
+        }
+    }
+    let count = jungle.iter().filter(|(e, _)| of_a_character(*e)).count();
+    eprintln!("SKIN cel-shaded character surfaces = {count}  (must be 0)");
+    if let Some(jm) = jungle_materials {
+        eprintln!("SKIN jungle material count = {}", jm.len());
     }
 }
