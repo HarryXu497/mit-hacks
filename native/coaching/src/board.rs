@@ -390,7 +390,7 @@ pub fn handle_board_input(
             };
             if points
                 .last()
-                .map_or(true, |previous| previous.distance(point) >= 0.008)
+                .is_none_or(|previous| previous.distance(point) >= 0.008)
             {
                 points.push(point);
             }

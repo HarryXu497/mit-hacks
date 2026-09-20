@@ -283,10 +283,10 @@ impl Session {
                         return Err("movement coordinates must be normalized".into());
                     }
                 }
-                RawSessionEvent::AnnotationAdded { annotation, .. } => {
-                    if annotation.points.iter().any(|point| !point.is_normalized()) {
-                        return Err("annotation coordinates must be normalized".into());
-                    }
+                RawSessionEvent::AnnotationAdded { annotation, .. }
+                    if annotation.points.iter().any(|point| !point.is_normalized()) =>
+                {
+                    return Err("annotation coordinates must be normalized".into());
                 }
                 _ => {}
             }

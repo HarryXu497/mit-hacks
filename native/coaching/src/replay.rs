@@ -49,7 +49,7 @@ pub fn replay_session(events: &[RawSessionEvent], until_ms: Option<u64>) -> Repl
     let mut transcripts = HashMap::<String, TranscriptSegment>::new();
     let scoped = events
         .iter()
-        .filter(|event| until_ms.map_or(true, |limit| event.timestamp_ms() <= limit))
+        .filter(|event| until_ms.is_none_or(|limit| event.timestamp_ms() <= limit))
         .cloned()
         .collect::<Vec<_>>();
     let effective = effective_events(&scoped);

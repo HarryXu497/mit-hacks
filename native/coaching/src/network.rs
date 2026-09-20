@@ -705,6 +705,7 @@ fn poll_mdns_discoveries(mdns: Res<MdnsState>, mut ui_state: ResMut<LobbyUiState
 
 /// Runs in every phase: the match-start push can arrive at any point after
 /// the lobby connects (typically during Waiting, once both sides finish).
+#[allow(clippy::too_many_arguments)]
 fn receive_lobby_events(
     mut commands: Commands,
     mut runtime: ResMut<LobbyRuntime>,
@@ -845,6 +846,7 @@ pub struct PendingMatchEntry(pub Option<MatchEntry>);
 /// The screen that used to be a black void: shows upload progress, both
 /// players' readiness, and — critically — any error that would otherwise be
 /// swallowed while no other UI is running.
+#[allow(clippy::too_many_arguments)]
 fn waiting_screen_ui(
     mut contexts: EguiContexts,
     mut ui_state: ResMut<LobbyUiState>,

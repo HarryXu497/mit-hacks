@@ -93,7 +93,8 @@ fn creation_ui_should_run(
     handoff: Res<HandoffBehavior>,
     flow: Res<State<CreationFlow>>,
 ) -> bool {
-    enabled.0 && !(*handoff == HandoffBehavior::Yield && *flow.get() == CreationFlow::ContinueToCoaching)
+    enabled.0
+        && !(*handoff == HandoffBehavior::Yield && *flow.get() == CreationFlow::ContinueToCoaching)
 }
 
 impl Plugin for PlayerCreationPlugin {

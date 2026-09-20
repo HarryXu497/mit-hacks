@@ -118,7 +118,7 @@ fn host_worker(port: u16, mut snapshots: UnboundedReceiver<GameSnapshot>) {
                     };
                     let (mut write, _read) = ws.split();
                     while let Ok(message) = receiver.recv().await {
-                        if write.send(Message::Text(message.into())).await.is_err() {
+                        if write.send(Message::Text(message)).await.is_err() {
                             break;
                         }
                     }
@@ -186,6 +186,7 @@ pub fn start_game_stream(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn publish_game_snapshot(
     role: Option<Res<NetworkRole>>,
     runtime: Option<Res<GameStreamRuntime>>,

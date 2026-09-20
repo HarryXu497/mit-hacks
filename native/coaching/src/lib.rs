@@ -214,8 +214,10 @@ mod integration_tests {
         }
 
         fn write_stale_session(&self) {
-            let mut stale = model::Session::default();
-            stale.title = "stale session from another process".into();
+            let mut stale = model::Session {
+                title: "stale session from another process".into(),
+                ..Default::default()
+            };
             stale.events.push(model::RawSessionEvent::RecordingStarted {
                 id: "stale-event".into(),
                 timestamp_ms: 0,

@@ -32,6 +32,11 @@ pub fn animate_water(time: Res<Time>, mut water: Query<(&mut Transform, &WaterRi
     }
 }
 
+// `fur`, `fur_dark`, `muzzle` and `eye_white` are unread: they belong to the rounded-character
+// pass that "Restore the blocky characters" reverted, and the blocky monkey uses the team colours
+// and `face` instead. Kept rather than deleted because they are an authored palette and the
+// rounded pass may come back; silenced rather than left warning because CI denies warnings.
+#[allow(dead_code)]
 pub(crate) struct Kit {
     pub(crate) cube: Handle<Mesh>,
     pub(crate) leaf: Handle<Mesh>,

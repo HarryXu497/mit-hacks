@@ -228,8 +228,10 @@ mod tests {
 
     #[test]
     fn a_sync_never_touches_the_status_the_panel_owns() {
-        let mut session = Session::default();
-        session.status = SessionStatus::Interpreted;
+        let mut session = Session {
+            status: SessionStatus::Interpreted,
+            ..Default::default()
+        };
         // A stopped table would report `Review`; the session must stay `Interpreted`, because
         // that is what `handle_enter_game` requires before it will start a match.
         sync_into(

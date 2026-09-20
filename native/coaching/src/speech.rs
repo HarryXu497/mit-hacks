@@ -277,8 +277,7 @@ async fn network_session(
                 "sessionOffsetMs": session_offset_ms,
                 "sampleRate": 24000
             })
-            .to_string()
-            .into(),
+            .to_string(),
         ))
         .await?;
     let _ = replies.send(SpeechReply::Status {
@@ -304,8 +303,7 @@ async fn network_session(
                         "generation": generation,
                         "pcm16": base64::engine::general_purpose::STANDARD.encode(bytes)
                     })
-                    .to_string()
-                    .into(),
+                    .to_string(),
                 ))
                 .await?;
         }
@@ -317,8 +315,7 @@ async fn network_session(
                     write
                         .send(Message::Text(
                             json!({ "type": "stop", "generation": generation })
-                                .to_string()
-                                .into(),
+                                .to_string(),
                         ))
                         .await?;
                     stopping_at = Some(Instant::now());
