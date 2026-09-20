@@ -14,3 +14,9 @@ output/matches/
 
 # Native test runs write session artifacts relative to the crate directory.
 /native/coaching/output/
+
+# Scratch renders from CANOPY_CAPTURE / screenshot debugging.
+*.png
+!assets/**/*.png
+!tools/**/*.png
+!docs/**/*.png
