@@ -42,13 +42,32 @@ serde_json = "1.0"
 image = { version = "0.24", default-features = false, features = ["png"] }
 humantime = "2.1"
 
+# Speech, behind the `speech` feature. Versions match the coaching app's, so
+# both talk to the same local transcription service the same way.
+cpal = { version = "0.15", optional = true }
+crossbeam-channel = { version = "0.5", optional = true }
+futures-util = { version = "0.3", optional = true }
+base64 = { version = "0.22", optional = true }
+tokio = { version = "1.40", features = ["rt", "macros", "time", "net"], optional = true }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"], optional = true }
+
 # Python bindings (optional)
 pyo3 = { version = "0.21", features = ["extension-module"], optional = true }
 numpy = { version = "0.21", optional = true }
 
 [features]
-default = ["rendering"]
+default = ["rendering", "speech"]
 rendering = []
+# Microphone capture for the tactics table. Optional so headless RL training
+# does not have to build an audio stack it will never open.
+speech = [
+    "dep:cpal",
+    "dep:crossbeam-channel",
+    "dep:futures-util",
+    "dep:tokio",
+    "dep:tokio-tungstenite",
+    "dep:base64",
+]
 python = ["pyo3", "numpy"]
 headless = []
 
