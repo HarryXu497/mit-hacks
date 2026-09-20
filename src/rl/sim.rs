@@ -19,7 +19,7 @@ use crate::systems::status_effects::{tick_status_effects, apply_status_forces, I
 use crate::systems::superpowers::{tick_superpower_cooldowns, activate_superpowers};
 use crate::systems::possession::{tick_cooldowns, update_possession, Possession};
 use crate::systems::scoring::detect_goals;
-use crate::systems::heuristic_ai::{apply_heuristic_ai, AiControlled, TeamTactics, HeuristicDifficulty};
+use crate::systems::heuristic_ai::{apply_heuristic_ai, apply_roster_gating, freeze_inactive_players, AiControlled, TeamTactics, HeuristicDifficulty, ActiveRoster};
 use crate::game::Team;
 use crate::rl::observation::get_observations;
 use crate::rl::reward::RewardCalculator;
@@ -175,6 +175,7 @@ pub fn build_headless_app() -> App {
         .init_resource::<RewardCalculator>()
         .init_resource::<TeamTactics>()
         .init_resource::<HeuristicDifficulty>()
+        .init_resource::<ActiveRoster>()
         .add_event::<GoalScoredEvent>()
         .add_event::<BallTouchedEvent>()
         .add_event::<ImpulseEvent>();
@@ -184,6 +185,8 @@ pub fn build_headless_app() -> App {
         (
             apply_ai_actions,      // Orange gets RL actions; Blue's slice is ignored...
             apply_heuristic_ai,    // ...then the heuristic overrides Blue's inputs.
+            apply_roster_gating,     // curriculum: ghost benched players (both teams).
+            freeze_inactive_players, // ...and zero their input+velocity so they're inert.
             tick_superpower_cooldowns,
             activate_superpowers,
             tick_status_effects,

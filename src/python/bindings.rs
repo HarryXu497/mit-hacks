@@ -165,6 +165,13 @@ impl PyCubeSoccerEnv {
         self.env.set_opponent_difficulty(difficulty);
         Ok(())
     }
+
+    /// Set the active roster size (players per team). Benched players are ghosted +
+    /// frozen; obs/action shape stays fixed. Used to grow 1v1 -> full NvN.
+    fn set_active_roster(&mut self, n: usize) -> PyResult<()> {
+        self.env.set_active_roster(n);
+        Ok(())
+    }
 }
 
 #[cfg(feature = "python")]

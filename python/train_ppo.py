@@ -67,6 +67,39 @@ class OpponentCurriculumCallback(BaseCallback):
         return True
 
 
+class RosterCurriculumCallback(BaseCallback):
+    """Grow the active roster from 1v1 to full NvN over the first `curriculum_frac`
+    of training. Both teams gain a player at the same time. The obs/action shape is
+    fixed at the full roster (benched players are ghosted+frozen in the sim), so a
+    single policy trains continuously across roster sizes — 1v1 is learnable, and
+    each added player is a small step up."""
+    def __init__(self, total_timesteps, players_per_team, curriculum_frac=0.5):
+        super().__init__()
+        self.total = max(1, int(total_timesteps))
+        self.max_n = max(1, int(players_per_team))
+        self.frac = max(1e-6, float(curriculum_frac))
+
+    def _active(self):
+        prog = (self.num_timesteps / self.total) / self.frac
+        n = 1 + int(min(1.0, prog) * (self.max_n - 1))
+        return max(1, min(self.max_n, n))
+
+    def _set(self, n):
+        try:
+            self.training_env.env_method("set_active_roster", int(n))
+        except Exception:
+            pass
+
+    def _on_training_start(self) -> None:
+        self._set(1)
+
+    def _on_rollout_start(self) -> None:
+        self._set(self._active())
+
+    def _on_step(self) -> bool:
+        return True
+
+
 try:
     import wandb
     from wandb.integration.sb3 import WandbCallback
@@ -100,6 +133,11 @@ def main():
                              "from weak (--opponent-floor) to full strength (1.0)")
     parser.add_argument("--opponent-floor", type=float, default=0.15,
                         help="starting difficulty of the heuristic opponent (0=frozen, 1=full)")
+    parser.add_argument("--roster-curriculum-frac", type=float, default=0.5,
+                        help="fraction of training over which the active roster grows "
+                             "1v1 -> full NvN (both teams). Set >=1 to hold at full roster.")
+    parser.add_argument("--roster-start-full", action="store_true",
+                        help="disable the roster curriculum and train full NvN from the start")
     parser.add_argument("--ent-coef", type=float, default=0.005,
                         help="PPO entropy coefficient (lower = less exploration pressure; "
                              "prevents action-std runaway once the reward signal is findable)")
@@ -133,8 +171,9 @@ def main():
     eval_env = CubeSoccerTeamEnv(render_mode=eval_render_mode)
     try:
         eval_env.set_shaping_weight(0.0)
-        # Eval always measures true performance against the full-strength opponent.
+        # Eval always measures true performance: full-strength, full-roster opponent.
         eval_env.set_opponent_difficulty(1.0)
+        eval_env.set_active_roster(eval_env.players_per_team)
     except Exception:
         pass
 
@@ -142,6 +181,9 @@ def main():
     anneal_cb = ShapingAnnealCallback(args.timesteps, args.shaping_anneal_frac)
     curriculum_cb = OpponentCurriculumCallback(
         args.timesteps, args.opponent_curriculum_frac, args.opponent_floor
+    )
+    roster_cb = RosterCurriculumCallback(
+        args.timesteps, eval_env.players_per_team, args.roster_curriculum_frac,
     )
     callbacks = [
         EvalCallback(
@@ -159,6 +201,9 @@ def main():
         anneal_cb,
         curriculum_cb,
     ]
+    # Player-count curriculum (1v1 -> full NvN). Omit to train full roster from start.
+    if not args.roster_start_full:
+        callbacks.append(roster_cb)
 
     if use_wandb:
         callbacks.append(WandbCallback(

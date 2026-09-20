@@ -10,7 +10,7 @@ use crate::game::{
 use crate::entities::{Ball, CubePlayer, get_spawn_position, get_ball_spawn_position};
 use crate::input::AIActions;
 use crate::systems::possession::Possession;
-use crate::systems::heuristic_ai::{TeamTactics, TacticParams, Tactic, HeuristicDifficulty};
+use crate::systems::heuristic_ai::{TeamTactics, TacticParams, Tactic, HeuristicDifficulty, ActiveRoster};
 use crate::systems::superpowers::{Superpower, SuperpowerKind};
 use crate::systems::status_effects::StatusEffects;
 use crate::rl::reward::RewardCalculator;
@@ -228,6 +228,15 @@ impl CubeSoccerEnv {
         self.app.world.resource_mut::<HeuristicDifficulty>().0 = d.clamp(0.0, 1.0);
     }
 
+    /// Set the active roster size (players per team, 1..=PLAYERS_PER_TEAM). Benched
+    /// players are ghosted + frozen, so the match plays as a true NvN while the
+    /// observation/action shape stays fixed at the full roster. Driven by the
+    /// training loop to grow 1v1 -> full NvN. Persists across `reset()`.
+    pub fn set_active_roster(&mut self, n: usize) {
+        let clamped = n.clamp(1, crate::game::PLAYERS_PER_TEAM);
+        self.app.world.resource_mut::<ActiveRoster>().0 = clamped;
+    }
+
     pub fn get_observation_space(&self) -> (Vec<f32>, Vec<f32>, Vec<usize>) {
         let n = NUM_AGENTS * OBSERVATION_SIZE;
         (vec![f32::NEG_INFINITY; n], vec![f32::INFINITY; n], vec![NUM_AGENTS, OBSERVATION_SIZE])
@@ -412,6 +421,41 @@ mod tests {
             full > frozen + 1.0,
             "full-strength Blue should travel more than a frozen opponent: full {full} vs frozen {frozen}"
         );
+    }
+
+    #[test]
+    fn active_roster_benches_extra_players() {
+        // With a 1v1 roster, players index>=1 must be frozen (velocity ~0) even when
+        // driven hard, while index 0 is free to move.
+        use crate::entities::CubePlayer;
+        if crate::game::PLAYERS_PER_TEAM < 2 {
+            return; // nothing to bench
+        }
+        let mut env = CubeSoccerEnv::new(EnvConfig::default());
+        env.reset(Some(2));
+        env.set_active_roster(1);
+        // Drive ALL orange players hard toward +x.
+        let mut actions = vec![0.0f32; NUM_AGENTS * crate::game::ACTION_SIZE];
+        for a in 0..crate::game::PLAYERS_PER_TEAM {
+            actions[a * crate::game::ACTION_SIZE] = 1.0;
+        }
+        for _ in 0..30 {
+            let _ = env.step(&actions);
+        }
+        let world = &mut env.app.world;
+        let speeds: Vec<(Team, usize, f32)> = world
+            .query::<(&CubePlayer, &Velocity)>()
+            .iter(world)
+            .map(|(p, v)| (p.team, p.index, v.linvel.length()))
+            .collect();
+        for (team, index, speed) in &speeds {
+            if *index >= 1 {
+                assert!(*speed < 1e-3, "benched player {team:?}#{index} should be frozen, got speed {speed}");
+            }
+        }
+        // The active orange player (index 0) actually moves.
+        let active_moved = speeds.iter().any(|(t, i, s)| *t == Team::Orange && *i == 0 && *s > 0.1);
+        assert!(active_moved, "active orange #0 should be moving");
     }
 
     #[test]
