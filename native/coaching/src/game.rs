@@ -11,8 +11,15 @@ use cube_soccer::entities::CubePlayer;
 use cube_soccer::entities::{
     animate_player_visual, reveal_loaded_characters, wear_characters, WornCharacters,
 };
+use cube_soccer::entities::character::{
+    adopt_eyelids, blink, light_the_characters, probe_character_materials,
+};
+use cube_soccer::entities::rig::{adopt_rig, animate_rig, probe_rig};
 use cube_soccer::game::{
     BallTouchedEvent, GameOverEvent, GameState, GoalScoredEvent, MatchState, ResetGameEvent,
+};
+use cube_soccer::systems::power_vfx::{
+    animate_power_fx, load_power_fx, reset_power_fx_glow, spawn_power_fx, PowerFired,
 };
 use cube_soccer::systems::{
     activate_superpowers, apply_kicks, apply_soccer_ai, apply_status_forces, clamp_velocities,
@@ -21,10 +28,13 @@ use cube_soccer::systems::{
     AiControlled, ImpulseEvent, KickCooldowns, PlayMemory, Possession, TeamTactics,
 };
 use cube_soccer::systems::{
-    animate_fragments, animate_googly_eyes, animate_trail_particles, apply_player_movement,
+    animate_fragments, animate_googly_eyes, apply_player_movement,
     check_reset_timer, detect_goals, handle_goal_scored, reset_after_goal, reset_after_round,
-    spawn_trail_particles, update_camera, update_timers,
+    update_camera, update_timers,
     update_wall_scoreboard, ResetTimer, TrailSpawnTimer,
+};
+use cube_soccer::ui::powers::{
+    fill_power_rail, setup_power_hud, update_power_hud, PowerHudSide,
 };
 use cube_soccer::ui::{setup_ui, update_ui};
 
@@ -47,12 +57,14 @@ impl Plugin for GamePlugin {
             .init_resource::<PlayMemory>()
             .init_resource::<WornCharacters>()
             .init_resource::<MatchFurnished>()
+            .init_resource::<PowerHudSide>()
             .init_resource::<SnapshotTimer>()
             .add_event::<ImpulseEvent>()
             .add_event::<GoalScoredEvent>()
             .add_event::<GameOverEvent>()
             .add_event::<ResetGameEvent>()
             .add_event::<BallTouchedEvent>()
+            .add_event::<PowerFired>()
             // The world -- pitch, players, jungle, and the two screens standing on the island --
             // is built once at startup by `world::WorldPlugin`, not here. This phase is entered
             // again at every round boundary, so anything spawned here would be spawned again.
@@ -68,7 +80,13 @@ impl Plugin for GamePlugin {
             // joiner with no game.
             .add_systems(
                 OnEnter(AppPhase::Game),
-                (setup_ui, start_game_stream, mark_furnished)
+                (
+                    setup_ui,
+                    setup_power_hud,
+                    load_power_fx,
+                    start_game_stream,
+                    mark_furnished,
+                )
                     .chain()
                     .run_if(not_yet_furnished),
             )
@@ -134,8 +152,17 @@ impl Plugin for GamePlugin {
                     // has to animate too, which is why `apply_network_snapshot` recovers
                     // `Velocity` from the streamed positions rather than leaving it at zero.
                     animate_player_visual,
-                    spawn_trail_particles,
-                    animate_trail_particles,
+                    // No rig on the model, so a blink is the only facial animation available --
+                    // and the vibrancy pass puts back the colour the jungle's single sun takes
+                    // out of artwork that already has its shading painted in.
+                    adopt_eyelids,
+                    blink,
+                    light_the_characters,
+                    // The walk cycle: the rig ships with joints but no clips, so it is driven here.
+                    adopt_rig,
+                    animate_rig,
+                    probe_rig,
+                    probe_character_materials,
                 )
                     .run_if(in_state(AppPhase::Game)),
             )
@@ -145,6 +172,22 @@ impl Plugin for GamePlugin {
             .add_systems(
                 Update,
                 (wear_characters, reveal_loaded_characters)
+                    .chain()
+                    .run_if(in_state(AppPhase::Game)),
+            )
+            // What a power looks like when it goes off, and what the HUD says about it. Ordered
+            // after the cast that raises the event, so the burst appears on the frame the power
+            // lands rather than the one after; the glow reset runs first so each frame's pieces
+            // bid their brightness up from black instead of from the last cast's.
+            .add_systems(
+                Update,
+                (
+                    reset_power_fx_glow,
+                    spawn_power_fx.after(activate_superpowers),
+                    animate_power_fx,
+                    fill_power_rail,
+                    update_power_hud,
+                )
                     .chain()
                     .run_if(in_state(AppPhase::Game)),
             )
@@ -191,6 +234,15 @@ fn mark_furnished(mut furnished: ResMut<MatchFurnished>) {
 #[derive(Component)]
 struct PlayReadout;
 
+/// Give the coached side the power its coach drew, and nobody a power they did not.
+///
+/// Powers reach the pitch through the forge and nowhere else: a coach draws a superpower,
+/// MonkeyForge classifies it, and `forge::arm_the_coached_side` hands that one power to that one
+/// side. Handing every player a power by default -- which is what this did briefly -- meant ten
+/// casters firing on cooldown and a pitch nobody could read through the effects.
+///
+/// So this is deliberately empty of any default. A match where nothing has been drawn has no
+/// powers in it, which is correct: the power is the drawing.
 fn tag_players_ai(mut commands: Commands, players: Query<Entity, With<CubePlayer>>) {
     for entity in &players {
         commands.entity(entity).insert(AiControlled);

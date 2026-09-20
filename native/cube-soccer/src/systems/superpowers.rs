@@ -2,6 +2,7 @@ use bevy::prelude::*;
 use crate::game::config::*;
 use crate::entities::{CubePlayer, PlayerInput};
 use crate::systems::status_effects::{StatusEffects, EffectKind, ImpulseEvent};
+use crate::systems::power_vfx::PowerFired;
 
 /// Which ability a cube holds. Assignment (who gets which) is a later spec.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -142,6 +143,9 @@ pub fn activate_superpowers(
     others: Query<(Entity, &CubePlayer, &Transform)>,
     mut effects: Query<&mut StatusEffects>,
     mut impulses: EventWriter<ImpulseEvent>,
+    // Presentation only, and an `EventWriter` rather than a call into the renderer so the
+    // headless sim can simply leave the events unread.
+    mut fired_fx: EventWriter<PowerFired>,
 ) {
     for (caster_e, caster, caster_tf, input, mut sp) in casters.iter_mut() {
         if !input.fire || sp.cooldown_remaining > 0.0 {
@@ -149,6 +153,9 @@ pub fn activate_superpowers(
         }
         let cpos = caster_tf.translation;
         let facing = facing_dir(caster_tf.rotation);
+        // Where the power landed, for the effect to play on. A blast has no single target and a
+        // boost lands on the caster, so this stays `None` for both.
+        let mut struck: Option<Vec3> = None;
 
         let fired = match sp.kind {
             SuperpowerKind::BeamBlast => {
@@ -175,6 +182,7 @@ pub fn activate_superpowers(
                         if let Ok(mut se) = effects.get_mut(opp[idx].0) {
                             se.add(EffectKind::SpeedFactor(0.0), FREEZE_SECS);
                         }
+                        struck = Some(opp[idx].1);
                         true
                     }
                     None => false,
@@ -202,6 +210,7 @@ pub fn activate_superpowers(
                         if let Ok(mut se) = effects.get_mut(e) {
                             se.add(EffectKind::SpeedFactor(SLOW_FACTOR), SLOW_SECS);
                         }
+                        struck = others.get(e).map(|(_, _, tf)| tf.translation).ok();
                         true
                     }
                     None => false,
@@ -211,6 +220,13 @@ pub fn activate_superpowers(
 
         if fired {
             sp.cooldown_remaining = sp.kind.cooldown();
+            fired_fx.send(PowerFired {
+                kind: sp.kind,
+                origin: cpos,
+                facing,
+                target: struck,
+                tint: caster.team.color(),
+            });
         }
     }
 }

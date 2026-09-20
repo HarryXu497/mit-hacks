@@ -49,6 +49,7 @@ use cube_soccer::entities::{
 use cube_soccer::game::{GameState, MatchState, MATCH_DURATION_SECS};
 use cube_soccer::jungle::{animate_jungle, animate_water, build_jungle};
 use cube_soccer::rendering::batching::merge_static_draws;
+use cube_soccer::rendering::wordmark;
 use cube_soccer::rendering::setup_lighting;
 use cube_soccer::rendering::stylized::{
     is_rendering, keep_characters_unstylised, register_shader, stylize, JungleMaterial,
@@ -124,6 +125,13 @@ impl Plugin for WorldPlugin {
                 frame_the_lobby.after(cube_soccer::creation::camera::spawn_camera),
             )
             .add_systems(Update, drift_the_lobby_view.run_if(in_state(AppPhase::Lobby)))
+            // The title, standing in the world rather than drawn over it.
+            .add_systems(OnEnter(AppPhase::Lobby), raise_the_wordmark)
+            .add_systems(
+                Update,
+                carry_the_wordmark.run_if(in_state(AppPhase::Lobby)),
+            )
+            .add_systems(OnExit(AppPhase::Lobby), strike_the_wordmark)
             .add_systems(OnExit(AppPhase::Lobby), step_up_to_the_easel)
             .add_systems(
                 OnEnter(CreationPhase::Coaching),
@@ -186,6 +194,60 @@ fn lobby_view(angle: f32) -> Transform {
         angle.cos() * RADIUS,
     ))
     .looking_at(AIM, Vec3::Y)
+}
+
+/// Builds the title and stands it in the scene.
+///
+/// Spawned on entering the lobby rather than at startup: `merge_static_draws`
+/// absorbs static meshes and despawns the originals at `PostStartup`, and
+/// anything built before it stops being drawn while still reporting itself
+/// visible. The geometry also carries `NoMerge`, for the same reason twice.
+fn raise_the_wordmark(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    wordmark::spawn(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        wordmark::FONT,
+        ["MONKEY", "BUSINESS"],
+    );
+}
+
+/// Keeps the title at a fixed place in frame while the lobby view turns.
+///
+/// The obvious thing is to stand it somewhere on the mountainside, which is
+/// what the game's own title card does -- but that card is shot from one fixed
+/// camera. This one orbits the whole stadium every four minutes, so a title
+/// planted in the world would swing out of frame and spend a quarter of the
+/// turn facing away. Carrying it with the camera keeps the letters legible and
+/// still lets them take the scene's light, its cel banding and its shadows.
+fn carry_the_wordmark(
+    cameras: Query<&Transform, (With<CreationCamera>, Without<wordmark::Wordmark>)>,
+    mut titles: Query<&mut Transform, (With<wordmark::Wordmark>, Without<Parent>)>,
+) {
+    let Ok(view) = cameras.get_single() else {
+        return;
+    };
+    for mut title in &mut titles {
+        // Right of centre and high, clear of the menu column on the left, and
+        // set far enough back that the two lines read as a wordmark over the
+        // scene rather than filling the frame. Turned a few degrees so the
+        // extrusion's side walls stay visible instead of presenting flat on.
+        *title = view.mul_transform(Transform::from_xyz(0.5, 6.8, -50.0));
+        title.rotation *= Quat::from_rotation_y(-0.22);
+    }
+}
+
+fn strike_the_wordmark(
+    mut commands: Commands,
+    titles: Query<Entity, (With<wordmark::Wordmark>, Without<Parent>)>,
+) {
+    for title in &titles {
+        commands.entity(title).despawn_recursive();
+    }
 }
 
 fn frame_the_lobby(mut cameras: Query<&mut Transform, With<CreationCamera>>) {
