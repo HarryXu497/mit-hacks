@@ -1,3 +1,7 @@
+> Historical planning notes: the taxonomy and coaching-to-game handoff below
+> predate the tactical AI integration. See [AGENT-README.md](./AGENT-README.md)
+> for current functionality, versions, and remaining gaps.
+
 # Model-backed tactical interpretation
 
 The app now sends recorded sessions to a server-only `POST /api/interpret`
@@ -15,8 +19,9 @@ combines model-derived tactics with deterministic board facts.
   supplies coordinates, movements, timestamps, annotations, teams, and final
   board state from the recorded session.
 - Missing credentials, refusals, timeouts, request failures, and invalid output
-  are explicit API errors. The browser preserves the session and displays the
-  deterministic fallback result.
+  are explicit API errors. The native client preserves the session and shows
+  Retry interpretation / Continue anyway (Balanced), with the latter requiring
+  an explicit user click.
 - Telemetry contains status, model, latency, token counts, and request ID; it
   does not contain transcript text.
 

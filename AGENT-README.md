@@ -36,9 +36,9 @@ Player Creation  →  Coaching  →  Interpretation  →  Game
                      tactic)      → tactical JSON)   minigame)
 ```
 
-Each arrow below is currently a real seam, and two of them are places
-where data does *not* yet flow through — worth knowing before you assume
-something is wired up.
+The coaching → interpretation → game handoff is wired through a validated
+controller selection. Drawing artifacts are still saved but are not consumed
+by the game.
 
 ## 1. Player drawing (`native/player-creation/`)
 
@@ -119,7 +119,7 @@ Shape, roughly:
 
 ```
 {
-  schemaVersion, taxonomyVersion, interpretationMode,
+  schemaVersion: "2.0", taxonomyVersion: "tactics-v2", interpretationMode,
   session: { id, title, durationMs },
   teams: [{ id: "red"|"yellow", playerIds }],
   classification, summary: { name, objective },
@@ -128,8 +128,9 @@ Shape, roughly:
             evidence: { eventIds, transcriptSegmentIds } }],
   finalState: { players, ball, annotations },
   rlSelection: { schemaVersion, taxonomyVersion, sessionId,
-                 primaryTactic, downstreamValue: "Balanced"|"HighPress"|
-                 "LowBlock"|"Wide", selectionReason, evidenceStrength }
+                 teamId: "red", primaryTactic, downstreamValue,
+                 selectionReason, evidenceStrength,
+                 playerOverrides: [{ playerId, tactic, evidence }] }
 }
 ```
 
@@ -140,18 +141,27 @@ Shape, roughly:
   never coordinates or IDs), then `server/normalize.ts` grounds that
   output against the real session data (rejecting any invented event or
   transcript ID) and assembles the final `tacticalOutputSchema` object.
-  If the service is unavailable, both the TS side (`interpretSession()`
-  in `src/domain/interpret.ts`) and the Rust side
-  (`native/coaching/src/interpretation.rs`) have a deterministic
-  fallback that produces a structurally-compatible payload without an
-  LLM.
-- **`rlSelection`**: worth flagging specifically — this field looks like
-  the intended hook for a reinforcement-learning consumer (a compact
-  `downstreamValue` enum plus the reasoning behind it), but today it's
-  always populated with fallback values (`primaryTactic: "balanced"`,
-  `selectionReason: "system_fallback"`), never genuinely model- or
-  RL-derived. If you're building the RL portion, this is a plausible
-  place to plug in, but it isn't live yet.
+  Failures leave the native client in `Failed` with no output or game transition.
+  The failure panel displays the error code, HTTP/provider reason and request ID
+  when available, plus **Retry interpretation** and **Continue anyway (Balanced)**.
+  Only that explicit continue action creates a deterministic Balanced payload
+  and enters the game. Deterministic generators remain available for previews/tests.
+- **`rlSelection`** is the game handoff. `primaryTactic` and `downstreamValue`
+  use the same canonical label: `balanced`, `highpress`, `gegenpress`,
+  `lowblock`, `parkthebus`, `counterattack`, `possession`, `wingplay`,
+  `narrowmidblock`, or `alloutattack`. The server interprets the red team's
+  intended behavior. Optional, unique overrides refer only to red IDs 1–5,
+  select another named preset, and cite real board/transcript evidence.
+  The model must choose the closest supported preset with `best_match`, even
+  for imperfect or mixed evidence. Balanced is allowed only when neutral shape
+  actually fits, not as an uncertainty escape hatch. Weak evidence is retained
+  as a visible low-confidence notice. Empty coaching produces a specific error.
+  User-approved fallback selects Balanced with no overrides.
+- **Versions:** new tactical output and selections use `2.0` / `tactics-v2`;
+  raw sessions and `/api/interpret` request envelopes remain `1.0`. The native
+  handoff accepts legacy v1 selections (`Balanced`, `HighPress`, `LowBlock`,
+  `Wide`), translating `Wide` to `wingplay`. Unknown labels/versions fail
+  validation instead of silently changing the tactic.
 - A round-trip fixture lives at `fixtures/session-v1.json`, used by both
   the Rust and TypeScript test suites — useful as a concrete example
   payload if you want to test against the contract without running the
@@ -159,26 +169,121 @@ Shape, roughly:
 
 ## 4. Game portion (`native/coaching/src/game.rs`)
 
-`GamePlugin` is a thin Bevy-plugin wrapper: almost all of its systems
-(`spawn_arena`, `spawn_players`, `spawn_ball`, movement, scoring, camera,
-UI) are imported from a separate `cube_soccer` crate, not written in this
-crate. `native/coaching/Cargo.toml` currently points that dependency at
-a path (`../../.claude/worktrees/jungle-soccer`) — a local worktree, not
-something published or version-pinned.
+`GamePlugin` integrates the tracked `native/cube-soccer` crate into the Bevy
+`AppPhase` lifecycle. The dependency no longer relies on a `.claude` worktree.
+The crate combines main's gameplay foundation with the existing jungle,
+monkey-player presentation, field decoration, lighting, and broadcast camera.
 
-- **Entering the phase**: `EnterGame` is a plain Bevy event, fired only
-  from a UI button after tactical interpretation results are shown
-  (`src/ui.rs::result_view`). `handle_enter_game` in `src/lib.rs` reacts
-  by deactivating coaching and setting `AppPhase::Game`.
-- **Current gap**: this transition is a bare state-machine switch.
-  **No tactical/interpreted data is passed into the game phase.** The
-  `TacticalResult` resource (the interpreted JSON) stays scoped to the
-  coaching module; `GamePlugin`/`cube_soccer` never reads it. The game
-  starts with the same hardcoded arena/setup regardless of what was
-  coached. If your work is about tactics or RL behavior actually
-  affecting gameplay, this is the gap to close — there's currently no
-  code moving `TacticalOutput` (or `rlSelection` specifically) into the
-  game phase at all.
+- **Handoff:** the results UI fires `EnterGame`. The handler requires a ready,
+  current interpretation and validates its selection through
+  `game_handoff.rs::GameHandoff`. Invalid or stale data leaves the user in
+  coaching with an explanation. The same output is saved/exported and used
+  to construct the game directive.
+- **Controller:** `Tactic::from_name()` → `Tactic::params()` →
+  `TeamDirective::uniform()` / `set_player()` → `TeamTactics` →
+  `apply_heuristic_ai`. Each update uses live player and ball state to compute
+  movement. Tactic presets affect support shape, pressing, depth, width,
+  spacing, line height, and attacking commitment; they do not replay paths.
+- **Identity:** fixed 5-v-5; red IDs 1–5 map to Orange indices 0–4, yellow
+  IDs 6–10 to Blue indices 0–4. All ten players receive `AiControlled`.
+  Orange uses the coached directive, Blue uses Balanced. No keyboard player
+  movement system runs in this integrated spectator match.
+- **Lifecycle:** normal starting positions, tactics retained through goal and
+  round resets, possession cleared on resets. AI runs before movement/power
+  activation. Results and the game HUD show the coached preset and overrides.
+- **Architecture:** recording and interpretation remain separate from the game
+  adapter. The external JSON uses coaching IDs and labels, never Bevy entities
+  or controller internals. Normalized board coordinates remain in the report;
+  this version does not use them to place players in the game.
+
+## 5. Integration from main: implemented and remaining
+
+Source: `origin/main` commit `f0026d8e68bd1cbec675b4751b4c1ecbe31416ec`.
+This is a source integration into `native/cube-soccer`, not a claim that the
+entire main branch was merged into the coaching branch.
+
+| Functionality | Status in the combined app |
+|---|---|
+| Ten named tactical presets and per-player directives | Wired to coaching JSON and active during gameplay. |
+| Indexed players and team identity | Integrated; main's 1-v-1 constant changed to fixed 5-v-5. |
+| Heuristic movement, team support roles, pressing and spacing | Active for both teams; red/Orange is coached and yellow/Blue stays Balanced. |
+| Possession, movement, velocity limits, scoring and resets | Integrated into the native game lifecycle. |
+| Superpower activation, cooldowns and status-effect systems | Registered, but no drawing-to-power assignment exists; players without a `Superpower` component have no ability. |
+| Jungle visuals and camera | Preserved from the previous local game, including its larger arena/goal dimensions and ball CCD. Main's movement/gravity remain the gameplay basis. |
+| RL observations/actions, headless simulation and Python bindings | Source included in the game crate; not used as the controller for the combined app. |
+| PPO training/evaluation Python scripts | Included as upstream source, not launched by the app. No trained checkpoint or native policy-inference bridge is supplied. These scripts are not verified as part of the coaching demo. |
+| Tactic blends and arbitrary numeric parameter APIs | Available in upstream controller code; not exposed in coaching JSON for this phase. |
+| Drawing appearance/superpower artifacts | Still saved; not consumed to generate game appearance or assign powers. |
+| Board-position initialization, timed phase execution, coaching both teams | Not implemented in this phase. |
+
+**Terminology:** the running controller is heuristic tactical AI, not a trained
+PPO policy. The `rlSelection` field name is retained for continuity. Main's
+PPO policy interface consumes numerical observations and emits actions; it
+has no coaching-label input. Source inclusion does not mean that learned
+inference is wired up. A separately trained model can be integrated later
+using the handoff notes below.
+With this build's five players per team, the observation layout is 78 floats
+per player (390 per team) and actions are four floats per player (20 per team).
+A checkpoint trained with main's one-player-per-team dimensions would not be
+compatible without additional work.
+
+Launch with `npm run dev:native`; it starts the local API and the native app.
+No external worktree or Python process is needed for the coaching/game flow.
+
+### Adding the separately trained model later
+
+The user reports that another teammate may be training a model separately.
+No trained checkpoint is committed in the inspected main revision; this does
+**not** mean no model exists elsewhere. Main ignores `models/`, `checkpoints/`,
+and several model-file extensions, so obtain the artifact from its owner.
+The current app remains fully usable with heuristic tactical AI until a
+compatible learned controller is explicitly connected.
+
+**Request from the model owner:**
+
+- The checkpoint (for example, an SB3 PPO `.zip`), loading/inference example,
+  required Python/library versions, and any observation-normalization statistics.
+- The training commit and environment configuration: team size, whether the
+  policy controls one player or a whole team, observation feature order/scaling,
+  agent ordering, action format, decision frequency/action repeat, and physics/
+  superpower settings. Confirm compatibility with this app's five-player teams;
+  do not assume the model being trained uses main's one-player default.
+- Whether/how the policy accepts coaching: tactic labels, numeric conditioning,
+  or separate checkpoints per tactic. The current upstream PPO observation has
+  no tactic input. Merely loading a model will not make it obey `rlSelection`.
+
+**Integration points (future work, not implemented switches):**
+
+1. Keep the coaching JSON and `native/coaching/src/game_handoff.rs` as the
+   interpretation boundary. Add a policy controller at the game layer in
+   `native/coaching/src/game.rs`; do not send raw coaching events to the model
+   or replace recording/interpretation with inference.
+2. Build live observations using `native/cube-soccer/src/rl/observation.rs`
+   (`get_observations` / `compute_observations`). Match the training preprocessing
+   exactly, including team-relative coordinates and any saved normalization.
+   This build exposes 78 floats per player, or 390 for the Orange team policy;
+   confirm the supplied checkpoint's actual input shape before loading it.
+3. Run the supplied policy at its trained decision cadence, then adapt its
+   outputs through `AIActions` / `PlayerAction` in
+   `native/cube-soccer/src/input/ai_controller.rs`, before movement. Each player
+   has four actions: `move_x`, `move_z`, `jump`, `fire`; the Orange team output
+   is 20 floats. Preserve red IDs 1–5 → Orange indices 0–4.
+4. Give each player exactly one controller. Keep Blue on the Balanced heuristic
+   if only Orange is learned. The existing `apply_ai_actions` writes to every
+   indexed player, so scope the new adapter to policy-controlled players;
+   exclude those players from `apply_heuristic_ai` to avoid overwriting actions.
+5. Wire coaching into the policy only according to the training contract agreed
+   with its owner. If it was not conditioned on tactics, decide that integration
+   explicitly before replacing the heuristic; otherwise coaching could stop
+   affecting behavior. Keep the heuristic as an explicit selectable fallback
+   and report missing/incompatible checkpoints visibly.
+
+Before enabling the learned controller, verify a known observation/action
+example against the owner's inference script, validate shapes and finite action
+values, and smoke-test movement, game resets, and the intended coaching effect.
+The checkpoint, inference runtime/bridge, controller selection, and coaching
+conditioning connection are all still to be added; these notes document the
+existing connection points rather than claiming a drop-in switch exists.
 
 ## Where to look next
 
@@ -187,5 +292,34 @@ something published or version-pinned.
 | Player drawing | `native/player-creation/src/bin/native-player-creation.rs` | `state.rs` (flow states, `ContinueToCoaching`), `persistence.rs` (output paths), `input.rs` (coordinate mapping) |
 | Coaching session | `native/coaching/src/bin/native-coaching.rs` | `model.rs` (event/domain types), `session.rs` (recording), `replay.rs` (log → board state), `speech.rs` (transcription) |
 | Tactical JSON | — (library code, both languages) | `src/domain/interpret.ts` (`tacticalOutputSchema`, canonical contract), `server/openaiInterpretation.ts` + `server/normalize.ts` (production), `native/coaching/src/interpretation.rs` (client + Rust fallback) |
-| Game | `native/coaching/src/game.rs` | `Cargo.toml` (`cube-soccer` path dependency), `AppPhase::Game` transition in `src/lib.rs` |
+| Game | `native/coaching/src/game.rs` | `game_handoff.rs` (JSON → directives), tracked `native/cube-soccer`, `AppPhase::Game` transition in `src/lib.rs` |
 | Local service | `server/index.ts` | `app.ts` (`/api/interpret`, `/api/health`), `transcription.ts` (`/api/transcribe` → Deepgram) |
+
+## Verification of this integration
+
+- TypeScript build and 29 deterministic tests cover output labels and override grounding.
+- Two live model tests cover High Press and Low Block through the updated schema/API.
+- 111 Rust tests cover the game and coaching crates, including the production
+  game plugin starting ten AI players from a synthetic interpretation, player
+  movement, goal/round resets, and rejecting stale/invalid handoffs.
+- The native app build and the game crate's examples/all-targets check pass.
+- `native/coaching/examples/coached_match.rs` renders a synthetic coached match
+  through the production adapter/plugin without touching saved sessions or
+  calling external services. Run with `-- highpress` (or another canonical label).
+- Rendered native creation/coaching screens and the synthetic 5-v-5 jungle match
+  were visually checked; the match HUD showed High Press, Balanced opposition,
+  and player 2’s Low Block override. Saved coaching data was left unchanged.
+
+### Demo-flow cleanup TODO
+
+Once integration is stable, remove the verbose developer error/low-confidence
+warnings from the demo presentation (including codes and request IDs). Keep
+full diagnostics in server logs and preserve clear failure/retry behavior and
+an explicit **Continue anyway (Balanced)** choice. Do not reintroduce a silent
+Balanced fallback. For now the detailed warnings intentionally remain visible.
+
+The server makes one 20-second model attempt; the native request allows 30
+seconds so the server's detailed timeout can arrive. Provider authentication,
+access/model errors, quota/rate limits, connectivity, incomplete/refused output,
+and schema/grounding failures have distinct actionable diagnostics. API key
+material is redacted from provider messages before display/logging.

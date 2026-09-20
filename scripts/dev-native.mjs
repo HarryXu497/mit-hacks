@@ -17,7 +17,7 @@ const cargoCheck = spawnSync("cargo", ["--version"], {
 if (cargoCheck.error?.code === "ENOENT") {
   console.error(
     "Rust/Cargo is required for native coaching but was not found on PATH.\n" +
-      "Install Rust 1.75+ from https://rustup.rs, then run:\n" +
+      "Install Rust 1.85+ from https://rustup.rs, then run:\n" +
       '  source "$HOME/.cargo/env"\n' +
       "Or add that line to ~/.zshrc so new terminals pick up Cargo automatically.",
   );

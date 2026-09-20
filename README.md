@@ -8,7 +8,7 @@ native Rust/Bevy application under `native/coaching`. The Node service in
 
 ## Run the native client
 
-Install Rust 1.75+, Node.js 20+, and the platform linker prerequisites, then:
+Install Rust 1.85+, Node.js 20+, and the platform linker prerequisites, then:
 
 ```bash
 npm install
@@ -19,7 +19,10 @@ npm run dev:native
 ```
 
 The launcher runs the local credential-holding service and native application;
-no browser is required. See
+no browser is required. After interpretation, click **Next** to watch the
+coached red/Orange team play a Balanced opponent in the jungle game. The
+tracked `native/cube-soccer` crate supplies the tactical AI; no separate
+worktree, Python service, or trained model is needed for gameplay. See
 [docs/native-coaching.md](./docs/native-coaching.md) for platform setup,
 permissions, storage, and verification.
 
@@ -41,6 +44,8 @@ native client.
 npm run typecheck
 npm test
 npm run build
+cargo test --manifest-path native/coaching/Cargo.toml --lib -p cube-soccer -p tactic-lab-native
+cargo build --manifest-path native/coaching/Cargo.toml --bin native-coaching
 ```
 
 The normal test suite is deterministic and does not make network requests. To
@@ -50,6 +55,7 @@ run the two opt-in integration tests against the configured OpenAI model:
 npm run test:live
 ```
 
-Model-backed JSON generation uses the server route. The native client falls
-back to deterministic output when the service is unavailable. See
+Model-backed JSON generation uses the server route and chooses the closest
+supported tactic. Failures show their reason with **Retry interpretation** and
+**Continue anyway (Balanced)**; Balanced is never silently substituted. See
 [next-steps.md](./next-steps.md) for architecture and future hardening notes.
