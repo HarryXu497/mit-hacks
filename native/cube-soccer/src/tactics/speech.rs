@@ -10,7 +10,7 @@
 //! The wire protocol is the coaching app's, message for message, so the two
 //! clients are interchangeable in front of the same server.
 
-use super::{Session, TableState, Transcript};
+use super::{Session, Spoken, TableState, Transcript, TranscriptFlow};
 use bevy::prelude::*;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, Sample, SampleFormat, SizedSample};
@@ -77,11 +77,13 @@ impl Default for SpeechRuntime {
                 .name("canopy-speech".into())
                 .spawn(move || worker(command_rx, reply_tx)),
         );
+        let devices = device_names();
+        let selected = preferred_input(&devices, default_input_name().as_deref());
         Self {
             commands,
             replies,
-            devices: device_names(),
-            selected: 0,
+            devices,
+            selected,
             status: SpeechStatus::Idle,
             error: None,
             generation: 0,
@@ -207,8 +209,12 @@ impl Drop for SpeechRuntime {
 ///
 /// Extracted so the test that pins this can exercise the real wiring rather than a copy of it.
 pub fn register(app: &mut App) {
-    app.init_resource::<SpeechRuntime>()
-        .add_systems(Update, (drive_speech, receive_speech).chain());
+    app.init_resource::<SpeechRuntime>().add_systems(
+        Update,
+        // In `TranscriptFlow::Heard`, which `tactics` orders before the fold into the log, so
+        // a sentence leaving `partial` and arriving in the log happens inside one frame.
+        (drive_speech, receive_speech).chain().in_set(TranscriptFlow::Heard),
+    );
 }
 
 /// Opens and closes the microphone as the clock starts and stops, so talking is
@@ -237,7 +243,11 @@ pub fn drive_speech(
 
 /// Moves finished sentences onto the session clock, and the half-spoken one
 /// onto the sign.
-pub fn receive_speech(mut runtime: ResMut<SpeechRuntime>, mut transcript: ResMut<Transcript>) {
+pub fn receive_speech(
+    mut runtime: ResMut<SpeechRuntime>,
+    mut transcript: ResMut<Transcript>,
+    session: Res<Session>,
+) {
     while let Ok(reply) = runtime.replies.try_recv() {
         match reply {
             Reply::Status { generation, status, message } if generation == runtime.generation => {
@@ -247,12 +257,20 @@ pub fn receive_speech(mut runtime: ResMut<SpeechRuntime>, mut transcript: ResMut
                 }
             }
             Reply::Partial { generation, text } if generation == runtime.generation => {
+                // The first words of a sentence fix its place on the clock, and it keeps that
+                // place when it is folded into the log below -- so a readout showing the
+                // half-spoken sentence shows the stamp it will still have once it settles.
+                if transcript.partial.is_empty() {
+                    transcript.partial_started_ms = Some(session.elapsed_ms);
+                }
                 transcript.partial = text;
             }
             Reply::Final { generation, item_id, text } if generation == runtime.generation => {
+                let start_ms = transcript.partial_started_ms.unwrap_or(session.elapsed_ms);
                 transcript.partial.clear();
+                transcript.partial_started_ms = None;
                 if !text.trim().is_empty() && runtime.seen.insert(item_id) {
-                    transcript.pending.push(text);
+                    transcript.pending.push(Spoken { text, start_ms });
                 }
             }
             _ => {}
@@ -267,6 +285,60 @@ fn device_names() -> Vec<String> {
         .input_devices()
         .map(|devices| devices.filter_map(|device| device.name().ok()).collect())
         .unwrap_or_default()
+}
+
+fn default_input_name() -> Option<String> {
+    cpal::default_host().default_input_device().and_then(|device| device.name().ok())
+}
+
+/// Inputs that are not this machine's own microphone: a phone, tablet or watch offered over
+/// Continuity, and the virtual devices a meeting app or a loopback driver leaves behind.
+const SOMEWHERE_ELSE: [&str; 11] = [
+    "iphone",
+    "ipad",
+    "ipod",
+    "watch",
+    "continuity",
+    "blackhole",
+    "soundflower",
+    "loopback",
+    "aggregate",
+    "virtual",
+    "krisp",
+];
+
+/// The laptop's own microphone, by the names macOS and Windows give it.
+fn is_built_in(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    ["macbook", "built-in", "built in", "internal"].iter().any(|mark| name.contains(mark))
+}
+
+fn is_somewhere_else(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    SOMEWHERE_ELSE.iter().any(|mark| name.contains(mark))
+}
+
+/// Which microphone to listen with: this laptop's own, by preference.
+///
+/// cpal enumerates in whatever order the OS hands the devices over, and this used to take
+/// `devices[0]` on trust. On a Mac with an iPhone nearby that first device is very often the
+/// phone -- so the coach talked into their laptop and the transcript stayed empty, with the
+/// sign cheerfully reporting "Listening...". Order of preference: the built-in microphone,
+/// then the system default as long as it is not something paired elsewhere, then the first
+/// device that is not, and only then whatever happened to come first.
+///
+/// The menu's device picker still overrides all of this -- it sets `selected` directly.
+fn preferred_input(devices: &[String], default: Option<&str>) -> usize {
+    devices
+        .iter()
+        .position(|name| is_built_in(name))
+        .or_else(|| {
+            default
+                .filter(|name| !is_somewhere_else(name))
+                .and_then(|name| devices.iter().position(|device| device == name))
+        })
+        .or_else(|| devices.iter().position(|name| !is_somewhere_else(name)))
+        .unwrap_or(0)
 }
 
 fn worker(commands: Receiver<Command>, replies: Sender<Reply>) {
@@ -424,6 +496,12 @@ fn input_stream(
         .and_then(|name| {
             host.input_devices().ok()?.find(|device| device.name().ok().as_deref() == Some(name))
         })
+        // The named device has gone -- unplugged, or the phone wandered out of range. Take the
+        // built-in microphone rather than whatever the system default has become in the
+        // meantime, which on a Mac is quite likely to be that same phone.
+        .or_else(|| {
+            host.input_devices().ok()?.find(|device| device.name().is_ok_and(|n| is_built_in(&n)))
+        })
         .or_else(|| host.default_input_device())
         .ok_or("No microphone input device is available.")?;
     let supported = device.default_input_config()?;
@@ -504,6 +582,7 @@ impl Resampler {
 
 #[cfg(test)]
 mod tests {
+    use super::super::RawEvent;
     use super::*;
 
     #[test]
@@ -539,6 +618,32 @@ mod tests {
     #[test]
     fn nothing_to_resample_is_not_an_error() {
         assert!(Resampler::new(48_000, SAMPLE_RATE).process(&[]).is_empty());
+    }
+
+    /// The coach talks into their laptop, so that is what must be listened to.
+    ///
+    /// cpal's first device on a Mac with a phone nearby is very often the phone.
+    #[test]
+    fn the_laptops_own_microphone_is_chosen_over_a_phone() {
+        let devices: Vec<String> = ["iPhone Microphone", "MacBook Pro Microphone", "BlackHole 2ch"]
+            .iter()
+            .map(|n| (*n).to_string())
+            .collect();
+        // Even when the phone is first *and* the system default.
+        assert_eq!(preferred_input(&devices, Some("iPhone Microphone")), 1);
+
+        // No built-in: the system default wins, as long as it is not somewhere else.
+        let external: Vec<String> = ["iPhone Microphone", "Scarlett Solo USB"]
+            .iter()
+            .map(|n| (*n).to_string())
+            .collect();
+        assert_eq!(preferred_input(&external, Some("Scarlett Solo USB")), 1);
+        // ...and when the default is the phone too, anything else is still preferred.
+        assert_eq!(preferred_input(&external, Some("iPhone Microphone")), 1);
+
+        // Nothing but a phone is still better than refusing to listen at all.
+        assert_eq!(preferred_input(&["iPhone Microphone".to_string()], None), 0);
+        assert_eq!(preferred_input(&[], None), 0);
     }
 
     #[test]
@@ -646,7 +751,7 @@ mod tests {
 
         assert_eq!(
             app.world.resource::<Transcript>().pending,
-            vec!["press high on the left".to_owned()],
+            vec![Spoken { text: "press high on the left".to_owned(), start_ms: 0 }],
             "the closing sentence must reach the transcript"
         );
         assert_eq!(
@@ -654,6 +759,69 @@ mod tests {
             SpeechStatus::Idle,
             "the transcript must not sit on Finalizing once the worker has answered"
         );
+    }
+
+    /// A sentence must never be visible in neither place.
+    ///
+    /// Finishing one clears `Transcript::partial` and pushes to `pending`; folding `pending`
+    /// into the log is a second system. While the two were unordered, a readout could render
+    /// the frame in between -- the words had left the partial and had not yet reached the
+    /// log, so they blinked out and came back. `TranscriptFlow` orders them, and this pins it:
+    /// one `update`, and the sentence is already on the log.
+    #[test]
+    fn a_finished_sentence_reaches_the_log_in_the_frame_it_leaves_the_partial() {
+        let (reply_tx, replies) = unbounded();
+        let (commands, _command_rx) = unbounded();
+        let mut app = App::new();
+        app.insert_resource(SpeechRuntime {
+            commands,
+            replies,
+            devices: vec!["Test microphone".into()],
+            selected: 0,
+            status: SpeechStatus::Listening,
+            error: None,
+            generation: 0,
+            seen: HashSet::new(),
+        })
+        .init_resource::<Transcript>()
+        .init_resource::<Session>()
+        .init_resource::<crate::creation::persistence::CreationSession>()
+        .init_state::<TableState>()
+        .init_state::<crate::creation::CreationPhase>()
+        .configure_sets(Update, TranscriptFlow::Heard.before(TranscriptFlow::Logged))
+        .add_systems(Update, super::super::drain_transcript.in_set(TranscriptFlow::Logged));
+        register(&mut app);
+
+        app.world.resource_mut::<Session>().elapsed_ms = 7_000;
+        reply_tx
+            .send(Reply::Partial { generation: 0, text: "press".into() })
+            .expect("the worker can answer");
+        app.update();
+        let started = app.world.resource::<Transcript>().partial_started_ms;
+        assert_eq!(started, Some(7_000), "the first words fix the sentence's place on the clock");
+
+        // The clock has moved on by the time the sentence settles.
+        app.world.resource_mut::<Session>().elapsed_ms = 9_500;
+        reply_tx
+            .send(Reply::Final {
+                generation: 0,
+                item_id: "one".into(),
+                text: "press high on the left".into(),
+            })
+            .expect("the worker can answer");
+        app.update();
+
+        let transcript = app.world.resource::<Transcript>();
+        assert!(transcript.partial.is_empty(), "the partial is spent");
+        assert!(transcript.pending.is_empty(), "and was folded in the same frame");
+        assert_eq!(transcript.partial_started_ms, None);
+        match app.world.resource::<Session>().events.first().expect("one event") {
+            RawEvent::TranscriptAdded { text, at_ms, .. } => {
+                assert_eq!(text, "press high on the left");
+                assert_eq!(*at_ms, 7_000, "stamped where the coach started saying it");
+            }
+            other => panic!("unexpected {other:?}"),
+        }
     }
 
     /// Built field by field: the runtime owns channels and a worker thread, so

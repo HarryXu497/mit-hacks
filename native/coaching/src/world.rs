@@ -58,7 +58,7 @@ use cube_soccer::systems::camera::{CameraRig, MainCamera};
 use cube_soccer::systems::physics::configure_physics;
 use cube_soccer::tactics::{
     Interpretation as TableInterpretation, RequestInterpretation as TableInterpretRequest,
-    Session as TableSession, TableState, TacticsPlugin,
+    Session as TableSession, TableState, TacticsPlugin, TranscriptFlow,
 };
 
 /// Builds the world, runs the in-world screens, and couples their state to `AppPhase`.
@@ -156,11 +156,14 @@ impl Plugin for WorldPlugin {
                 Update,
                 (
                     the_panel_drives_the_clock,
-                    mirror_the_table_into_the_session,
+                    mirror_the_table_into_the_session.in_set(TableMirror::Applied),
                     the_table_asks_for_an_interpretation,
                     tell_the_sign_what_came_back,
                 )
                     .chain()
+                    // After the table has folded any finished sentence into its own log, so the
+                    // mirror carries it across in the same frame the coach finished saying it.
+                    .after(TranscriptFlow::Logged)
                     .run_if(in_state(AppPhase::Coaching)),
             )
             // ...and the table's own keyboard, if that is what the coach reached for, drives the
@@ -169,6 +172,17 @@ impl Plugin for WorldPlugin {
             .add_systems(OnEnter(TableState::Recording), the_table_starts_the_clock)
             .add_systems(OnEnter(TableState::Stopped), the_table_stops_the_clock);
     }
+}
+
+/// The table's log, mirrored into the canonical session.
+///
+/// The coaching panel reads that session rather than the table, so it orders itself after this
+/// set. Left unordered, the panel could render the one frame that sits between a sentence
+/// reaching the table's log and reaching the session -- the words were in neither place the
+/// panel looks, so they blinked out and then reappeared.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub enum TableMirror {
+    Applied,
 }
 
 /// How many rounds have been played, so the table can say which play it is taking.

@@ -101,6 +101,10 @@ impl Plugin for CoachingPlugin {
                     invalidate_stale_result,
                 )
                     .chain()
+                    // The panel renders the session the table was just mirrored into. Reading
+                    // it before the mirror ran showed a finished sentence in neither the live
+                    // partial nor the session -- one blank frame, then the words back again.
+                    .after(world::TableMirror::Applied)
                     .run_if(coaching_is_active)
                     .run_if(in_state(AppPhase::Coaching)),
             )

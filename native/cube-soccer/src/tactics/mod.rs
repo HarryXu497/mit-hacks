@@ -151,13 +151,28 @@ impl Session {
 #[derive(Resource, Default)]
 pub struct Transcript {
     /// Sentences not yet folded into the log.
-    pub pending: Vec<String>,
+    pub pending: Vec<Spoken>,
     /// The partial sentence currently being spoken, if any.
     pub partial: String,
+    /// The clock reading `partial` began on, so a readout can show the half-spoken
+    /// sentence against the very timestamp it will keep once it is finished. Without
+    /// it the stamp jumps the instant the words settle.
+    pub partial_started_ms: Option<u64>,
     /// True once something is listening, whether or not words have arrived.
     pub live: bool,
     /// A line for the sign about the microphone itself.
     pub status: String,
+}
+
+/// A finished sentence on its way to the log, with the clock reading it began on.
+///
+/// The start rather than the end: a sentence belongs to the moment the coach started
+/// saying it, and it is the only stamp a readout can show while the words are still
+/// arriving.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Spoken {
+    pub text: String,
+    pub start_ms: u64,
 }
 
 /// The result of interpreting the session, filled in by whatever can do it.
@@ -188,6 +203,22 @@ pub struct ResetBoard;
 /// the work and writes the answer into [`Interpretation`].
 #[derive(Event, Debug, Clone, Copy)]
 pub struct RequestInterpretation;
+
+/// The transcript's path across one frame: heard, then logged, then read.
+///
+/// These three steps used to be unordered systems in three different plugins, so Bevy was
+/// free to run them in any order and to change that order from frame to frame. A sentence
+/// finishing leaves `Transcript.partial` and arrives in the log in two separate steps, so an
+/// unlucky order meant a readout rendered a frame in which the words were in neither place --
+/// the sentence blinked out and then reappeared. Anything that reads the log orders itself
+/// after `Logged` and sees one consistent state.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub enum TranscriptFlow {
+    /// The microphone's replies land on [`Transcript`].
+    Heard,
+    /// [`Transcript::pending`] is folded onto the session log.
+    Logged,
+}
 
 /// What the table is doing.
 #[derive(States, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -246,18 +277,26 @@ impl Plugin for TacticsPlugin {
                     .chain()
                     .after(crate::jungle::build_jungle),
             )
+            .configure_sets(Update, TranscriptFlow::Heard.before(TranscriptFlow::Logged))
+            // Ungated, for the same reason `receive_speech` is: the closing sentence arrives
+            // over a channel some frames after the clock stops, by which time the coach has
+            // walked away from the table. While this was gated on `CreationPhase::Coaching`
+            // that sentence reached `Transcript::pending` and was never folded into the log.
+            // A no-op costing one `is_empty` while nothing is waiting.
+            .add_systems(Update, drain_transcript.in_set(TranscriptFlow::Logged))
             .add_systems(
                 Update,
                 (
                     tick,
                     controls,
-                    drain_transcript,
                     board::drag,
                     board::draw_mark,
                     erase,
                     playback,
                     restore_board,
-                    sign::update_sign,
+                    // After the fold, so the sign never renders a sentence that has left the
+                    // partial but not yet reached the log.
+                    sign::update_sign.after(TranscriptFlow::Logged),
                 )
                     .run_if(in_state(CreationPhase::Coaching)),
             );
@@ -467,14 +506,17 @@ pub fn playback(
 }
 
 /// Folds finished sentences from the speech seam onto the session clock.
-fn drain_transcript(mut transcript: ResMut<Transcript>, mut session: ResMut<Session>) {
+pub(crate) fn drain_transcript(mut transcript: ResMut<Transcript>, mut session: ResMut<Session>) {
     if transcript.pending.is_empty() {
         return;
     }
-    for text in std::mem::take(&mut transcript.pending) {
+    for spoken in std::mem::take(&mut transcript.pending) {
         let id = session.next_id();
-        let at_ms = session.elapsed_ms;
-        session.append(RawEvent::TranscriptAdded { id, text, at_ms });
+        // The moment the coach started saying it, not the moment it was folded in. The two
+        // differ by however long the sentence took plus the service's latency, and a readout
+        // showing the half-spoken sentence has only the former to go on -- so stamping with
+        // the latter made the timestamp jump the instant the words settled.
+        session.append(RawEvent::TranscriptAdded { id, text: spoken.text, at_ms: spoken.start_ms });
     }
 }
 
@@ -579,8 +621,11 @@ mod tests {
         app.init_resource::<Session>()
             .init_resource::<Transcript>()
             .add_systems(Update, drain_transcript);
-        app.world.resource_mut::<Session>().elapsed_ms = 4_200;
-        app.world.resource_mut::<Transcript>().pending.push("press high".to_owned());
+        app.world.resource_mut::<Session>().elapsed_ms = 9_000;
+        app.world
+            .resource_mut::<Transcript>()
+            .pending
+            .push(Spoken { text: "press high".to_owned(), start_ms: 4_200 });
         app.update();
 
         let session = app.world.resource::<Session>();
@@ -588,7 +633,9 @@ mod tests {
         match session.events.first().expect("one event") {
             RawEvent::TranscriptAdded { text, at_ms, .. } => {
                 assert_eq!(text, "press high");
-                assert_eq!(*at_ms, 4_200, "timestamped against the coaching clock");
+                // The clock reading the sentence *began* on -- 4_200 -- not the 9_000 the
+                // clock had reached by the time it was folded in.
+                assert_eq!(*at_ms, 4_200, "stamped where the coach started saying it");
             }
             other => panic!("unexpected {other:?}"),
         }

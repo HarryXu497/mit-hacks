@@ -263,6 +263,9 @@ fn transcript_view(
     let replay = replay_session(&session.session.events, None);
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
+        // Without this the live row scrolls out of sight as the transcript grows, which reads
+        // as the words disappearing.
+        .stick_to_bottom(true)
         .max_height((ui.available_height() - if result.state == InterpretationState::Failed { 230.0 } else { 185.0 }).max(80.0))
         .show(ui, |ui| {
             // DEMO TODO: simplify these diagnostics after integration is stable;
@@ -285,36 +288,34 @@ fn transcript_view(
                 });
             }
             for segment in replay.transcripts {
-                ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new(format_time(segment.start_ms))
-                            .monospace()
-                            .small()
-                            .color(MUTED),
-                    );
-                    let mut text = segment.text.clone();
-                    let response = ui.add(
-                        egui::TextEdit::singleline(&mut text)
-                            .desired_width(f32::INFINITY)
-                            .frame(false),
-                    );
-                    if response.changed() {
-                        session.append(RawSessionEvent::TranscriptEdited {
-                            id: create_id("event"),
-                            timestamp_ms: session.elapsed_now(),
-                            segment_id: segment.id,
-                            text,
-                        });
-                    }
-                });
+                let mut text = segment.text.clone();
+                if transcript_row(ui, segment.start_ms, &mut text, true).changed() {
+                    // A multiline `TextEdit` takes Enter as a newline. A transcript line is
+                    // one line; the row is re-cloned from the replay each frame, so stripping
+                    // it here is also what re-renders.
+                    text.retain(|c| c != '\n');
+                    session.append(RawSessionEvent::TranscriptEdited {
+                        id: create_id("event"),
+                        timestamp_ms: session.elapsed_now(),
+                        segment_id: segment.id,
+                        text,
+                    });
+                }
                 ui.separator();
             }
+            // The sentence still being spoken, in the very row it will keep. Same widget, same
+            // place, same stamp -- so when it settles, only the text changes.
             if !table_speech.partial.is_empty() {
-                ui.label(
-                    egui::RichText::new(&table_speech.partial)
-                        .italics()
-                        .color(egui::Color32::from_rgb(170, 190, 215)),
-                );
+                // `session.session.elapsed_ms` is the table's clock, mirrored -- the same
+                // clock a finished row's `start_ms` comes from. Deliberately not
+                // `elapsed_now()`, which adds its own running offset on top of that mirrored
+                // value and so reads roughly double while recording.
+                let started_ms = table_speech
+                    .partial_started_ms
+                    .unwrap_or(session.session.elapsed_ms);
+                let mut partial = table_speech.partial.clone();
+                transcript_row(ui, started_ms, &mut partial, false);
+                ui.separator();
             }
         });
 
@@ -539,6 +540,50 @@ fn reset_dialog(
                 }
             });
         });
+}
+
+/// Width of the timestamp column, wide enough for "00:00" and fixed so that the words beside
+/// it start at the same x on every row.
+const STAMP_WIDTH: f32 = 44.0;
+
+/// One line of transcript: the clock reading it began on, then the words.
+///
+/// The same row whether the sentence is finished or still being spoken. These used to be two
+/// different widgets in two different places -- a wrapping italic label at the foot of the list
+/// while the words were still arriving, a clipped single-line editor up in the list once they
+/// had settled -- so a sentence finishing moved, restyled and re-wrapped itself all at once.
+/// A finished row stays editable; a half-spoken one is not, because there is nothing settled
+/// to edit yet.
+fn transcript_row(
+    ui: &mut egui::Ui,
+    stamp_ms: u64,
+    text: &mut String,
+    editable: bool,
+) -> egui::Response {
+    ui.horizontal_top(|ui| {
+        let stamp_height = ui.spacing().interact_size.y;
+        ui.add_sized(
+            egui::vec2(STAMP_WIDTH, stamp_height),
+            egui::Label::new(
+                egui::RichText::new(format_time(stamp_ms))
+                    .monospace()
+                    .small()
+                    .color(MUTED),
+            ),
+        );
+        // Multiline so a long sentence wraps rather than being clipped at the panel's edge --
+        // and wraps identically before and after it settles, which single-line did not.
+        ui.add(
+            egui::TextEdit::multiline(text)
+                .desired_rows(1)
+                .desired_width(f32::INFINITY)
+                .frame(false)
+                // Tab moves focus along the rows rather than indenting one of them.
+                .lock_focus(false)
+                .interactive(editable),
+        )
+    })
+    .inner
 }
 
 fn panel_frame(fill: egui::Color32) -> egui::Frame {

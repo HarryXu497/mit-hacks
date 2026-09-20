@@ -160,7 +160,31 @@ pub fn status_of(table: &tactics::Session) -> SessionStatus {
 /// upload by that same id. `status` is left alone too — see [`status_of`]. Only what the coach did
 /// on the board is replaced.
 pub fn sync_into(table: &tactics::Session, session: &mut Session) {
+    // What the panel wrote is not on the table's log and never will be, so a wholesale
+    // replacement destroyed it. While the clock runs the table changes every frame, which is
+    // every frame this mirror runs -- so a character typed into a transcript line reverted a
+    // frame later, and a manual note (only addable while recording) never survived at all.
+    // Kept in their existing order and with their existing ids, appended after the table's:
+    // `replay_session` applies an edit to a segment an earlier event introduced, and the
+    // server grounds an interpretation against the ids it was sent.
+    let panel_authored: Vec<RawSessionEvent> = session
+        .events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event,
+                RawSessionEvent::TranscriptEdited { .. }
+                    | RawSessionEvent::Undo { .. }
+                    | RawSessionEvent::TranscriptAdded {
+                        segment: TranscriptSegment { source: TranscriptSource::Manual, .. },
+                        ..
+                    }
+            )
+        })
+        .cloned()
+        .collect();
     session.events = events_from_table(table);
+    session.events.extend(panel_authored);
     session.elapsed_ms = table.elapsed_ms;
 }
 
@@ -261,6 +285,60 @@ mod tests {
         assert_eq!(session.id, id);
         assert_eq!(session.created_at, created_at);
         assert_eq!(session.title, title);
+    }
+
+    /// What the coach typed into the panel must survive the next mirror.
+    ///
+    /// The table changes every frame while the clock runs, so the mirror runs every frame.
+    /// While `sync_into` replaced the event list wholesale, a character typed into a
+    /// transcript row reverted a frame later and a manual note -- which can only be added
+    /// while recording, i.e. only while the mirror is running -- never survived at all.
+    #[test]
+    fn what_the_panel_wrote_survives_a_sync_with_its_ids_intact() {
+        let table = table_with(
+            vec![RawEvent::TranscriptAdded {
+                id: 3,
+                text: "push up on the left".to_owned(),
+                at_ms: 1_000,
+            }],
+            2_000,
+        );
+        let mut session = Session::default();
+        sync_into(&table, &mut session);
+
+        session.events.push(RawSessionEvent::TranscriptAdded {
+            id: "event-manual".to_owned(),
+            timestamp_ms: 1_500,
+            segment: TranscriptSegment {
+                id: "transcript-manual".to_owned(),
+                start_ms: 1_500,
+                end_ms: 1_500,
+                text: "watch the far post".to_owned(),
+                source: TranscriptSource::Manual,
+            },
+        });
+        session.events.push(RawSessionEvent::TranscriptEdited {
+            id: "event-edit".to_owned(),
+            timestamp_ms: 1_800,
+            segment_id: "seg-3".to_owned(),
+            text: "push up on the RIGHT".to_owned(),
+        });
+
+        // Twice, because the mirror runs on every frame of a recording.
+        sync_into(&table, &mut session);
+        sync_into(&table, &mut session);
+
+        let ids: Vec<&str> = session.events.iter().map(|e| e.id()).collect();
+        assert_eq!(
+            ids,
+            vec!["ev-0", "event-manual", "event-edit"],
+            "the panel's events survive exactly once, after the table's, with their ids"
+        );
+
+        // And the edit still lands: it is replayed after the segment it names.
+        let replayed = crate::replay::replay_session(&session.events, None);
+        let said: Vec<&str> = replayed.transcripts.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(said, vec!["push up on the RIGHT", "watch the far post"]);
     }
 
     #[test]
