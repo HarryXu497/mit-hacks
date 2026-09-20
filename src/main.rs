@@ -6,7 +6,8 @@ use bevy::prelude::*;
 use cube_soccer::CubeSoccerPlugin;
 
 fn main() {
-    App::new()
+    let mut app = App::new();
+    app
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "Canopy Clash | Jungle Soccer".to_string(),
@@ -15,9 +16,21 @@ fn main() {
             }),
             ..default()
         }))
-        .add_plugins(CubeSoccerPlugin)
-        .add_systems(Update, capture_preview)
-        .run();
+        .add_plugins(CubeSoccerPlugin);
+    // Set CANOPY_DIAG to print frame time, fps and entity count every two
+    // seconds. Frame cost here is dominated by how many separate objects reach
+    // the GPU, so the entity count is the number to watch alongside the fps.
+    if std::env::var("CANOPY_DIAG").is_ok() {
+        app.add_plugins((
+            bevy::diagnostic::FrameTimeDiagnosticsPlugin,
+            bevy::diagnostic::EntityCountDiagnosticsPlugin,
+            bevy::diagnostic::LogDiagnosticsPlugin {
+                wait_duration: std::time::Duration::from_secs(2),
+                ..Default::default()
+            },
+        ));
+    }
+    app.add_systems(Update, capture_preview).run();
 }
 
 /// Set CANOPY_CAPTURE to a PNG path for a reproducible camera capture.

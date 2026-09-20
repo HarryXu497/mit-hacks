@@ -15,7 +15,6 @@ use crate::systems::{
     physics::configure_physics,
     reset::{check_reset_timer, reset_after_goal, reset_after_round, ResetTimer},
     scoring::{detect_goals, handle_goal_scored, update_timers},
-    trail::{animate_trail_particles, spawn_trail_particles, TrailSpawnTimer},
 };
 use crate::ui::hud::setup_ui;
 use crate::ui::scoreboard::update_ui;
@@ -26,12 +25,22 @@ impl Plugin for CubeSoccerPlugin {
     fn build(&self, app: &mut App) {
         crate::rendering::stylized::register_shader(app);
         app.add_plugins(MaterialPlugin::<crate::rendering::stylized::JungleMaterial>::default())
+            // Four-sample anti-aliasing shades every pixel four times over.
+            // Once the static props are batched the frame becomes fill bound,
+            // and on integrated graphics that setting costs about a fifth of it
+            // (measured 39 fps at 4x against 46 with it off).
+            //
+            // Off is too far: the goal netting is built from 0.035-wide beams
+            // that fall below a pixel at broadcast distance, and with no
+            // coverage sampling the mesh breaks into sparkle. Two samples hold
+            // the net and the touchlines together for roughly the price of
+            // none, so that is where this sits.
+            .insert_resource(Msaa::Sample2)
             // States
             .insert_state(MatchState::Playing)
             // Resources
             .init_resource::<GameState>()
             .init_resource::<ResetTimer>()
-            .init_resource::<TrailSpawnTimer>()
             // Events
             .add_event::<GoalScoredEvent>()
             .add_event::<GameOverEvent>()
@@ -61,6 +70,7 @@ impl Plugin for CubeSoccerPlugin {
                 PostStartup,
                 (
                     crate::jungle::build_jungle,
+                    crate::rendering::batching::merge_static_draws,
                     crate::rendering::stylized::stylize,
                 )
                     .chain(),
@@ -94,15 +104,12 @@ impl Plugin for CubeSoccerPlugin {
             )
             // Reset after round timeout (immediate)
             .add_systems(OnEnter(MatchState::RoundOver), reset_after_round)
+            // Speed trails are deliberately not scheduled: the effect is not
+            // wanted, and it cost a freshly allocated mesh and material for
+            // every particle, thirty-three times a second per moving player.
+            // `systems::trail` is still built because other binaries in the
+            // workspace schedule it themselves.
             // Animate effects (always running)
-            .add_systems(
-                Update,
-                (
-                    animate_fragments,
-                    animate_googly_eyes,
-                    spawn_trail_particles,
-                    animate_trail_particles,
-                ),
-            );
+            .add_systems(Update, (animate_fragments, animate_googly_eyes));
     }
 }

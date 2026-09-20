@@ -5,10 +5,12 @@
 //!
 //! # Modules
 //!
+//! - [`batching`]: One-time merge of static props into shared draws
 //! - [`lighting`]: Scene lighting setup (ambient, directional)
 //! - [`materials`]: Shared material definitions
 //! - [`post_process`]: Post-processing effects (bloom, etc.)
 
+pub mod batching;
 pub mod lighting;
 pub mod materials;
 pub mod post_process;

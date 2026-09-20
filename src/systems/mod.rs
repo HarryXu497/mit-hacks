@@ -13,6 +13,7 @@
 //! - [`physics`]: Rapier physics configuration
 //! - [`reset`]: Game reset after goals and rounds
 //! - [`scoring`]: Goal detection and score tracking
+//! - [`trail`]: Speed trail particles (built, but not scheduled by the game)
 
 pub mod camera;
 pub mod display;
@@ -27,9 +28,9 @@ pub mod trail;
 pub use camera::*;
 pub use display::*;
 pub use effects::*;
-pub use trail::*;
 pub use eyes::*;
 pub use movement::*;
 pub use physics::*;
 pub use reset::*;
 pub use scoring::*;
+pub use trail::*;
