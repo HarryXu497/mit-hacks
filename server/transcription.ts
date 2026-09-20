@@ -38,15 +38,17 @@ export function attachTranscriptionWebSocket(server: Server): void {
   socketServer.on("connection", (client) => proxyTranscription(client));
 }
 
-function proxyTranscription(client: WebSocket): void {
+export function proxyTranscription(client: WebSocket, connect = connectProvider): void {
   let provider: WebSocket | null = null;
   let generation: number | null = null;
   let sessionOffsetMs = 0;
   let receivedSamples = 0;
   let providerReady = false;
   let stopping = false;
-  let pendingUtterance = false;
-  let expectingProviderClose = false;
+  let completed = false;
+  let closeSent = false;
+  let providerMetadata = false;
+  const seenSegments = new Set<string>();
   let stopTimer: NodeJS.Timeout | null = null;
   const queuedAudio: string[] = [];
   let nextItemId = 0;
@@ -64,14 +66,25 @@ function proxyTranscription(client: WebSocket): void {
   const finish = () => {
     if (stopTimer) clearTimeout(stopTimer);
     stopTimer = null;
-    expectingProviderClose = true;
+    completed = true;
     sendClient({ type: "done" });
     provider?.close();
     client.close();
   };
 
-  const maybeFinish = () => {
-    if (stopping && !pendingUtterance) finish();
+  const fail = (message: string) => {
+    if (completed) return;
+    completed = true;
+    if (stopTimer) clearTimeout(stopTimer);
+    sendClient({ type: "error", message });
+    provider?.close();
+    client.close();
+  };
+  const closeStream = () => {
+    if (providerReady && stopping && !closeSent) {
+      closeSent = true;
+      provider!.send(JSON.stringify({ type: "CloseStream" }));
+    }
   };
 
   const finalizeUtterance = () => {
@@ -88,11 +101,10 @@ function proxyTranscription(client: WebSocket): void {
     currentItemId = null;
     confirmedSegments = [];
     utteranceStartMs = null;
-    pendingUtterance = false;
-    maybeFinish();
   };
 
   client.on("message", (raw) => {
+    if (completed) return;
     let message: ClientMessage;
     try {
       message = JSON.parse(raw.toString()) as ClientMessage;
@@ -112,19 +124,24 @@ function proxyTranscription(client: WebSocket): void {
         sendClient({ type: "error", message: "DEEPGRAM_API_KEY is not configured." });
         return;
       }
-      provider = connectProvider({
+      provider = connect({
         onClose: () => {
-          if (!expectingProviderClose && client.readyState === WebSocket.OPEN) {
-            sendClient({ type: "error", message: "The transcription provider disconnected." });
-          }
+          if (completed) return;
+          if (stopping && closeSent && providerMetadata) {
+            finalizeUtterance();
+            finish();
+          } else fail("The transcript did not finish. Please try again.");
         },
         onOpen: () => {
           providerReady = true;
           for (const audio of queuedAudio.splice(0)) appendProviderAudio(provider!, audio);
           sendClient({ type: "ready" });
+          closeStream();
         },
         onEvent: (event) => {
+          if (completed) return;
           const type = stringField(event, "type");
+          if (type === "Metadata") providerMetadata = true;
           if (type === "Results") {
             const alternative = firstAlternative(event);
             const transcript = stringField(alternative, "transcript");
@@ -142,7 +159,11 @@ function proxyTranscription(client: WebSocket): void {
               confirmedSegments = [];
               utteranceStartMs = null;
             }
-            pendingUtterance = true;
+            if (isFinal) {
+              const key = JSON.stringify([event.start, event.duration, transcript]);
+              if (seenSegments.has(key)) return;
+              seenSegments.add(key);
+            }
 
             const start = numberField(event, "start", samplesToSeconds(receivedSamples));
             const duration = numberField(event, "duration", 0);
@@ -168,7 +189,7 @@ function proxyTranscription(client: WebSocket): void {
             });
           }
         },
-        onError: (message) => sendClient({ type: "error", message }),
+        onError: (message) => fail(message),
       });
       return;
     }
@@ -180,38 +201,34 @@ function proxyTranscription(client: WebSocket): void {
       if (bytes.length === 0 || bytes.length % 2 !== 0) return;
       receivedSamples += bytes.length / 2;
       if (providerReady) appendProviderAudio(provider, message.pcm16);
-      else if (queuedAudio.length < 250) queuedAudio.push(message.pcm16);
+      else if (receivedSamples <= 24000 * 30) queuedAudio.push(message.pcm16);
+      else fail("Too much audio buffered while connecting. Please try again.");
       return;
     }
 
     if (message.type === "stop" && !stopping) {
       stopping = true;
-      expectingProviderClose = true;
       if (receivedSamples === 0) {
         finish();
         return;
       }
-      if (providerReady) {
-        provider.send(JSON.stringify({ type: "CloseStream" }));
-      }
-      stopTimer = setTimeout(() => {
-        if (!pendingUtterance) {
-          finish();
-        } else {
-          sendClient({
-            type: "error",
-            message: "Timed out while finalizing the transcript.",
-          });
-          provider?.close();
-          client.close();
-        }
-      }, 8000);
+      closeStream();
+      // Client waits 10 seconds; never silently succeed with a partial transcript.
+      stopTimer = setTimeout(() => fail("Timed out while finalizing the transcript. Please try again."), 8000);
     }
   });
 
-  client.on("close", () => {
+  const cleanup = () => {
+    completed = true;
     if (stopTimer) clearTimeout(stopTimer);
     provider?.close();
+  };
+  client.on("close", cleanup);
+  // Canceling native capture drops its TCP connection. A reset is local to this
+  // session, not an uncaught EventEmitter error that brings down the host API.
+  client.on("error", () => {
+    cleanup();
+    client.terminate();
   });
 }
 
@@ -231,8 +248,10 @@ function connectProvider(handlers: {
     smart_format: "true",
     endpointing: "300",
     model,
+    language: "en",
   });
   const provider = new WebSocket(`${DEEPGRAM_LISTEN_URL}?${query.toString()}`, {
+    handshakeTimeout: 7000,
     headers: { Authorization: `Token ${process.env.DEEPGRAM_API_KEY}` },
   });
   provider.on("open", handlers.onOpen);

@@ -41,6 +41,8 @@ fn main() {
         // Recording, speech, interpretation and the handoff into a match.
         .add_plugins(CoachingPlugin)
         .add_plugins(GamePlugin)
+        // Live, cosmetic shouts to your own players during a match.
+        .add_plugins(tactic_lab_native::shout::ShoutPlugin)
         // Turns the painted superpower into one of the game's four, and arms the coached side.
         .add_plugins(ForgePlugin)
         .add_systems(Update, (capture, autoplay, autoplay_report, bench_start, bench_dump))

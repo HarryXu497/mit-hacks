@@ -13,6 +13,7 @@ pub mod replay;
 pub mod session;
 pub mod theme;
 pub mod speech;
+pub mod shout;
 pub mod tactics_bridge;
 pub mod ui;
 pub mod world;

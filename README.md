@@ -38,6 +38,50 @@ This starts the interpretation and transcription API on `127.0.0.1:8787`.
 The Deepgram and OpenAI keys stay on the server and are never sent to the
 native client.
 
+## Live player shouts
+
+During gameplay, hold **Hold to shout**, say “Player 4, get back!”, and release
+anywhere to send. Name a player by number (1–5, digits or spoken words). Your own
+team's numbers float above their heads; the player who answers is highlighted while
+their private, voiced reply plays. Shouts are cosmetic and never change tactics
+or movement. Host/solo coaches Orange; joiners coach Blue, using the host service.
+
+Recordings stop at 15 seconds. Losing window focus cancels capture, and leaving
+gameplay cancels capture, requests, and playback. The button is disabled until a
+reply finishes. If voice synthesis or playback fails, the reply remains as text.
+
+A shout always reaches someone: name a player ("player 4", "number 4", "monkey 4") and they answer,
+and if you name nobody, whoever looks up does. A reply the model returns but that is unusable —
+empty, overlong, or malformed — falls back to a plain "On it, coach!" rather than failing the shout.
+A provider that is down or returns an unfinished response is still reported as an error, so a real
+outage or a bad key stays visible instead of being masked by a canned line.
+
+The microphone selected in Settings is shared with the tactics table.
+
+`OPENAI_SHOUT_MODEL` optionally overrides `OPENAI_MODEL` for replies. Deepgram
+provides English transcription and the five fixed Aura 2 voices. Both provider
+keys stay in the server's `.env`; no shout history is stored or broadcast.
+The server uses the [OpenAI Responses API](https://developers.openai.com/api/docs/guides/text)
+and [Deepgram raw linear16 output](https://developers.deepgram.com/docs/tts-media-output-settings).
+
+For a reproducible live transcription → reply → PCM test using synthetic speech:
+
+```bash
+npx vitest run --config vitest.live.config.ts tests/live/shout.live.test.ts
+```
+
+For the playable shout preview, start the API and native window together:
+
+```bash
+npm run dev:shout
+```
+
+`SHOUT_PREVIEW_TEAM=blue` checks joiner numbering. `TACTIC_LAB_CAPTURE=/tmp/shout.png`
+saves a gameplay screenshot and exits. Leave `TACTIC_LAB_CAPTURE` unset when playing;
+it deliberately enables automatic exit after the screenshot. This preview skips coaching and uses the
+normal gameplay and Shout systems. Physical microphone capture, audible playback,
+and simultaneous shouts from two real machines should also be checked on demo hardware.
+
 ## Verification
 
 ```bash
@@ -48,8 +92,8 @@ cargo test --manifest-path native/coaching/Cargo.toml --lib -p cube-soccer -p ta
 cargo build --manifest-path native/coaching/Cargo.toml --bin native-coaching
 ```
 
-The normal test suite is deterministic and does not make network requests. To
-run the two opt-in integration tests against the configured OpenAI model:
+The normal test suite uses mocks and local loopback servers, without provider requests.
+To run opt-in integration tests against the configured OpenAI and Deepgram services:
 
 ```bash
 npm run test:live

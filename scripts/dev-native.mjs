@@ -2,8 +2,13 @@ import { spawn, spawnSync } from "node:child_process";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import dotenv from "dotenv";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+// Read the port without copying provider credentials into the native child.
+const fileConfig = dotenv.config({ path: path.join(root, ".env"), processEnv: {}, quiet: true }).parsed ?? {};
+const apiPort = process.env.API_PORT ?? fileConfig.API_PORT ?? "8787";
+const preview = process.argv.includes("--shout-preview");
 const cargoHome = path.join(process.env.HOME ?? "", ".cargo", "bin");
 if (cargoHome && !process.env.PATH?.split(":").includes(cargoHome)) {
   process.env.PATH = `${cargoHome}${path.delimiter}${process.env.PATH ?? ""}`;
@@ -51,7 +56,7 @@ function start(command, args, label, environment = process.env) {
 }
 
 async function waitForService() {
-  const port = Number(process.env.API_PORT ?? 8787);
+  const port = Number(apiPort);
   const url = `http://127.0.0.1:${port}/api/health`;
   for (let attempt = 0; attempt < 60; attempt += 1) {
     try {
@@ -84,15 +89,14 @@ start(process.execPath, [tsxCli, "server/index.ts"], "Local service");
 
 try {
   await waitForService();
-  const port = Number(process.env.API_PORT ?? 8787);
+  const port = Number(apiPort);
   const native = start(
     "cargo",
     [
       "run",
       "--manifest-path",
       "native/coaching/Cargo.toml",
-      "--bin",
-      "native-coaching",
+      ...(preview ? ["--example", "shout-preview"] : ["--bin", "native-coaching"]),
     ],
     "Native coaching",
     {

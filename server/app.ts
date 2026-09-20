@@ -1,4 +1,5 @@
 import cors from "cors";
+import { shoutRouter } from "./shout";
 import express from "express";
 import { ZodError } from "zod";
 import { interpretationRequestSchema } from "../src/domain/schemas";
@@ -24,6 +25,7 @@ export function createApp(interpreter: Interpreter = interpretSessionWithOpenAI)
   // a long coaching session's /api/interpret body can also pass 1mb.
   app.use(express.json({ limit: "25mb" }));
   app.use(lobbyRouter());
+  app.use(shoutRouter());
   // Turns a drawn superpower into one of the game's four. Shells out to MonkeyForge, so a
   // joining machine gets the host's Python toolchain by redirecting here.
   app.use(forgeRouter());

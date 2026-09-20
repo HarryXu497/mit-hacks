@@ -46,7 +46,7 @@ enum Command {
 }
 
 #[derive(Debug)]
-enum Reply {
+pub enum Reply {
     Status { generation: u64, status: SpeechStatus, message: Option<String> },
     Partial { generation: u64, text: String },
     Final { generation: u64, item_id: String, text: String },
@@ -119,6 +119,57 @@ impl SpeechRuntime {
             self.status = SpeechStatus::Finalizing;
             let _ = self.commands.send(Command::Stop { generation: self.generation });
         }
+    }
+
+    /// Abandon the current run outright, rather than asking for a last sentence.
+    ///
+    /// The generation bump makes anything still in flight stale; the worker is also told to wind
+    /// the stream down so a cancelled run does not keep streaming behind us.
+    pub fn cancel(&mut self) {
+        if matches!(
+            self.status,
+            SpeechStatus::Connecting | SpeechStatus::Listening | SpeechStatus::Finalizing
+        ) {
+            let _ = self.commands.send(Command::Stop { generation: self.generation });
+        }
+        self.generation += 1;
+        self.seen.clear();
+        self.status = SpeechStatus::Idle;
+        self.error = None;
+    }
+
+    /// Take this runtime's own events, for a consumer that owns its `SpeechRuntime` rather than
+    /// sharing the table's — the live shout panel does, because `receive_speech` below drains the
+    /// table's inline and would otherwise swallow a shout's transcript.
+    ///
+    /// Only current-generation, non-duplicate events leave here, so a late reply from a finished
+    /// run cannot reappear.
+    pub fn drain(&mut self) -> Vec<Reply> {
+        let mut events = Vec::new();
+        while let Ok(reply) = self.replies.try_recv() {
+            match &reply {
+                Reply::Status { generation, status, message } if *generation == self.generation => {
+                    // A late "listening" cannot undo a release the UI has already sent.
+                    if self.status != SpeechStatus::Finalizing
+                        || *status != SpeechStatus::Listening
+                    {
+                        self.status = status.clone();
+                    }
+                    if message.is_some() {
+                        self.error = message.clone();
+                    }
+                }
+                Reply::Partial { generation, .. } if *generation == self.generation => {}
+                Reply::Final { generation, item_id, text } if *generation == self.generation => {
+                    if text.trim().is_empty() || !self.seen.insert(item_id.clone()) {
+                        continue;
+                    }
+                }
+                _ => continue,
+            }
+            events.push(reply);
+        }
+        events
     }
 
     /// One line for the sign, in the coach's terms rather than the protocol's.
@@ -509,6 +560,42 @@ mod tests {
         runtime.devices.clear();
         assert!(!runtime.available());
         assert!(runtime.report().contains("No microphone"));
+    }
+
+    /// `drain` is the shout panel's way in: it owns its own runtime, so nothing else is reading
+    /// this channel. Only current-generation, non-duplicate events may leave, and `cancel` must
+    /// make everything already in flight stale.
+    #[test]
+    fn a_consumer_that_owns_its_runtime_drains_only_fresh_unique_events() {
+        let mut runtime = with_status(SpeechStatus::Listening);
+        let (tx, rx) = unbounded();
+        runtime.replies = rx;
+        // A reply from a finished run, and the same sentence twice from this one.
+        tx.send(Reply::Final { generation: 99, item_id: "stale".into(), text: "old".into() })
+            .unwrap();
+        for _ in 0..2 {
+            tx.send(Reply::Final {
+                generation: 0,
+                item_id: "one".into(),
+                text: "Player four.".into(),
+            })
+            .unwrap();
+        }
+        assert_eq!(runtime.drain().len(), 1);
+
+        // A late "listening" cannot undo a release the UI has already sent.
+        runtime.status = SpeechStatus::Finalizing;
+        tx.send(Reply::Status { generation: 0, status: SpeechStatus::Listening, message: None })
+            .unwrap();
+        runtime.drain();
+        assert_eq!(runtime.status, SpeechStatus::Finalizing);
+
+        // Cancelling retires the generation, so what was already queued is dropped.
+        runtime.cancel();
+        assert_eq!(runtime.status, SpeechStatus::Idle);
+        tx.send(Reply::Final { generation: 0, item_id: "two".into(), text: "late".into() })
+            .unwrap();
+        assert!(runtime.drain().is_empty());
     }
 
     /// The closing words must land even though the coach has already walked away.

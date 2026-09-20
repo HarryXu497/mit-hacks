@@ -99,11 +99,25 @@ fn slab_corners(rect: egui::Rect, grow: f32) -> [egui::Pos2; 4] {
 /// forward and brightened, which is worth keeping because it is the only thing telling you where
 /// you are in a list of identical shapes.
 pub fn slab(ui: &mut egui::Ui, label: &str, tone: Tone, chosen: bool) -> egui::Response {
+    slab_sized(ui, label, tone, chosen, SLAB_HEIGHT, 19.0)
+}
+
+/// The same slab at HUD scale, for a control that sits over live play rather than on a screen of
+/// its own. Same form and palette, so it still reads as one of these controls.
+pub fn slab_compact(ui: &mut egui::Ui, label: &str, tone: Tone, chosen: bool) -> egui::Response {
+    slab_sized(ui, label, tone, chosen, 30.0, 12.5)
+}
+
+fn slab_sized(
+    ui: &mut egui::Ui,
+    label: &str,
+    tone: Tone,
+    chosen: bool,
+    height: f32,
+    font: f32,
+) -> egui::Response {
     let width = ui.available_width().min(SLAB_MAX_WIDTH);
-    let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(width, SLAB_HEIGHT),
-        egui::Sense::click(),
-    );
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::click());
 
     if ui.is_rect_visible(rect) {
         let hovered = response.hovered() || chosen;
@@ -135,10 +149,13 @@ pub fn slab(ui: &mut egui::Ui, label: &str, tone: Tone, chosen: bool) -> egui::R
         ));
 
         painter.text(
-            egui::pos2(rect.left() + SLAB_HEIGHT * SLAB_LEAN + 18.0, rect.center().y),
+            egui::pos2(
+                rect.left() + height * SLAB_LEAN + height * 0.39,
+                rect.center().y,
+            ),
             egui::Align2::LEFT_CENTER,
             label.to_uppercase(),
-            egui::FontId::proportional(19.0),
+            egui::FontId::proportional(font),
             if hovered { CLOTH } else { CLOTH_DIM },
         );
     }
