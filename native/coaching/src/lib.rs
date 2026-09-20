@@ -12,6 +12,7 @@ pub mod session;
 pub mod speech;
 pub mod tactics_bridge;
 pub mod ui;
+pub mod world;
 
 use bevy::prelude::*;
 use bevy::sprite::ColorMaterial;
@@ -314,6 +315,20 @@ mod integration_tests {
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f32(
             1.0 / 60.0,
         )))
+        // The world is built at startup by `world::WorldPlugin`, not by entering the Game phase,
+        // because the easel and the tactics table stand in it before the match begins and the
+        // match is re-entered at every round boundary. This test exercises `GamePlugin` alone, so
+        // it spawns the part of the world the match needs -- the players and the ball -- rather
+        // than pulling in the jungle and the two in-world screens, which want a renderer.
+        .add_systems(
+            Startup,
+            (
+                cube_soccer::systems::physics::configure_physics,
+                cube_soccer::entities::spawn_players,
+                cube_soccer::entities::spawn_ball,
+            )
+                .chain(),
+        )
         .add_plugins(game::GamePlugin);
         {
             let mut result = app.world.resource_mut::<TacticalResult>();

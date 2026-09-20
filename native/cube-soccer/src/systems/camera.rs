@@ -2,7 +2,9 @@ use crate::entities::Ball;
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::prelude::*;
 
-#[derive(Component)]
+/// `Default` so a host can hand an existing camera over to the match: the creation camera flies
+/// to the pitch and then gains this, rather than a second camera being spawned for the match.
+#[derive(Component, Default)]
 pub struct CameraRig {
     target: Vec3,
 }

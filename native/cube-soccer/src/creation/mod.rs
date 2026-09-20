@@ -73,7 +73,16 @@ pub const FLIGHT_SECONDS: f32 = 4.2;
 /// The steps of creation, in the order the 2D screen defined them.
 #[derive(States, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum CreationPhase {
+    /// Nothing is happening yet: the clearing stands, but the painter is not at the easel and no
+    /// input is being read.
+    ///
+    /// The host decides when creation *begins*, just as it decides what "finished" means. This is
+    /// the default because a host may have its own screens in front of the clearing — the combined
+    /// app opens on a lobby menu — and painting systems running behind them would read strays
+    /// clicks onto the canvas and draw the prompt plaque over the menu. `bin/creation.rs`, which
+    /// is only the clearing, leaves this state on startup.
     #[default]
+    Idle,
     PaintingAppearance,
     PaintingSuperpower,
     /// Both paintings side by side, with the chance to go back to either.
@@ -91,6 +100,11 @@ impl CreationPhase {
     /// systems run on. The table's own phases take over afterwards.
     pub fn at_the_easel(self) -> bool {
         matches!(self, Self::PaintingAppearance | Self::PaintingSuperpower | Self::Review)
+    }
+
+    /// True before the host has started creation, when nothing should be read or drawn.
+    pub fn is_idle(self) -> bool {
+        matches!(self, Self::Idle)
     }
 
     /// The painting being worked on, if this is a painting step.

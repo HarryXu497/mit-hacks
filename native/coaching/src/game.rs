@@ -9,16 +9,11 @@ use crate::game_stream::{
 use crate::network::{is_not_spectator, is_spectator, NetworkRole};
 use cube_soccer::entities::CubePlayer;
 use cube_soccer::entities::{
-    animate_player_visual, reveal_loaded_characters, spawn_arena, spawn_ball, spawn_field,
-    spawn_goals, spawn_players, spawn_wall_scoreboard, wear_characters, WornCharacters,
+    animate_player_visual, reveal_loaded_characters, wear_characters, WornCharacters,
 };
 use cube_soccer::game::{
     BallTouchedEvent, GameOverEvent, GameState, GoalScoredEvent, MatchState, ResetGameEvent,
 };
-use cube_soccer::jungle::{animate_jungle, animate_water, build_jungle};
-use cube_soccer::rendering::batching::merge_static_draws;
-use cube_soccer::rendering::setup_lighting;
-use cube_soccer::rendering::stylized::{is_rendering, register_shader, stylize, JungleMaterial};
 use cube_soccer::systems::{
     activate_superpowers, apply_heuristic_ai, apply_status_forces, clamp_velocities,
     clear_possession, tick_cooldowns, tick_status_effects, tick_superpower_cooldowns,
@@ -26,8 +21,8 @@ use cube_soccer::systems::{
 };
 use cube_soccer::systems::{
     animate_fragments, animate_googly_eyes, animate_trail_particles, apply_player_movement,
-    check_reset_timer, configure_physics, detect_goals, handle_goal_scored, reset_after_goal,
-    reset_after_round, setup_camera, spawn_trail_particles, update_camera, update_timers,
+    check_reset_timer, detect_goals, handle_goal_scored, reset_after_goal, reset_after_round,
+    spawn_trail_particles, update_camera, update_timers,
     update_wall_scoreboard, ResetTimer, TrailSpawnTimer,
 };
 use cube_soccer::ui::{setup_ui, update_ui};
@@ -38,21 +33,9 @@ pub struct GamePlugin;
 
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
-        // The jungle's cel lighting and animated water are a material extension, so the
-        // shader has to be registered on the app before anything that uses it is spawned.
-        register_shader(app);
-        if is_rendering(app) {
-            // Only where there is a renderer to use it. The integration tests build a headless
-            // app with `AssetPlugin` but no `RenderPlugin`, so there is no `Assets<Shader>` and
-            // no material store; `stylize` no-ops there for the same reason.
-            app.add_plugins(MaterialPlugin::<JungleMaterial>::default());
-        }
-
+        // The jungle's material and sample count are set up by `world::WorldPlugin`, which owns
+        // the scene they belong to.
         app.add_plugins(RapierPhysicsPlugin::<NoUserData>::default())
-            // Two samples, not four: once the static props are batched the frame is fill
-            // bound, and the goal netting's sub-pixel beams sparkle with no coverage
-            // sampling at all. See the note in cube-soccer's own CubeSoccerPlugin.
-            .insert_resource(Msaa::Sample2)
             .insert_state(MatchState::Playing)
             .init_resource::<GameState>()
             .init_resource::<ResetTimer>()
@@ -60,45 +43,31 @@ impl Plugin for GamePlugin {
             .init_resource::<TeamTactics>()
             .init_resource::<Possession>()
             .init_resource::<WornCharacters>()
+            .init_resource::<MatchFurnished>()
             .init_resource::<SnapshotTimer>()
             .add_event::<ImpulseEvent>()
             .add_event::<GoalScoredEvent>()
             .add_event::<GameOverEvent>()
             .add_event::<ResetGameEvent>()
             .add_event::<BallTouchedEvent>()
+            // The world -- pitch, players, jungle, and the two screens standing on the island --
+            // is built once at startup by `world::WorldPlugin`, not here. This phase is entered
+            // again at every round boundary, so anything spawned here would be spawned again.
+            //
+            // What is left is what genuinely belongs to starting a match: whose players the AI
+            // drives, the play showing on the HUD, and the stream to a spectating joiner.
             .add_systems(
                 OnEnter(AppPhase::Game),
-                (
-                    configure_physics,
-                    configure_network_physics,
-                    spawn_arena,
-                    spawn_wall_scoreboard,
-                    spawn_field,
-                    spawn_goals,
-                    spawn_players,
-                    spawn_ball,
-                    setup_camera,
-                    setup_lighting,
-                    setup_ui,
-                    tag_players_ai,
-                    spawn_tactic_hud,
-                    start_game_stream,
-                )
-                    .chain(),
+                (configure_network_physics, tag_players_ai, show_the_play).chain(),
             )
-            // Batching has to see every prop and stylising has to see the batches, so these
-            // three are chained. Without the last two the scene renders unlit and unmerged:
-            // this branch previously scheduled `build_jungle` alone, back when the jungle was
-            // a single file with no landscape, cel material or batching pass.
+            // Furnishings that must exist exactly once, however many rounds are played. The
+            // stream in particular binds a socket: starting it twice fails to bind and leaves a
+            // joiner with no game.
             .add_systems(
                 OnEnter(AppPhase::Game),
-                (build_jungle, merge_static_draws, stylize)
+                (setup_ui, start_game_stream, mark_furnished)
                     .chain()
-                    .after(setup_ui),
-            )
-            .add_systems(
-                Update,
-                (animate_jungle, animate_water).run_if(in_state(AppPhase::Game)),
+                    .run_if(not_yet_furnished),
             )
             .add_systems(
                 Update,
@@ -192,6 +161,25 @@ impl Plugin for GamePlugin {
     }
 }
 
+/// Whether the one-off furnishings of a match have been put in place.
+///
+/// `AppPhase::Game` is entered once per round, not once per match, so the systems that spawn the
+/// score HUD and open the game stream are gated on this.
+#[derive(Resource, Default)]
+struct MatchFurnished(bool);
+
+fn not_yet_furnished(furnished: Res<MatchFurnished>) -> bool {
+    !furnished.0
+}
+
+fn mark_furnished(mut furnished: ResMut<MatchFurnished>) {
+    furnished.0 = true;
+}
+
+/// Marks the panel naming the play currently being run, so it can be replaced when the play does.
+#[derive(Component)]
+struct PlayReadout;
+
 fn tag_players_ai(mut commands: Commands, players: Query<Entity, With<CubePlayer>>) {
     for entity in &players {
         commands.entity(entity).insert(AiControlled);
@@ -206,26 +194,40 @@ fn configure_network_physics(role: Option<Res<NetworkRole>>, mut config: ResMut<
     config.physics_pipeline_active = !role.map(|role| role.is_joiner()).unwrap_or(false);
 }
 
-fn spawn_tactic_hud(mut commands: Commands, handoff: Option<Res<MatchHandoff>>) {
+/// Put the play being run on screen, replacing whatever the previous round showed.
+///
+/// Re-entrant by necessity: a new play is coached at every round boundary, and without the
+/// despawn each round's readout would be stacked on top of the last one's.
+fn show_the_play(
+    mut commands: Commands,
+    handoff: Option<Res<MatchHandoff>>,
+    previous: Query<Entity, With<PlayReadout>>,
+) {
+    for entity in &previous {
+        commands.entity(entity).despawn_recursive();
+    }
     // Optional on purpose: a missing handoff used to panic mid-`OnEnter`, which
     // silently skipped `start_game_stream` and left a joiner with no stream.
     let Some(handoff) = handoff else { return };
-    commands.spawn(TextBundle {
-        text: Text::from_section(
-            handoff.summary(),
-            TextStyle {
-                font_size: 18.0,
-                color: Color::WHITE,
+    commands.spawn((
+        PlayReadout,
+        TextBundle {
+            text: Text::from_section(
+                handoff.summary(),
+                TextStyle {
+                    font_size: 18.0,
+                    color: Color::WHITE,
+                    ..default()
+                },
+            ),
+            style: Style {
+                position_type: PositionType::Absolute,
+                left: Val::Px(18.0),
+                bottom: Val::Px(18.0),
                 ..default()
             },
-        ),
-        style: Style {
-            position_type: PositionType::Absolute,
-            left: Val::Px(18.0),
-            bottom: Val::Px(18.0),
+            background_color: BackgroundColor(Color::rgba(0.02, 0.06, 0.04, 0.85)),
             ..default()
         },
-        background_color: BackgroundColor(Color::rgba(0.02, 0.06, 0.04, 0.85)),
-        ..default()
-    });
+    ));
 }

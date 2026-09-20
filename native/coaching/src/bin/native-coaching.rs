@@ -2,17 +2,12 @@ use bevy::prelude::*;
 use bevy::window::{PresentMode, WindowResolution};
 use bevy_egui::EguiPlugin;
 use tactic_lab_native::{
-    game::GamePlugin,
-    network::{CreationArtifacts, LobbyPlugin},
-    phase::AppPhase,
-    CoachingPlugin,
+    game::GamePlugin, network::LobbyPlugin, phase::AppPhase, world::WorldPlugin, CoachingPlugin,
 };
-use tactic_lab_player_creation::state::ContinueToCoaching;
-use tactic_lab_player_creation::CreationEnabled;
-use tactic_lab_player_creation::PlayerCreationPlugin;
 
 fn main() {
     App::new()
+        // Only ever seen for the frame before the world is built; the jungle covers it after that.
         .insert_resource(ClearColor(Color::rgb(0.063, 0.094, 0.133)))
         .add_plugins(
             DefaultPlugins
@@ -26,42 +21,20 @@ fn main() {
                     }),
                     ..default()
                 })
+                // Nearest-neighbour is for the board's crisp 2D sprites. It does not suit the
+                // generated character models or the painted canvases, which are sampled at an
+                // angle -- those ask for `default()` once the 2D board is gone.
                 .set(ImagePlugin::default_nearest()),
         )
         .init_state::<AppPhase>()
         .add_plugins(EguiPlugin)
+        // The lobby menu comes first and is the only screen with no world behind it.
         .add_plugins(LobbyPlugin)
-        .add_plugins(PlayerCreationPlugin::default().yielding_to_coaching())
-        .add_systems(Update, (handle_continue_to_coaching, sync_creation_enabled))
+        // The world, and the two screens that stand in it: the painter's easel and the tactics
+        // table. Built once at startup, because both stand on an island the landscape defines.
+        .add_plugins(WorldPlugin)
+        // Recording, speech, interpretation and the handoff into a match.
         .add_plugins(CoachingPlugin)
         .add_plugins(GamePlugin)
         .run();
-}
-
-fn handle_continue_to_coaching(
-    mut finished: EventReader<ContinueToCoaching>,
-    mut artifacts: ResMut<CreationArtifacts>,
-    mut next_phase: ResMut<NextState<AppPhase>>,
-) {
-    for event in finished.read() {
-        // Captured, not discarded: this is the only link between the drawings
-        // on disk and the coaching session that will be uploaded to the host.
-        artifacts.session_id = Some(event.session_id.clone());
-        // Canonicalized because the creation store's root is CWD-relative.
-        artifacts.directory = event
-            .manifest_path
-            .as_ref()
-            .and_then(|path| path.parent())
-            .and_then(|dir| dir.canonicalize().ok());
-        next_phase.set(AppPhase::Coaching);
-    }
-}
-
-/// The creation plugin gates its UI only on its own flow state, so without
-/// this it renders its drawing toolbar over the lobby menu.
-fn sync_creation_enabled(phase: Res<State<AppPhase>>, mut enabled: ResMut<CreationEnabled>) {
-    let should_draw = *phase.get() == AppPhase::Creation;
-    if enabled.0 != should_draw {
-        enabled.0 = should_draw;
-    }
 }

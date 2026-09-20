@@ -46,6 +46,14 @@ fn main() {
     app.add_plugins(MaterialPlugin::<stylized::JungleMaterial>::default())
         .add_plugins(CreationPlugin)
         .add_plugins(TacticsPlugin)
+        // `CreationPhase` now starts `Idle`, because a host may have its own screens in front of
+        // the clearing. This binary is only the clearing, so it steps up to the easel at once.
+        .add_systems(
+            Startup,
+            |mut phase: ResMut<NextState<cube_soccer::creation::CreationPhase>>| {
+                phase.set(cube_soccer::creation::CreationPhase::PaintingAppearance);
+            },
+        )
         .add_systems(Startup, redirect_output)
         .add_systems(Startup, (setup_lighting, build_jungle))
         .add_systems(Update, (animate_jungle, stylized::stylize))

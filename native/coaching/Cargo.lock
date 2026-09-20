@@ -1601,14 +1601,20 @@ dependencies = [
 name = "cube-soccer"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "bevy",
  "bevy_rapier3d",
+ "cpal",
+ "crossbeam-channel",
+ "futures-util",
  "humantime",
  "image 0.24.9",
  "nalgebra",
  "rand 0.8.8",
  "serde",
  "serde_json",
+ "tokio",
+ "tokio-tungstenite",
 ]
 
 [[package]]
